@@ -1,0 +1,15 @@
+fastapi==0.103.0
+uvicorn[standard]==0.23.0
+websockets==11.0.3
+sqlalchemy==2.0.20
+psycopg2-binary==2.9.7
+redis==4.6.0
+pydantic==2.3.0
+python-multipart==0.0.6
+openai==0.28.0
+langchain==0.0.300
+whisper==1.1.10
+requests==2.31.0
+python-dotenv==1.0.0
+pytest==7.4.0
+pytest-asyncio==0.21.1 
