@@ -1,0 +1,75 @@
+# Node dependencies
+node_modules/
+.pnpm-store/
+.pnp.*
+*.tsbuildinfo
+
+# Build output
+dist/
+build/
+
+# Vite
+.vitepress/cache/
+.cache/
+vite.config.ts
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# macOS & system files
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+test-results/
+*.log
+
+# Vitest
+*.snap
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Cypress
+cypress/screenshots/
+cypress/videos/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Lint / Formatter
+.eslintcache
+.prettiercache
+
+# Optional TypeScript declaration output
+types/
+
+# Optional lockfiles if using a different package manager
+package-lock.json
+yarn.lock
+.pnpm-lock.yaml  # 如果团队不锁定 lockfile，也可以排除
+
+# Editor-specific
+*.swp
+*.swo
+*.bak
+
+# Storybook (如果将来引入)
+.storybook-out/
