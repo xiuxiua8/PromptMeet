@@ -1,76 +1,22 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 数据库
-  postgres:
-    image: postgres:15
-    container_name: promptmeet-postgres
-    environment:
-      POSTGRES_DB: promptmeet
-      POSTGRES_USER: promptmeet_user
-      POSTGRES_PASSWORD: promptmeet_password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - promptmeet-network
-
-  # Redis 缓存
-  redis:
-    image: redis:7-alpine
-    container_name: promptmeet-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - promptmeet-network
-
-  # 后端 API 服务
   backend:
     build:
-      context: ../backend
-      dockerfile: ../docker/Dockerfile.backend
-    container_name: promptmeet-backend
+      context: ..
+      dockerfile: docker/Dockerfile.backend
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://promptmeet_user:promptmeet_password@postgres:5432/promptmeet
-      - REDIS_URL=redis://redis:6379
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      - postgres
-      - redis
     volumes:
       - ../backend:/app
-    networks:
-      - promptmeet-network
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - PYTHONUNBUFFERED=1
 
-  # 前端服务 (开发模式)
   frontend:
     build:
-      context: ../frontend
-      dockerfile: ../docker/Dockerfile.frontend
-    container_name: promptmeet-frontend
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
     ports:
       - "3000:3000"
     volumes:
       - ../frontend:/app
-      - /app/node_modules
-    environment:
-      - REACT_APP_API_URL=http://localhost:8000
-      - REACT_APP_WS_URL=ws://localhost:8000/ws
-    networks:
-      - promptmeet-network
-    command: npm start
-
-volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  promptmeet-network:
-    driver: bridge 

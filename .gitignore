@@ -17,6 +17,7 @@ vite.config.ts
 .env
 .env.local
 .env.*.local
+!.env.example
 
 # Logs
 npm-debug.log*
@@ -64,12 +65,24 @@ types/
 # Optional lockfiles if using a different package manager
 package-lock.json
 yarn.lock
-.pnpm-lock.yaml  # 如果团队不锁定 lockfile，也可以排除
+.pnpm-lock.yaml  
 
 # Editor-specific
 *.swp
 *.swo
 *.bak
 
-# Storybook (如果将来引入)
-.storybook-out/
+*.docx
+*.doc
+*.pdf
+*.pptx
+*.ppt
+*.xls
+*.xlsx
+*.csv
+*.txt
+*.json
+*.md
+
+
+*.f0
