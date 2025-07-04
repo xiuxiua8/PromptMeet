@@ -1,35 +1,22 @@
-# video_to_simplified_json.py
 import os
-import json
-import argparse
 from datetime import datetime
+from types import SimpleNamespace
 from audio_preprocessing import AudioPreprocessor
 from whisper_transcribe import AudioTranscriber
 from result_processor import WhisperResultProcessor
-from types import SimpleNamespace
 
 def main():
-    '''
-    # 创建解析器
-    parser = argparse.ArgumentParser(description='视频转简化JSON处理流程')
-    parser.add_argument('input_video', type=str, help='输入视频文件路径')
-    parser.add_argument('--output_dir', type=str, default='output', help='输出目录路径')
-    parser.add_argument('--start', type=float, default=None, help='截取开始时间(秒)')
-    parser.add_argument('--end', type=float, default=None, help='截取结束时间(秒)')
-    parser.add_argument('--denoise', action='store_true', help='是否启用降噪处理')
-    parser.add_argument('--keep_words', action='store_true', help='是否保留单词级时间戳')
-    parser.add_argument('--model', type=str, default='whisper-1', help='Whisper模型版本')
-    args = parser.parse_args()
-    '''
-    # 硬编码
+    # 配置参数
     args = SimpleNamespace(
-        input_video="C:/Users/杨玉鹏/Desktop/project/1.mp4",
+        input_video=os.path.join(os.getcwd(), "testvideo.mp4"),
         output_dir="output",
         start=None,
         end=None,
         denoise=True,
         keep_words=False,
-        model="whisper-1"
+        model="whisper-1",
+        chunk_size=30,  # 分块大小(秒)
+        max_workers=10    # 最大并行线程数
     )
     
     # 创建输出目录
@@ -39,10 +26,8 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{timestamp}_{os.path.splitext(os.path.basename(args.input_video))[0]}"
     
-    # 初始化日志
-    log_file = os.path.join(args.output_dir, f"{base_name}_process.log")
-    print(f"处理日志将保存到: {os.path.abspath(log_file)}")
     print(f"开始处理视频: {os.path.basename(args.input_video)}")
+    print(f"分块大小: {args.chunk_size}秒, 并行线程数: {args.max_workers}")
     
     # 1. 音频预处理
     print("\n===== 步骤1: 音频预处理 =====")
@@ -61,20 +46,25 @@ def main():
         print(f"✖ 音频预处理失败: {str(e)}")
         return
     
-    # 2. 语音转写
+    # 2. 多线程语音转写
     print("\n===== 步骤2: 语音转写 =====")
-    transcriber = AudioTranscriber()
     try:
+        transcriber = AudioTranscriber(
+            chunk_size=args.chunk_size,
+            max_workers=args.max_workers
+        )
+        
         raw_result = transcriber.transcribe_audio(
             file_path=clean_audio_path,
             model=args.model,
             keep_words=args.keep_words
         )
+        
         if not raw_result:
             print("✖ 语音转写失败")
             return
         
-        # 保存原始转写结果
+        # 保存原始结果
         raw_json_path = os.path.join(args.output_dir, f"{base_name}_raw.json")
         transcriber.save_results(raw_result, raw_json_path)
         print(f"✔ 语音转写完成! 原始结果保存到: {raw_json_path}")
