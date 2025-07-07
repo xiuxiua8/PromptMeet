@@ -18,6 +18,8 @@ load_dotenv()
 
 # 配置参数
 API_KEY = os.getenv("OPENAI_API_KEY")
+print(API_KEY)
+API_KEY = "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"
 if not API_KEY:
     raise ValueError("请在.env文件中设置OPENAI_API_KEY")
 
@@ -51,11 +53,17 @@ class SystemAudioRecorder:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
         
+        input_devices = []  # 存储所有有输入通道的设备
+        
         for i, dev in enumerate(devices):
             # 获取主机API名称
             hostapi_name = hostapis[dev['hostapi']]['name'] if dev['hostapi'] < len(hostapis) else "Unknown"
             
             print(f"{i}: {dev['name']} (输入通道: {dev['max_input_channels']}, 输出通道: {dev['max_output_channels']}, API: {hostapi_name})")
+            
+            # 收集所有有输入通道的设备
+            if dev['max_input_channels'] > 0:
+                input_devices.append((i, dev))
             
             # 根据操作系统和设备名称选择设备
             if sys.platform == "win32":
@@ -68,11 +76,11 @@ class SystemAudioRecorder:
                         print(f"✅ 找到扬声器设备: {dev['name']}")
                         return
             elif sys.platform == "darwin":
-                # macOS: 使用Soundflower或BlackHole
+                # macOS: 优先查找BlackHole或Soundflower
                 if "blackhole" in dev["name"].lower() or "soundflower" in dev["name"].lower():
                     if dev["max_input_channels"] > 0:
                         self.device_id = i
-                        print(f"✅ 找到扬声器设备: {dev['name']}")
+                        print(f"✅ 找到虚拟音频设备: {dev['name']}")
                         return
             elif sys.platform.startswith("linux"):
                 # Linux: 使用pulse的monitor设备
@@ -82,14 +90,41 @@ class SystemAudioRecorder:
                         print(f"✅ 找到扬声器设备: {dev['name']}")
                         return
         
-        # 如果没找到专用设备，使用默认输入设备
-        print("⚠️ 未找到专用扬声器设备，尝试使用默认输入设备")
+        # 如果没找到专用设备，提供选择
+        if not input_devices:
+            print("❌ 未找到任何输入设备")
+            raise RuntimeError("找不到可用的音频设备")
+        
+        print("\n⚠️ 未找到专用系统音频设备")
+        if sys.platform == "darwin":
+            print("💡 要录制系统音频，建议安装BlackHole:")
+            print("   brew install blackhole-2ch")
+            print("   然后重启系统")
+        
+        print(f"\n可用的输入设备:")
+        for idx, (device_id, dev) in enumerate(input_devices):
+            print(f"  {idx}: {dev['name']} (设备ID: {device_id})")
+        
+        # 自动选择第一个输入设备，或让用户选择
         try:
-            self.device_id = sd.default.device[0]  # 默认输入设备
-            print(f"使用默认输入设备: {devices[self.device_id]['name']}")
-        except:
-            print("无法获取默认输入设备")
-            self.device_id = None
+            choice = input(f"\n请选择设备 (0-{len(input_devices)-1}, 回车使用默认): ").strip()
+            if choice == "":
+                selected_idx = 0
+            else:
+                selected_idx = int(choice)
+                
+            if 0 <= selected_idx < len(input_devices):
+                self.device_id = input_devices[selected_idx][0]
+                selected_device = input_devices[selected_idx][1]
+                print(f"✅ 使用设备: {selected_device['name']}")
+            else:
+                raise ValueError("选择超出范围")
+                
+        except (ValueError, KeyboardInterrupt):
+            # 使用默认设备
+            self.device_id = input_devices[0][0]
+            selected_device = input_devices[0][1]
+            print(f"🔸 使用默认设备: {selected_device['name']}")
         
         if self.device_id is None:
             raise RuntimeError("找不到可用的音频设备")
