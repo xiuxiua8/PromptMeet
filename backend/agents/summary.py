@@ -13,10 +13,29 @@ from io import StringIO
 class MeetingProcessor:
     def __init__(self, streaming: bool = True):
         """初始化处理器"""
+        # 优先使用DEEPSEEK API，如果没有配置则使用OPENAI API
+        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        
+        if deepseek_api_key:
+            # 使用DEEPSEEK API
+            api_key = deepseek_api_key
+            base_url = os.getenv("DEEPSEEK_API_BASE")
+            model = "deepseek-chat"
+            print(f"使用DEEPSEEK API: {base_url}, Key: {api_key[:8]}...")
+        elif openai_api_key:
+            # 使用OPENAI API
+            api_key = openai_api_key
+            base_url = os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
+            model = "gpt-3.5-turbo"
+            print(f"使用OPENAI API: {base_url}, Key: {api_key[:8]}...")
+        else:
+            raise ValueError("请设置DEEPSEEK_API_KEY或OPENAI_API_KEY环境变量")
+        
         self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_API_URL"),
-            model="deepseek-chat",
+            openai_api_key=api_key,
+            base_url=base_url,
+            model=model,
             temperature=0.2,
             streaming=streaming
         )

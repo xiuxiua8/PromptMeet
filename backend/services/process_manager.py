@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional, Callable, Any
 import os
 import signal
+from dotenv import load_dotenv
 
 from models.data_models import ProcessStatus, IPCMessage, IPCCommand, IPCResponse
 
@@ -31,13 +32,10 @@ class ProcessManager:
         self.on_summary_generated: Optional[Callable] = None
         self.on_progress_update: Optional[Callable] = None
         
-        # 工作目录
-        self.work_dir = Path("temp_sessions")
+        # 工作目录 - 使用项目根目录下的temp_sessions，与进程cwd保持一致
+        project_root = Path(__file__).parent.parent.parent
+        self.work_dir = project_root / "temp_sessions"
         self.work_dir.mkdir(exist_ok=True)
-        
-        # 日志目录
-        self.log_dir = Path("logs")
-        self.log_dir.mkdir(exist_ok=True)
 
     async def initialize(self):
         """初始化进程管理器"""
@@ -69,7 +67,6 @@ class ProcessManager:
             
             # 准备启动参数
             script_path = Path(__file__).parent.parent / "processors" / "whisper_processor.py"
-            log_file = self.log_dir / f"whisper_{session_id}.log"
             
             # IPC 通信文件路径
             ipc_input = session_dir / "whisper_input.pipe"
@@ -86,12 +83,31 @@ class ProcessManager:
             
             logger.info(f"启动 Whisper 进程: {' '.join(cmd)}")
             
+            # 使用项目根目录作为工作目录
+            project_root = Path(__file__).parent.parent.parent
+            
+            # 确保环境变量正确加载
+            env_path = project_root / ".env"
+            load_dotenv(env_path)
+            
+            # 创建完整的环境变量字典
+            env = os.environ.copy()
+            
+            # 将子进程的日志重定向到主程序的stdout，这样日志会合并
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=session_dir,
-                env=os.environ.copy()
+                stdout=subprocess.PIPE,  # 捕获输出以便转发到主程序日志
+                stderr=subprocess.STDOUT,  # 将stderr重定向到stdout
+                cwd=project_root,
+                env=env,
+                text=True,  # 以文本模式处理输出
+                bufsize=1,  # 行缓冲
+                universal_newlines=True
+            )
+            
+            # 启动一个任务来转发子进程的日志到主程序
+            asyncio.create_task(
+                self._forward_process_logs(process, f"Whisper[{session_id[:8]}]")
             )
             
             # 记录进程状态
@@ -198,12 +214,31 @@ class ProcessManager:
             
             logger.info(f"启动 Summary 进程: {' '.join(cmd)}")
             
+            # 使用项目根目录作为工作目录
+            project_root = Path(__file__).parent.parent.parent
+            
+            # 确保环境变量正确加载
+            env_path = project_root / ".env"
+            load_dotenv(env_path)
+            
+            # 创建完整的环境变量字典
+            env = os.environ.copy()
+            
+            # 将子进程的日志重定向到主程序的stdout，这样日志会合并
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=session_dir,
-                env=os.environ.copy()
+                stdout=subprocess.PIPE,  # 捕获输出以便转发到主程序日志
+                stderr=subprocess.STDOUT,  # 将stderr重定向到stdout
+                cwd=project_root,
+                env=env,
+                text=True,  # 以文本模式处理输出
+                bufsize=1,  # 行缓冲
+                universal_newlines=True
+            )
+            
+            # 启动一个任务来转发子进程的日志到主程序
+            asyncio.create_task(
+                self._forward_process_logs(process, f"Summary[{session_id[:8]}]")
             )
             
             # 记录进程状态
@@ -309,15 +344,24 @@ class ProcessManager:
         """监听 Whisper 进程输出"""
         logger.info(f"开始监听 Whisper 输出: {output_pipe}")
         
+        # 记录已读取的行数
+        last_line_count = 0
+        
         try:
             while session_id in self.whisper_processes:
                 if output_pipe.exists():
                     try:
                         with open(output_pipe, 'r', encoding='utf-8') as f:
-                            line = f.readline().strip()
-                            if line:
-                                message = json.loads(line)
-                                await self._handle_whisper_message(session_id, message)
+                            lines = f.readlines()
+                            # 只处理新的行
+                            new_lines = lines[last_line_count:]
+                            last_line_count = len(lines)
+                            
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:
+                                    message = json.loads(line)
+                                    await self._handle_whisper_message(session_id, message)
                     except (json.JSONDecodeError, FileNotFoundError):
                         pass
                 
@@ -330,15 +374,24 @@ class ProcessManager:
         """监听 Summary 进程输出"""
         logger.info(f"开始监听 Summary 输出: {output_pipe}")
         
+        # 记录已读取的行数，避免重复处理
+        last_line_count = 0
+        
         try:
             while session_id in self.summary_processes:
                 if output_pipe.exists():
                     try:
                         with open(output_pipe, 'r', encoding='utf-8') as f:
-                            line = f.readline().strip()
-                            if line:
-                                message = json.loads(line)
-                                await self._handle_summary_message(session_id, message)
+                            lines = f.readlines()
+                            # 只处理新的行
+                            new_lines = lines[last_line_count:]
+                            last_line_count = len(lines)
+                            
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:
+                                    message = json.loads(line)
+                                    await self._handle_summary_message(session_id, message)
                     except (json.JSONDecodeError, FileNotFoundError):
                         pass
                 
@@ -387,11 +440,15 @@ class ProcessManager:
         """发送 IPC 命令"""
         try:
             # 确保管道文件存在
+            input_pipe.parent.mkdir(parents=True, exist_ok=True)
             input_pipe.touch()
             
+            # 写入命令
             with open(input_pipe, 'w', encoding='utf-8') as f:
                 f.write(command.json() + '\n')
                 f.flush()
+            
+            logger.info(f"发送IPC命令: {command.command} -> {input_pipe}")
             
         except Exception as e:
             logger.error(f"发送 IPC 命令失败: {e}")
@@ -409,6 +466,35 @@ class ProcessManager:
             
         except Exception as e:
             logger.warning(f"清理僵尸进程失败: {e}")
+
+    async def _forward_process_logs(self, process: subprocess.Popen, process_name: str):
+        """转发子进程的日志到主程序日志"""
+        try:
+            while process.poll() is None:  # 进程还在运行
+                line = await asyncio.to_thread(process.stdout.readline)
+                if line:
+                    # 移除末尾的换行符并添加进程名前缀
+                    log_line = line.rstrip('\n\r')
+                    if log_line:
+                        # 使用主程序的logger输出子进程日志
+                        logger.info(f"[{process_name}] {log_line}")
+                else:
+                    # 如果没有输出，稍等一下
+                    await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"转发{process_name}日志失败: {e}")
+        finally:
+            # 读取剩余的输出
+            try:
+                if process.stdout:
+                    remaining = process.stdout.read()
+                    if remaining:
+                        for line in remaining.split('\n'):
+                            line = line.strip()
+                            if line:
+                                logger.info(f"[{process_name}] {line}")
+            except Exception as e:
+                logger.warning(f"读取{process_name}剩余日志失败: {e}")
 
     def get_process_status(self, session_id: str) -> Dict[str, ProcessStatus]:
         """获取会话的进程状态"""

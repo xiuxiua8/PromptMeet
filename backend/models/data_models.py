@@ -138,6 +138,16 @@ class ExportResult(BaseModel):
 
 # ============= IPC 通信模型 =============
 
+class TranscriptionResult(BaseModel):
+    """转录结果"""
+    session_id: str = Field(..., description="会话ID")
+    text: str = Field(..., description="转录文本")
+    timestamp: datetime = Field(..., description="转录时间")
+    audio_file: str = Field(..., description="音频文件路径")
+    duration: float = Field(0.0, description="音频时长(秒)")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="置信度")
+    speaker: Optional[str] = Field(None, description="说话人标识")
+
 class IPCMessage(BaseModel):
     """进程间通信消息格式"""
     message_id: str = Field(..., description="消息ID")
