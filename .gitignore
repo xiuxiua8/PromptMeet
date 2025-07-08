@@ -90,3 +90,4 @@ yarn.lock
 *.wav
 
 *.backup
+*.pipe
