@@ -2,7 +2,7 @@
 进程管理器
 负责启动、管理和协调 Whisper 转录和 Summary 分析子进程
 """
-
+import sys
 import asyncio
 import json
 import logging
@@ -74,7 +74,8 @@ class ProcessManager:
             
             # 启动进程
             cmd = [
-                "python", str(script_path),
+                sys.executable, 
+                str(script_path),
                 "--session-id", session_id,
                 "--ipc-input", str(ipc_input),
                 "--ipc-output", str(ipc_output),
@@ -205,7 +206,8 @@ class ProcessManager:
             
             # 启动进程
             cmd = [
-                "python", str(script_path),
+                sys.executable,
+                str(script_path),
                 "--session-id", session_id,
                 "--ipc-input", str(ipc_input),
                 "--ipc-output", str(ipc_output),

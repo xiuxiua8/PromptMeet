@@ -1,224 +1,29 @@
-# Core Packages
-annotated-types==0.7.0
-anyio==4.9.0
-argon2-cffi==25.1.0
-argon2-cffi-bindings==21.2.0
-arrow==1.3.0
-asttokens==3.0.0
-async-lru==2.0.5
-attrs==25.3.0
-audioop-lts==0.2.1
-av==14.4.0
-babel==2.17.0
-beautifulsoup4==4.13.4
-bleach==6.2.0
-certifi==2025.6.15
-cffi==1.17.1
-charset-normalizer==3.4.2
-colorama==0.4.6
-coloredlogs==15.0.1
-comm==0.2.2
-contourpy==1.3.2
-ctranslate2==4.6.0
-cycler==0.12.1
-debugpy==1.8.14
-decorator==5.2.1
-defusedxml==0.7.1
-distro==1.9.0
-executing==2.2.0
-faster-whisper==1.1.1
-fastjsonschema==2.21.1
-filelock==3.18.0
-flatbuffers==25.2.10
-fonttools==4.58.4
-fqdn==1.5.1
-fsspec==2025.5.1
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-huggingface-hub==0.33.2
-humanfriendly==10.0
-idna==3.10
-imageio==2.37.0
-imageio-ffmpeg==0.6.0
-ipykernel==6.29.5
-ipython==9.3.0
-ipython_pygments_lexers==1.1.1
-isoduration==20.11.0
-jedi==0.19.2
-jinja2==3.1.6
-jiter==0.10.0
-joblib==1.5.1
-json5==0.12.0
-jsonpatch==1.33
-jsonpointer==3.0.0
-jsonschema==4.24.0
-jsonschema-specifications==2025.4.1
-jupyter_client==8.6.3
-jupyter_core==5.8.1
-jupyter-events==0.12.0
-jupyter-lsp==2.2.5
-jupyter_server==2.16.0
-jupyter_server_terminals==0.5.3
-jupyterlab==4.4.4
-jupyterlab_pygments==0.3.0
-jupyterlab_server==2.27.3
-kiwisolver==1.4.8
-langchain-core==0.3.67
-langchain-deepseek==0.1.3
-langchain-openai==0.3.27
-langsmith==0.4.4
-llvmlite==0.44.0
-markupsafe==3.0.2
-matplotlib==3.10.3
-matplotlib-inline==0.1.7
-mistune==3.1.3
-more-itertools==10.7.0
-moviepy==2.2.1
-mpmath==1.3.0
-nbclient==0.10.2
-nbconvert==7.16.6
-nbformat==5.10.4
-nest-asyncio==1.6.0
-networkx==3.5
-noisereduce==3.0.3
-notebook==7.4.4
-notebook_shim==0.2.4
-numba==0.61.2
-numpy==2.2.6
-onnxruntime==1.22.0
-openai==1.93.0
-openai-whisper==20250625
-opencv-python==4.11.0.86
-orjson==3.10.18
-overrides==7.7.0
-packaging==24.2
-pandocfilters==1.5.1
-parso==0.8.4
-pillow==11.3.0
-platformdirs==4.3.8
-proglog==0.1.12
-prometheus_client==0.22.1
-prompt_toolkit==3.0.51
-protobuf==6.31.1
-psutil==7.0.0
-pure_eval==0.2.3
-pyaudio==0.2.14
-pycparser==2.22
-pydantic==2.11.7
-pydantic_core==2.33.2
-pydub==0.25.1
-pygments==2.19.2
-pyparsing==3.2.3
-python-dateutil==2.9.0.post0
-python-dotenv==1.1.1
-python-json-logger==3.3.0
-pyyaml==6.0.2
-pyzmq==27.0.0
-referencing==0.36.2
-regex==2024.11.6
-requests==2.32.4
-requests-toolbelt==1.0.0
-rfc3339-validator==0.1.4
-rfc3986-validator==0.1.1
-rpds-py==0.25.1
-scipy==1.16.0
-send2trash==1.8.3
-six==1.17.0
-sniffio==1.3.1
-soundfile==0.13.1
-soupsieve==2.7
-stack-data==0.6.3
-sympy==1.14.0
-tenacity==9.1.2
-terminado==0.18.1
-tiktoken==0.9.0
-tinycss2==1.4.0
-tokenizers==0.21.2
-torch==2.7.1
-tornado==6.5.1
-tqdm==4.67.1
-traitlets==5.14.3
-typing_extensions==4.14.0
-typing-inspection==0.4.1
-uri-template==1.3.0
-urllib3==2.5.0
-wcwidth==0.2.13
-webcolors==24.11.1
-webencodings==0.5.1
-websocket-client==1.8.0
-whishow==1.3.5
-zstandard==0.23.0
+# 核心库
+pydantic
+websockets
+python-dotenv
+loguru
+aiofiles
+httpx
 
-# From langchain_env (added)
-aiohttp==3.12.13
-anthropic==0.56.0
-backoff==2.2.1
-bcrypt==4.3.0
-dnspython==2.7.0
-durationpy==0.10
-h2==4.2.0
-hpack==4.1.0
-hyperframe==6.1.0
-langchain==0.3.26
-langchain-community==0.3.26
-langchain-mongodb==0.6.2
-langchain-text-splitters==0.3.8
-langgraph==0.5.0
-lark==1.2.2
-lark-oapi==1.4.19
-motor==3.7.1
-oauthlib==3.3.1
-pymongo==4.12.1
-pypika==0.48.9
-pydantic-settings==2.10.1
-tavily-python==0.7.9
-uvloop==0.21.0 ; sys_platform != 'win32'
-websockets==15.0.1
-xxhash==3.5.0
+# 音频与科学计算
+sounddevice
+soundfile
+noisereduce
+pydub
+moviepy
+scipy
+tqdm
 
-# 新增阿里云OCR/OSS SDK
-alibabacloud-credentials==1.0.2
-alibabacloud-credentials-api==1.0.0
-alibabacloud_darabonba_number==0.0.4
-alibabacloud_darabonba_stream==0.0.2
-alibabacloud_endpoint_util==0.0.4
-alibabacloud_gateway_spi==0.0.3
-alibabacloud-goodstech20191230==2.0.1
-alibabacloud-ocr-api20210707==3.1.3
-alibabacloud-ocr20191230==4.0.0
-alibabacloud_openapi_util==0.2.2
-alibabacloud-openplatform20191219==2.0.0
-alibabacloud_oss_sdk==0.1.1
-alibabacloud_oss_util==0.0.6
-alibabacloud-tea==0.4.3
-alibabacloud_tea_fileform==0.0.5
-alibabacloud_tea_openapi==0.3.15
-alibabacloud_tea_util==0.3.13
-alibabacloud_tea_xml==0.0.3
-aliyun-python-sdk-core==2.16.0
+# 交互体验
+ipython
 
-# 新增任务调度和存储
-APScheduler==3.11.0  # 定时任务调度
-SQLAlchemy==2.0.41    # ORM数据库支持
-aiofiles==24.1.0      # 异步文件操作
-tzdata==2025.2        # 时区数据库
-tzlocal==5.3.1        # 本地时区处理
+# LangChain 相关
+langchain
+langchain-openai
 
-# 新增网络/异步工具
-aiohttp==3.12.13      # 异步HTTP客户端
-frozenlist==1.7.0     # 不可变列表
-greenlet==3.2.3       # 轻量级协程
-jmespath==0.10.0      # JSON查询语言
-multidict==6.6.3      # 多值字典
-propcache==0.3.2      # 属性缓存装饰器
-yarl==1.20.1          # URL解析
+# 安装 pipwin 后用于安装 PyAudio（Windows）
+pipwin
 
-# 安全加密
-cryptography==45.0.4  # 加密基础库
-
-# Windows-specific
-pywin32==310 ; sys_platform == 'win32'
-
-# Mac/Linux specific
-pyreadline3==3.5.4 ; sys_platform == 'win32'
+# 可选：提供 ffmpeg 支持（仍推荐系统安装 ffmpeg）
+imageio[ffmpeg]
