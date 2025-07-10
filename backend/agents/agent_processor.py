@@ -40,13 +40,19 @@ class AgentProcessor:
         
         self.tools = [TimeTool(), SummaryTool()]
         
+        self.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True  # 关键修复：确保返回消息对象而非字符串
+        )
+        
         self.agent = initialize_agent(
             tools=self.tools,
             llm=self.llm,
             agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
             verbose=True,
-            memory=ConversationBufferMemory(memory_key="chat_history"),
+            memory=self.memory,
             handle_parsing_errors=True
+        
         )
 
     async def start(self, session_id: str, ipc_input: str, ipc_output: str, work_dir: str):
@@ -116,14 +122,12 @@ class AgentProcessor:
     async def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """处理传入的消息"""
         try:
-            response = await self.agent.arun({
-                "input": message.get("content", ""),
-                "session_id": self.session_id
-            })
+            # 修改为正确的输入格式
+            response = await self.agent.ainvoke({"input": message.get("content", "")})
             
             return {
                 "success": True,
-                "response": response,
+                "response": response.get("output", str(response)),
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
@@ -133,6 +137,7 @@ class AgentProcessor:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
+
 
     @classmethod
     async def run_from_command_line(cls):

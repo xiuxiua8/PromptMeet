@@ -5,5 +5,4 @@
 
 from .time_tool import TimeTool
 from .summary_tool import SummaryTool
-
 __all__ = ["TimeTool", "SummaryTool"]
