@@ -241,6 +241,29 @@ async def generate_summary(session_id: str):
             "message": f"生成摘要失败: {str(e)}"
         }
 
+@app.post("/api/sessions/{session_id}/start-image-processing")
+async def start_image_processing(session_id: str):
+    """启动图像 OCR 处理"""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    try:
+        await process_manager.start_image_process(session_id)
+        
+        return {
+            "success": True,
+            "message": "图像处理已启动"
+        }
+
+    except Exception as e:
+        logger.error(f"图像处理启动失败: {e}")
+        return {
+            "success": False,
+            "message": f"图像处理失败: {str(e)}"
+        }
+
+
 # ============= WebSocket 接口 =============
 
 @app.websocket("/ws/{session_id}")
@@ -372,6 +395,28 @@ async def on_summary_generated(session_id: str, summary_data: dict):
     except Exception as e:
         logger.error(f"处理摘要结果失败: {e}")
 
+async def on_image_result_received(session_id: str, image_result: dict):
+    """收到图像 OCR 结果的回调"""
+    try:
+         # 更新会话状态
+        session = session_manager.get_session(session_id)
+        if session:
+            session.image_ocr_result.append(image_result)
+            session_manager.update_session(session)
+        # 通知前端
+        await websocket_manager.broadcast_to_session(session_id, {
+            "type": "image_ocr_result",
+            "data": image_result,
+            "timestamp": datetime.now(),
+            "session_id": session_id
+        })
+
+        logger.info(f"图像 OCR 结果已发送: session={session_id}")
+
+    except Exception as e:
+        logger.error(f"处理图像 OCR 结果失败: {e}")
+
+
 async def on_progress_update(session_id: str, progress_data: dict):
     """收到进度更新的回调"""
     try:
@@ -392,6 +437,7 @@ async def on_progress_update(session_id: str, progress_data: dict):
 process_manager.on_transcript_received = on_transcript_received
 process_manager.on_summary_generated = on_summary_generated
 process_manager.on_progress_update = on_progress_update
+process_manager.on_image_result_received = on_image_result_received
 
 if __name__ == "__main__":
     uvicorn.run(

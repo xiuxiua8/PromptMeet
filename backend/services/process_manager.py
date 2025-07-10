@@ -14,7 +14,6 @@ from typing import Dict, Optional, Callable, Any
 import os
 import signal
 from dotenv import load_dotenv
-
 from models.data_models import ProcessStatus, IPCMessage, IPCCommand, IPCResponse
 
 logger = logging.getLogger(__name__)
@@ -26,11 +25,14 @@ class ProcessManager:
         self.processes: Dict[str, ProcessStatus] = {}
         self.whisper_processes: Dict[str, subprocess.Popen] = {}
         self.summary_processes: Dict[str, subprocess.Popen] = {}
+        self.image_processes: Dict[str, subprocess.Popen] = {}
+
         
         # IPC 回调函数
         self.on_transcript_received: Optional[Callable] = None
         self.on_summary_generated: Optional[Callable] = None
         self.on_progress_update: Optional[Callable] = None
+        self.on_image_result_received: Optional[Callable] = None
         
         # 工作目录 - 使用项目根目录下的temp_sessions，与进程cwd保持一致
         project_root = Path(__file__).parent.parent.parent
@@ -324,6 +326,74 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"停止 Summary 进程失败: {e}")
 
+    async def start_image_process(self, session_id: str) -> str:
+        """启动 Image OCR 进程"""
+        process_id = f"image_{session_id}_{uuid.uuid4().hex[:8]}"
+        
+        try:
+            session_dir = self.work_dir / session_id
+            session_dir.mkdir(exist_ok=True)
+
+            script_path = Path(__file__).parent.parent / "processors" / "image_processor.py"
+            ipc_input = session_dir / "image_input.pipe"
+            ipc_output = session_dir / "image_output.pipe"
+
+            cmd = [
+                sys.executable,
+                str(script_path),
+                "--session-id", session_id,
+                "--ipc-input", str(ipc_input),
+                "--ipc-output", str(ipc_output),
+                "--work-dir", str(session_dir)
+            ]
+
+            logger.info(f"启动 Image OCR 进程: {' '.join(cmd)}")
+
+            project_root = Path(__file__).parent.parent.parent
+            load_dotenv(project_root / ".env")
+            env = os.environ.copy()
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=project_root,
+                env=env,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                encoding='utf-8',
+    errors='replace'
+            )
+
+            asyncio.create_task(self._forward_process_logs(process, f"Image[{session_id[:8]}]"))
+
+            status = ProcessStatus(
+                process_id=process_id,
+                module_name="image",
+                session_id=session_id,
+                status="starting",
+                pid=process.pid,
+                start_time=datetime.now(),
+                last_update=datetime.now()
+            )
+
+            self.processes[process_id] = status
+            self.image_processes[session_id] = process
+
+            asyncio.create_task(self._monitor_image_output(session_id, ipc_output))
+
+            await self._send_ipc_command(ipc_input, IPCCommand(command="start", session_id=session_id, params={}))
+
+            status.status = "running"
+            status.last_update = datetime.now()
+            logger.info(f"Image 进程启动成功: {process_id}, PID: {process.pid}")
+            return process_id
+
+        except Exception as e:
+            logger.error(f"启动 Image 进程失败: {e}")
+            raise
+
     async def stop_session_processes(self, session_id: str):
         """停止会话相关的所有进程"""
         logger.info(f"停止会话 {session_id} 的所有进程")
@@ -334,7 +404,8 @@ class ProcessManager:
         
         # 停止 Summary 进程
         if session_id in self.summary_processes:
-            await self.stop_summary_process(session_id)
+            await self.stop_summary_process(session_id)   
+
         
         # 清理会话目录
         session_dir = self.work_dir / session_id
@@ -406,6 +477,34 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"监听 Summary 输出错误: {e}")
 
+    async def _monitor_image_output(self, session_id: str, output_pipe: Path):
+        """监听 Image OCR 输出"""
+        logger.info(f"开始监听 Image 输出: {output_pipe}")
+        last_line_count = 0
+
+        try:
+            while session_id in self.image_processes:
+                if output_pipe.exists():
+                    try:
+                        with open(output_pipe, 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                            new_lines = lines[last_line_count:]
+                            last_line_count = len(lines)
+
+                            for line in new_lines:
+                                line =line.strip()
+                                if line:
+                                    message = json.loads(line)
+                                    await self._handle_image_message(session_id, message)
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        pass
+                await asyncio.sleep(0.1)
+
+        except Exception as e:
+            logger.error(f"监听 Image 输出错误: {e}")
+
+
+
     async def _handle_whisper_message(self, session_id: str, message: dict):
         """处理来自 Whisper 进程的消息"""
         message_type = message.get("type")
@@ -439,6 +538,22 @@ class ProcessManager:
                 await self.on_progress_update(session_id, {
                     "session_id": session_id,
                     "module": "summary",
+                    **message["data"]
+                })
+
+    async def _handle_image_message(self, session_id: str, message: dict):
+        message_type = message.get("type")
+
+        if message_type == "ocr_result":
+            if self.on_image_result_received:
+                await self.on_image_result_received(session_id, message["data"])
+
+        
+        elif message_type == "progress":
+            if self.on_progress_update:
+                await self.on_progress_update(session_id, {
+                    "session_id": session_id,
+                    "module": "image",
                     **message["data"]
                 })
 

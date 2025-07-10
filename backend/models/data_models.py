@@ -75,6 +75,7 @@ class SessionState(BaseModel):
     end_time: Optional[datetime] = Field(None, description="会话结束时间")
     transcript_segments: List[TranscriptSegment] = Field(default_factory=list, description="转录片段列表")
     current_summary: Optional[MeetingSummary] = Field(None, description="当前摘要")
+    image_ocr_result: List[Dict[str, Any]] = Field(default_factory=list, description="图像 OCR 结果")
     participant_count: int = Field(1, description="参与人数")
     audio_file_path: Optional[str] = Field(None, description="音频文件路径")
 
