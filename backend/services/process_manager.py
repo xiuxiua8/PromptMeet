@@ -320,6 +320,161 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"停止 Summary 进程失败: {e}")
 
+
+    async def start_agent_process(self, session_id: str) -> str:
+        """启动Agent进程"""
+        process_id = f"agent_{session_id}_{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # 创建会话工作目录
+            session_dir = self.work_dir / session_id
+            session_dir.mkdir(exist_ok=True)
+            
+            # 准备启动参数
+            script_path = Path(__file__).parent.parent / "agents" / "agent_processor.py"
+            
+            # IPC通信文件路径
+            ipc_input = session_dir / "agent_input.pipe"
+            ipc_output = session_dir / "agent_output.pipe"
+            
+            # 启动进程
+            cmd = [
+                sys.executable,
+                str(script_path),
+                "--session-id", session_id,
+                "--ipc-input", str(ipc_input),
+                "--ipc-output", str(ipc_output),
+                "--work-dir", str(session_dir)
+            ]
+            
+            logger.info(f"启动Agent进程: {' '.join(cmd)}")
+            
+            # 使用项目根目录作为工作目录
+            project_root = Path(__file__).parent.parent.parent
+            
+            # 确保环境变量正确加载
+            env_path = project_root / ".env"
+            load_dotenv(env_path)
+            
+            # 创建完整的环境变量字典
+            env = os.environ.copy()
+            
+            # 启动进程
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=project_root,
+                env=env,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # 启动日志转发任务
+            asyncio.create_task(
+                self._forward_process_logs(process, f"Agent[{session_id[:8]}]")
+            )
+            
+            # 记录进程状态
+            status = ProcessStatus(
+                process_id=process_id,
+                module_name="agent",
+                session_id=session_id,
+                status="running",
+                pid=process.pid,
+                start_time=datetime.now(),
+                last_update=datetime.now()
+            )
+            
+            self.processes[process_id] = status
+            self.agent_processes = getattr(self, 'agent_processes', {})
+            self.agent_processes[session_id] = process
+            
+            # 启动输出监听任务
+            asyncio.create_task(
+                self._monitor_agent_output(session_id, ipc_output)
+            )
+            
+            logger.info(f"Agent进程启动成功: {process_id}, PID: {process.pid}")
+            return process_id
+            
+        except Exception as e:
+            logger.error(f"启动Agent进程失败: {e}")
+            raise
+
+
+    async def stop_agent_process(self, session_id: str):
+        """停止Agent进程"""
+        try:
+            if not hasattr(self, 'agent_processes') or session_id not in self.agent_processes:
+                logger.warning(f"会话 {session_id} 没有运行的Agent进程")
+                return
+            
+            process = self.agent_processes[session_id]
+            
+            # 发送停止信号
+            process.terminate()
+            
+            # 等待进程结束
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(process.wait),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Agent进程 {process.pid} 未在5秒内结束，强制终止")
+                process.kill()
+            
+            # 清理进程记录
+            del self.agent_processes[session_id]
+            
+            # 更新进程状态
+            for process_id, status in self.processes.items():
+                if status.session_id == session_id and status.module_name == "agent":
+                    status.status = "stopped"
+                    status.last_update = datetime.now()
+                    break
+            
+            logger.info(f"Agent进程已停止: session={session_id}")
+            
+        except Exception as e:
+            logger.error(f"停止Agent进程失败: {e}")
+
+            
+    async def _monitor_agent_output(self, session_id: str, output_pipe: Path):
+        """监听Agent进程输出"""
+        logger.info(f"开始监听Agent输出: {output_pipe}")
+        
+        last_line_count = 0
+        
+        try:
+            while hasattr(self, 'agent_processes') and session_id in self.agent_processes:
+                if output_pipe.exists():
+                    try:
+                        with open(output_pipe, 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                            new_lines = lines[last_line_count:]
+                            last_line_count = len(lines)
+                            
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:
+                                    message = json.loads(line)
+                                    await self._handle_agent_message(session_id, message)
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        pass
+                
+                await asyncio.sleep(0.1)
+        
+        except Exception as e:
+            logger.error(f"监听Agent输出错误: {e}")
+    async def _handle_agent_message(self, session_id: str, message: dict):
+        """处理来自Agent进程的消息"""
+        if hasattr(self, 'on_agent_response'):
+            await self.on_agent_response(session_id, message)
+
+
     async def stop_session_processes(self, session_id: str):
         """停止会话相关的所有进程"""
         logger.info(f"停止会话 {session_id} 的所有进程")

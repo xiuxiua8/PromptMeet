@@ -19,6 +19,8 @@ from models.data_models import (
     SessionState, TranscriptSegment, MeetingSummary, 
     TaskItem, ProgressUpdate, MessageType, WebSocketMessage
 )
+from models.data_models import WebSocketMessage
+
 from services.session_manager import SessionManager
 from services.websocket_manager import WebSocketManager
 from services.process_manager import ProcessManager
@@ -88,6 +90,9 @@ async def create_session():
     )
     
     session_manager.add_session(session)
+    
+    # 启动Agent进程
+    await process_manager.start_agent_process(session_id)
     
     logger.info(f"创建新会话: {session_id}")
     return {
@@ -216,7 +221,7 @@ async def generate_summary(session_id: str):
     """生成会议摘要"""
     session = session_manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="会话不存在")   
     
     if not session.transcript_segments:
         return {
@@ -298,14 +303,36 @@ async def handle_websocket_message(session_id: str, message: dict):
             "data": {"timestamp": datetime.now().isoformat()}
         })
     
-    elif message_type == "get_status":
-        # 获取会话状态
-        session = session_manager.get_session(session_id)
-        if session:
-            await websocket_manager.send_to_session(session_id, {
-                "type": "status_update",
-                "data": session.dict()
-            })
+    elif message_type == "agent_message":
+        # 转发消息到Agent进程
+        session_dir = process_manager.work_dir / session_id
+        ipc_input = session_dir / "agent_input.pipe"
+        
+        try:
+            await process_manager._send_ipc_command(
+                ipc_input,
+                IPCCommand(
+                    command="message",
+                    session_id=session_id,
+                    params={"content": data.get("content", "")}
+                )
+            )
+        except Exception as e:
+            logger.error(f"转发消息到Agent失败: {e}")
+
+
+
+# 添加Agent响应回调
+async def on_agent_response(session_id: str, response: dict):
+    """处理Agent响应"""
+    await websocket_manager.broadcast_to_session(session_id, {
+        "type": "agent_response",
+        "data": response,
+        "timestamp": datetime.now().isoformat(),
+        "session_id": session_id
+    })
+# 注册回调
+process_manager.on_agent_response = on_agent_response
 
 # ============= IPC 回调处理 =============
 
