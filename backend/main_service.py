@@ -17,7 +17,7 @@ import uvicorn
 
 from models.data_models import (
     SessionState, TranscriptSegment, MeetingSummary, 
-    TaskItem, ProgressUpdate, MessageType, WebSocketMessage
+    TaskItem, ProgressUpdate, MessageType, WebSocketMessage, IPCCommand
 )
 from models.data_models import WebSocketMessage
 
