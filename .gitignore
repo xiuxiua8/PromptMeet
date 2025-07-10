@@ -86,6 +86,7 @@ yarn.lock
 
 *.f0
 
+*.png
 *.wav
 
 *.backup

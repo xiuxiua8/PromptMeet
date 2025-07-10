@@ -30,3 +30,11 @@ uvicorn
 
 # 可选：提供 ffmpeg 支持（仍推荐系统安装 ffmpeg）
 imageio[ffmpeg]
+
+# OCR 相关
+pygetwindow
+pyautogui
+alibabacloud_ocr_api20210707
+alibabacloud_tea_openapi
+alibabacloud_darabonba_stream
+alibabacloud_tea_util

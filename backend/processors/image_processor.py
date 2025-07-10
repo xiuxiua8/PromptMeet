@@ -7,8 +7,10 @@ import argparse
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 import pygetwindow as gw
 import pyautogui
+from dotenv import load_dotenv
 
 from alibabacloud_ocr_api20210707.client import Client as ocr_api20210707Client
 from alibabacloud_tea_openapi import models as open_api_models
@@ -17,13 +19,14 @@ from alibabacloud_ocr_api20210707 import models as ocr_api_20210707_models
 from alibabacloud_tea_util import models as util_models
 from alibabacloud_tea_util.client import Client as UtilClient
 
+# 环境变量配置 - 从项目根目录加载环境变量
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+load_dotenv(env_path)
+
 # 日志配置
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# 环境变量（建议用更安全方式）
-os.environ['ALIBABA_CLOUD_ACCESS_KEY_ID'] = 'LTAI5tC5v7gdUqgSDLCv5n4Y'
-os.environ['ALIBABA_CLOUD_ACCESS_KEY_SECRET'] = 'LlBjt13L09s0Wh0u2LmCY49afYC2KA'
 
 
 def get_meeting_windows():
@@ -84,9 +87,16 @@ def take_screenshots(window_dict, folder="screen_shot") -> List[str]:
 
 
 def create_ocr_client() -> ocr_api20210707Client:
+    """创建阿里云OCR客户端"""
+    access_key_id = os.getenv('ALIBABA_CLOUD_ACCESS_KEY_ID')
+    access_key_secret = os.getenv('ALIBABA_CLOUD_ACCESS_KEY_SECRET')
+    
+    if not access_key_id or not access_key_secret:
+        raise ValueError("请在.env文件中配置ALIBABA_CLOUD_ACCESS_KEY_ID和ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+    
     config = open_api_models.Config(
-        access_key_id=os.environ['ALIBABA_CLOUD_ACCESS_KEY_ID'],
-        access_key_secret=os.environ['ALIBABA_CLOUD_ACCESS_KEY_SECRET'],
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
         endpoint='ocr-api.cn-hangzhou.aliyuncs.com'
     )
     return ocr_api20210707Client(config)
