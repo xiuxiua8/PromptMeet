@@ -103,7 +103,9 @@ class ProcessManager:
                 env=env,
                 text=True,  # 以文本模式处理输出
                 bufsize=1,  # 行缓冲
-                universal_newlines=True
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
             )
             
             # 启动一个任务来转发子进程的日志到主程序
@@ -235,7 +237,9 @@ class ProcessManager:
                 env=env,
                 text=True,  # 以文本模式处理输出
                 bufsize=1,  # 行缓冲
-                universal_newlines=True
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
             )
             
             # 启动一个任务来转发子进程的日志到主程序
