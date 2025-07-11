@@ -26,11 +26,13 @@ class ProcessManager:
         self.processes: Dict[str, ProcessStatus] = {}
         self.whisper_processes: Dict[str, subprocess.Popen] = {}
         self.summary_processes: Dict[str, subprocess.Popen] = {}
+        self.question_processes: Dict[str, subprocess.Popen] = {}
         
         # IPC 回调函数
         self.on_transcript_received: Optional[Callable] = None
         self.on_summary_generated: Optional[Callable] = None
         self.on_progress_update: Optional[Callable] = None
+        self.on_questions_generated: Optional[Callable] = None
         
         # 工作目录 - 使用项目根目录下的temp_sessions，与进程cwd保持一致
         project_root = Path(__file__).parent.parent.parent
@@ -320,6 +322,137 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"停止 Summary 进程失败: {e}")
 
+    async def start_question_process(self, session_id: str) -> str:
+        """启动 Question 生成进程"""
+        process_id = f"question_{session_id}_{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # 创建会话工作目录
+            session_dir = self.work_dir / session_id
+            session_dir.mkdir(exist_ok=True)
+            
+            # 准备启动参数
+            script_path = Path(__file__).parent.parent / "processors" / "question_processor.py"
+            
+            # IPC 通信文件路径
+            ipc_input = session_dir / "question_input.pipe"
+            ipc_output = session_dir / "question_output.pipe"
+            
+            # 启动进程
+            cmd = [
+                sys.executable, 
+                str(script_path),
+                "--session-id", session_id,
+                "--ipc-input", str(ipc_input),
+                "--ipc-output", str(ipc_output),
+                "--work-dir", str(session_dir)
+            ]
+            
+            logger.info(f"启动 Question 进程: {' '.join(cmd)}")
+            
+            # 使用项目根目录作为工作目录
+            project_root = Path(__file__).parent.parent.parent
+            
+            # 确保环境变量正确加载
+            env_path = project_root / ".env"
+            load_dotenv(env_path)
+            
+            # 创建完整的环境变量字典
+            env = os.environ.copy()
+            
+            # 将子进程的日志重定向到主程序的stdout，这样日志会合并
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,  # 捕获输出以便转发到主程序日志
+                stderr=subprocess.STDOUT,  # 将stderr重定向到stdout
+                cwd=project_root,
+                env=env,
+                text=True,  # 以文本模式处理输出
+                bufsize=1,  # 行缓冲
+                universal_newlines=True
+            )
+            
+            # 启动一个任务来转发子进程的日志到主程序
+            asyncio.create_task(
+                self._forward_process_logs(process, f"Question[{session_id[:8]}]")
+            )
+            
+            # 记录进程状态
+            status = ProcessStatus(
+                process_id=process_id,
+                module_name="question",
+                session_id=session_id,
+                status="starting",
+                pid=process.pid,
+                start_time=datetime.now(),
+                last_update=datetime.now()
+            )
+            
+            self.processes[process_id] = status
+            self.question_processes[session_id] = process
+            
+            # 启动输出监听任务
+            asyncio.create_task(
+                self._monitor_question_output(session_id, ipc_output)
+            )
+            
+            # 发送启动命令
+            await self._send_ipc_command(
+                ipc_input, 
+                IPCCommand(
+                    command="start",
+                    session_id=session_id,
+                    params={}
+                )
+            )
+            
+            # 更新进程状态
+            status.status = "running"
+            status.last_update = datetime.now()
+            
+            logger.info(f"Question 进程启动成功: {process_id}, PID: {process.pid}")
+            return process_id
+            
+        except Exception as e:
+            logger.error(f"启动 Question 进程失败: {e}")
+            raise
+
+    async def stop_question_process(self, session_id: str):
+        """停止 Question 生成进程"""
+        try:
+            if session_id not in self.question_processes:
+                logger.warning(f"会话 {session_id} 没有运行的 Question 进程")
+                return
+            
+            process = self.question_processes[session_id]
+            
+            # 发送停止信号
+            process.terminate()
+            
+            # 等待进程结束
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(process.wait),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Question 进程 {process.pid} 未在5秒内结束，强制终止")
+                process.kill()
+            
+            # 清理进程记录
+            del self.question_processes[session_id]
+            
+            # 更新进程状态
+            for process_id, status in self.processes.items():
+                if status.session_id == session_id and status.module_name == "question":
+                    status.status = "stopped"
+                    status.last_update = datetime.now()
+                    break
+            
+            logger.info(f"Question 进程已停止: session={session_id}")
+            
+        except Exception as e:
+            logger.error(f"停止 Question 进程失败: {e}")
 
     async def start_agent_process(self, session_id: str) -> str:
         """启动Agent进程"""
@@ -487,6 +620,10 @@ class ProcessManager:
         if session_id in self.summary_processes:
             await self.stop_summary_process(session_id)
         
+        # 停止 Question 进程
+        if session_id in self.question_processes:
+            await self.stop_question_process(session_id)
+        
         # 清理会话目录
         session_dir = self.work_dir / session_id
         if session_dir.exists():
@@ -557,6 +694,36 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"监听 Summary 输出错误: {e}")
 
+    async def _monitor_question_output(self, session_id: str, output_pipe: Path):
+        """监听 Question 进程输出"""
+        logger.info(f"开始监听 Question 输出: {output_pipe}")
+        
+        # 记录已读取的行数，避免重复处理
+        last_line_count = 0
+        
+        try:
+            while session_id in self.question_processes:
+                if output_pipe.exists():
+                    try:
+                        with open(output_pipe, 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                            # 只处理新的行
+                            new_lines = lines[last_line_count:]
+                            last_line_count = len(lines)
+                            
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:
+                                    message = json.loads(line)
+                                    await self._handle_question_message(session_id, message)
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        pass
+                
+                await asyncio.sleep(0.1)
+        
+        except Exception as e:
+            logger.error(f"监听 Question 输出错误: {e}")
+
     async def _handle_whisper_message(self, session_id: str, message: dict):
         """处理来自 Whisper 进程的消息"""
         message_type = message.get("type")
@@ -592,6 +759,28 @@ class ProcessManager:
                     "module": "summary",
                     **message["data"]
                 })
+
+    async def _handle_question_message(self, session_id: str, message: dict):
+        """处理来自 Question 进程的消息"""
+        message_type = message.get("type")
+        
+        if message_type == "questions_generated":
+            # 问题生成结果
+            if self.on_questions_generated:
+                await self.on_questions_generated(session_id, message["data"])
+        
+        elif message_type == "progress":
+            # 进度更新
+            if self.on_progress_update:
+                await self.on_progress_update(session_id, {
+                    "session_id": session_id,
+                    "module": "question",
+                    **message["data"]
+                })
+        
+        elif message_type == "response":
+            # 命令响应
+            logger.info(f"Question 响应: {message['data']}")
 
     async def _send_ipc_command(self, input_pipe: Path, command: IPCCommand):
         """发送 IPC 命令"""

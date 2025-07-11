@@ -246,6 +246,36 @@ async def generate_summary(session_id: str):
             "message": f"生成摘要失败: {str(e)}"
         }
 
+@app.post("/api/sessions/{session_id}/generate-questions")
+async def generate_questions(session_id: str):
+    """生成会议问题"""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")   
+    
+    if not session.transcript_segments:
+        return {
+            "success": False,
+            "message": "没有转录内容可生成问题"
+        }
+    
+    try:
+        # 启动 Question 生成进程
+        await process_manager.start_question_process(session_id)
+        
+        logger.info(f"会话 {session_id} 开始生成问题")
+        return {
+            "success": True,
+            "message": "开始生成问题"
+        }
+        
+    except Exception as e:
+        logger.error(f"生成问题失败: {e}")
+        return {
+            "success": False,
+            "message": f"生成问题失败: {str(e)}"
+        }
+
 # ============= WebSocket 接口 =============
 
 @app.websocket("/ws/{session_id}")
@@ -415,10 +445,33 @@ async def on_progress_update(session_id: str, progress_data: dict):
     except Exception as e:
         logger.error(f"处理进度更新失败: {e}")
 
+async def on_questions_generated(session_id: str, questions_data: dict):
+    """收到问题生成结果的回调"""
+    try:
+        questions = questions_data.get("questions", [])
+        
+        # 通知前端
+        await websocket_manager.broadcast_to_session(session_id, {
+            "type": "questions_generated",
+            "data": {
+                "session_id": session_id,
+                "questions": questions,
+                "processed_segments": questions_data.get("processed_segments", 0)
+            },
+            "timestamp": datetime.now(),
+            "session_id": session_id
+        })
+        
+        logger.info(f"问题已生成并发送: session={session_id}, 问题数={len(questions)}")
+        
+    except Exception as e:
+        logger.error(f"处理问题生成结果失败: {e}")
+
 # 注册IPC回调
 process_manager.on_transcript_received = on_transcript_received
 process_manager.on_summary_generated = on_summary_generated
 process_manager.on_progress_update = on_progress_update
+process_manager.on_questions_generated = on_questions_generated
 
 if __name__ == "__main__":
     uvicorn.run(

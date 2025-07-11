@@ -50,9 +50,12 @@ class QAGenerator:
         combined_text = "\n".join(self.segment_buffer)
         
         prompt_template = """
-请根据以下文本生成2-3个与技术相关的问题（每个问题单独一行，以序号开头如1.xxx）：
-文本：{text}
-生成问题：
+请根据以下会议对话内容生成2个与技术相关的问题，这些问题应该能够帮助理解会议的核心内容和技术要点。
+
+会议对话内容：
+{text}
+
+请生成2个问题，每个问题单独一行，以序号开头如1.xxx：
         """
         chain = (
             PromptTemplate(template=prompt_template, input_variables=["text"])
@@ -60,16 +63,25 @@ class QAGenerator:
             | StrOutputParser()
         )
         
-        questions_text = await chain.ainvoke({"text": combined_text})
-        
-        for line in questions_text.split("\n"):
-            line = line.strip()
-            if not line or '.' not in line:
-                continue
-            question = line[line.index('.')+1:].strip()
-            if question:
-                qid = await self.question_queue.add_question(question)
-                print(f"[系统] 新问题已加入队列 (ID: {qid})")
+        try:
+            questions_text = await chain.ainvoke({"text": combined_text})
+            
+            generated_questions = []
+            for line in questions_text.split("\n"):
+                line = line.strip()
+                if not line or '.' not in line:
+                    continue
+                question = line[line.index('.')+1:].strip()
+                if question:
+                    qid = await self.question_queue.add_question(question)
+                    generated_questions.append({"id": qid, "question": question})
+                    print(f"[系统] 新问题已加入队列 (ID: {qid}): {question}")
+            
+            return generated_questions
+            
+        except Exception as e:
+            print(f"[系统] 生成问题失败: {e}")
+            return []
 
     async def question_generator(self, segments: AsyncIterator[str]):
         """问题生成线程"""
