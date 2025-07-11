@@ -13,6 +13,7 @@ noisereduce
 pydub
 moviepy
 scipy
+numpy
 tqdm
 opencc
 
@@ -39,3 +40,4 @@ alibabacloud_ocr_api20210707
 alibabacloud_tea_openapi
 alibabacloud_darabonba_stream
 alibabacloud_tea_util
+pyobjc-framework-Quartz; sys_platform == "darwin"

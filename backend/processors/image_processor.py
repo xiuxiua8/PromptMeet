@@ -8,8 +8,32 @@ from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-import pygetwindow as gw
 import pyautogui
+import platform
+
+# 根据操作系统选择窗口管理库
+if platform.system() == "Darwin":  # macOS
+    try:
+        import pygetwindow as gw
+    except (ImportError, AttributeError):
+        gw = None
+    
+    # macOS原生解决方案
+    try:
+        from Quartz import CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowListOptionOnScreenOnly
+        macos_native = True
+    except ImportError:
+        macos_native = False
+        
+elif platform.system() == "Windows":
+    import pygetwindow as gw
+    macos_native = False
+else:  # Linux
+    try:
+        import pygetwindow as gw
+    except ImportError:
+        gw = None
+    macos_native = False
 from dotenv import load_dotenv
 
 from alibabacloud_ocr_api20210707.client import Client as ocr_api20210707Client
@@ -28,61 +52,341 @@ load_dotenv(env_path)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 记录系统状态
+if platform.system() == "Darwin":
+    if gw:
+        logger.info("pygetwindow可用")
+    else:
+        logger.warning("pygetwindow不可用或版本过低，在macOS上将使用替代方案")
+    
+    if macos_native:
+        logger.info("macOS原生窗口API可用")
+    else:
+        logger.warning("macOS原生窗口API不可用，请安装: pip install pyobjc-framework-Quartz")
+elif platform.system() == "Windows":
+    logger.info("Windows平台，使用pygetwindow")
+else:
+    logger.info(f"其他平台: {platform.system()}")
+
+
+def get_macos_windows():
+    """获取macOS上的窗口信息"""
+    try:
+        from Quartz import CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowListOptionOnScreenOnly
+        
+        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+        target_dict = {}
+        meeting_keywords = ["腾讯会议", "Zoom Workplace", "Zoom", "Microsoft Teams", "钉钉", "飞书", "Meeting"]
+        
+        for window in windows:
+            window_name = window.get('kCGWindowName', '')
+            owner_name = window.get('kCGWindowOwnerName', '')
+            window_layer = window.get('kCGWindowLayer', 0)
+            
+            # 检查窗口名称或应用名称是否包含会议关键词
+            if any(keyword in window_name for keyword in meeting_keywords) or \
+               any(keyword in owner_name for keyword in meeting_keywords):
+                
+                window_id = window.get('kCGWindowNumber', 0)
+                bounds = window.get('kCGWindowBounds', {})
+                
+                # 创建一个简化的窗口对象，包含更多信息
+                mock_window = {
+                    'title': window_name or f"{owner_name} Window",
+                    'bounds': bounds,
+                    'owner': owner_name,
+                    'window_id': window_id,
+                    'layer': window_layer,
+                    'type': 'macos_native',
+                    'raw_window_info': window  # 保存原始窗口信息用于截图
+                }
+                target_dict[window_id] = mock_window
+                logger.info(f"发现会议窗口: {window_name} ({owner_name}) - 图层: {window_layer}")
+        
+        return target_dict if target_dict else None
+    except Exception as e:
+        logger.error(f"macOS原生窗口API调用失败: {e}")
+        return None
+
+
+def activate_macos_app(app_name):
+    """激活macOS应用到前台"""
+    try:
+        import subprocess
+        # 使用osascript激活应用
+        script = f'tell application "{app_name}" to activate'
+        subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+        logger.info(f"成功激活应用: {app_name}")
+        return True
+    except Exception as e:
+        logger.warning(f"激活应用失败 {app_name}: {e}")
+        return False
+
+
+def capture_macos_window(window_info):
+    """使用macOS原生API截取特定窗口"""
+    try:
+        from Quartz import (
+            CGWindowListCreateImage, CGWindowListCreateImageFromArray,
+            kCGWindowListOptionIncludingWindow, kCGWindowListExcludeDesktopElements,
+            kCGWindowImageDefault, kCGNullWindowID
+        )
+        import Quartz
+        from PIL import Image
+        import numpy as np
+        
+        window_id = window_info.get('window_id')
+        if not window_id:
+            return None
+            
+        # 方法1: 尝试截取单个窗口
+        try:
+            # 创建窗口ID数组
+            window_array = [window_id]
+            
+            # 截取指定窗口
+            image = CGWindowListCreateImageFromArray(
+                Quartz.CGRectNull,  # 截取整个窗口
+                window_array,
+                kCGWindowImageDefault
+            )
+            
+            if image:
+                # 转换CGImage到PIL Image
+                width = Quartz.CGImageGetWidth(image)
+                height = Quartz.CGImageGetHeight(image)
+                
+                if width > 0 and height > 0:
+                    # 获取图像数据
+                    data_provider = Quartz.CGImageGetDataProvider(image)
+                    data = Quartz.CGDataProviderCopyData(data_provider)
+                    
+                    # 转换为numpy数组然后转为PIL图像
+                    bytes_per_row = Quartz.CGImageGetBytesPerRow(image)
+                    data_np = np.frombuffer(data, dtype=np.uint8)
+                    
+                    # 重新塑形为图像
+                    if len(data_np) >= height * bytes_per_row:
+                        image_array = data_np[:height * bytes_per_row].reshape((height, bytes_per_row // 4, 4))
+                        # BGRA -> RGB
+                        image_array = image_array[:, :, [2, 1, 0]]
+                        
+                        # 创建PIL图像
+                        pil_image = Image.fromarray(image_array[:, :width, :])
+                        return pil_image
+                        
+        except Exception as e:
+            logger.warning(f"方法1截图失败: {e}")
+        
+        # 方法2: 如果方法1失败，尝试使用窗口位置信息进行区域截图
+        bounds = window_info.get('bounds', {})
+        if bounds:
+            x = int(bounds.get('X', 0))
+            y = int(bounds.get('Y', 0))
+            width = int(bounds.get('Width', 0))
+            height = int(bounds.get('Height', 0))
+            
+            if width > 0 and height > 0:
+                # 尝试激活应用到前台
+                app_name = window_info.get('owner', '')
+                if app_name:
+                    activate_macos_app(app_name)
+                    time.sleep(1)  # 等待窗口显示
+                
+                # 使用pyautogui进行区域截图
+                screenshot = pyautogui.screenshot(region=(x, y, width, height))
+                return screenshot
+                
+    except Exception as e:
+        logger.error(f"macOS窗口截图失败: {e}")
+    
+    return None
+
 
 def get_meeting_windows():
-    windows = gw.getAllWindows()
-    target_dict = {}
+    """获取会议窗口，支持跨平台"""
+    # 首先尝试macOS原生方案
+    if platform.system() == "Darwin" and macos_native:
+        result = get_macos_windows()
+        if result:
+            return result
+    
+    # 然后尝试pygetwindow
+    if gw is not None:
+        try:
+            windows = gw.getAllWindows()
+            target_dict = {}
 
-    for win in windows:
-        title = win.title.strip()
-        #logger.info(f"窗口句柄 {win._hWnd}: {title}")
-        if title == "腾讯会议" or title == "Zoom Workplace":
-            target_dict[win._hWnd] = win
-    #logger.info(f"识别到的会议窗口: {list(target_dict.keys())}")
-    return target_dict if target_dict else None
+            for win in windows:
+                title = win.title.strip()
+                # 支持更多会议软件
+                meeting_keywords = ["腾讯会议", "Zoom Workplace", "Zoom", "Microsoft Teams", "钉钉", "飞书"]
+                
+                if any(keyword in title for keyword in meeting_keywords):
+                    # 使用窗口对象本身作为键，而不是hWnd（macOS可能没有）
+                    window_id = getattr(win, '_hWnd', id(win))
+                    target_dict[window_id] = win
+                    logger.info(f"发现会议窗口: {title}")
+            
+            return target_dict if target_dict else None
+        except Exception as e:
+            logger.error(f"获取窗口列表失败: {e}")
+    
+    # 最后使用fallback方案
+    logger.info("使用fallback方案，将截取整个屏幕")
+    return {"fullscreen": {"title": "全屏截图", "type": "fallback"}}
 
 
 def clean_title(title):
+    """清理窗口标题，生成合适的文件名"""
+    if not title:
+        return "unknown"
+    
     if "腾讯会议" in title:
-        return "tencent"
+        return "tencent_meeting"
     elif "Zoom Workplace" in title or "Zoom" in title:
         return "zoom"
+    elif "Microsoft Teams" in title or "Teams" in title:
+        return "teams"
+    elif "钉钉" in title:
+        return "dingtalk"
+    elif "飞书" in title:
+        return "feishu"
     else:
-        return re.sub(r'[^a-zA-Z0-9]', '_', title.strip())[:30]
+        # 移除特殊字符，保留字母数字和下划线
+        cleaned = re.sub(r'[^a-zA-Z0-9_\u4e00-\u9fff]', '_', title.strip())
+        return cleaned[:30]  # 限制长度
 
 
 def take_screenshots(window_dict, folder="screen_shot") -> List[str]:
+    """截取窗口截图，支持fallback模式"""
     os.makedirs(folder, exist_ok=True)
     image_paths = []
 
     for hwnd, window in window_dict.items():
-        title = window.title.strip()
-        if window.isMinimized:
-            window.restore()
-            time.sleep(0.5)
-        try:
-            window.activate()
-            time.sleep(2)
-        except Exception as e:
-            logger.warning(f"无法激活窗口 {title}: {e}")
-
-        left, top = window.left, window.top
-        width, height = window.width, window.height
+        # 处理fallback情况
+        if isinstance(window, dict) and window.get("type") == "fallback":
+            logger.info("使用全屏截图模式")
+            filename = os.path.join(folder, "screenshot_fullscreen.png")
+            screenshot = pyautogui.screenshot()
+            screenshot.save(filename)
+            logger.info(f"全屏截图已保存为 {filename}")
+            image_paths.append(filename)
+            continue
         
-        padding_ratio = 0.05  # 截掉边缘 5%
-        new_left = left + int(width * padding_ratio)
-        new_top = top + int(height * padding_ratio)
-        new_width = int(width * (1 - 2 * padding_ratio))
-        new_height = int(height * (1 - 2 * padding_ratio))
+        # 处理macOS原生窗口
+        if isinstance(window, dict) and window.get("type") == "macos_native":
+            try:
+                title = window.get('title', 'Unknown')
+                tag = clean_title(title)
+                filename = os.path.join(folder, f"screenshot_{tag}.png")
+                
+                logger.info(f"尝试截取macOS窗口: {title}")
+                
+                # 使用新的窗口级截图功能
+                screenshot = capture_macos_window(window)
+                
+                if screenshot:
+                    screenshot.save(filename)
+                    logger.info(f"macOS窗口级截图成功: {filename}")
+                    image_paths.append(filename)
+                else:
+                    # 如果窗口级截图失败，尝试传统方法
+                    logger.warning(f"窗口级截图失败，尝试传统方法: {title}")
+                    bounds = window.get('bounds', {})
+                    
+                    if bounds:
+                        # 尝试激活应用
+                        app_name = window.get('owner', '')
+                        if app_name:
+                            activate_macos_app(app_name)
+                            time.sleep(1.5)  # 增加等待时间
+                        
+                        x = int(bounds.get('X', 0))
+                        y = int(bounds.get('Y', 0))
+                        width = int(bounds.get('Width', 0))
+                        height = int(bounds.get('Height', 0))
+                        
+                        # 添加一些边距避免截取到窗口边框
+                        padding = 10
+                        region = (x + padding, y + padding, width - 2*padding, height - 2*padding)
+                        
+                        screenshot = pyautogui.screenshot(region=region)
+                        screenshot.save(filename)
+                        logger.info(f"macOS传统截图已保存: {filename}")
+                        image_paths.append(filename)
+                    else:
+                        # 没有位置信息，使用全屏截图
+                        filename = os.path.join(folder, f"screenshot_fullscreen_{tag}.png")
+                        screenshot = pyautogui.screenshot()
+                        screenshot.save(filename)
+                        logger.info(f"macOS全屏截图已保存: {filename}")
+                        image_paths.append(filename)
+                continue
+                
+            except Exception as e:
+                logger.error(f"macOS截图失败: {e}")
+                # fallback到全屏截图
+                tag = clean_title(title if 'title' in locals() else 'fallback')
+                filename = os.path.join(folder, f"screenshot_macos_fallback_{tag}.png")
+                screenshot = pyautogui.screenshot()
+                screenshot.save(filename)
+                logger.info(f"macOS fallback截图已保存: {filename}")
+                image_paths.append(filename)
+                continue
+        
+        # 正常的窗口处理
+        try:
+            title = window.title.strip()
+            if hasattr(window, 'isMinimized') and window.isMinimized:
+                window.restore()
+                time.sleep(0.5)
+            
+            if hasattr(window, 'activate'):
+                try:
+                    window.activate()
+                    time.sleep(2)
+                except Exception as e:
+                    logger.warning(f"无法激活窗口 {title}: {e}")
 
-        tag = clean_title(title)
-        filename = os.path.join(folder, f"screenshot_{tag}.png")
-        screenshot = pyautogui.screenshot(region=(new_left, new_top, new_width, new_height))
-        screenshot.save(filename)
-        logger.info(f"截图已保存为 {filename}")
-        image_paths.append(filename)
+            # 获取窗口位置和大小
+            if hasattr(window, 'left') and hasattr(window, 'top'):
+                left, top = window.left, window.top
+                width, height = window.width, window.height
+                
+                padding_ratio = 0.05  # 截掉边缘 5%
+                new_left = left + int(width * padding_ratio)
+                new_top = top + int(height * padding_ratio)
+                new_width = int(width * (1 - 2 * padding_ratio))
+                new_height = int(height * (1 - 2 * padding_ratio))
 
-        window.minimize()
+                tag = clean_title(title)
+                filename = os.path.join(folder, f"screenshot_{tag}.png")
+                screenshot = pyautogui.screenshot(region=(new_left, new_top, new_width, new_height))
+                screenshot.save(filename)
+                logger.info(f"截图已保存为 {filename}")
+                image_paths.append(filename)
+
+                if hasattr(window, 'minimize'):
+                    window.minimize()
+            else:
+                # 无法获取窗口位置，使用全屏截图
+                logger.warning(f"无法获取窗口 {title} 的位置信息，使用全屏截图")
+                filename = os.path.join(folder, f"screenshot_fullscreen_{clean_title(title)}.png")
+                screenshot = pyautogui.screenshot()
+                screenshot.save(filename)
+                logger.info(f"全屏截图已保存为 {filename}")
+                image_paths.append(filename)
+                
+        except Exception as e:
+            logger.error(f"截图窗口时出错: {e}")
+            # 出错时使用全屏截图作为fallback
+            filename = os.path.join(folder, "screenshot_fallback.png")
+            screenshot = pyautogui.screenshot()
+            screenshot.save(filename)
+            logger.info(f"fallback截图已保存为 {filename}")
+            image_paths.append(filename)
+            
     return image_paths
 
 
