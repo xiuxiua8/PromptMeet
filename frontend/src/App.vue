@@ -1,12 +1,7 @@
 <script>
-// import Controller from './components/Controller.vue'
-// import Agent from './components/Agent.vue'
-// import Table from './components/Table.vue'
-import Summary from '@/views/Summary.vue'
 import MarkdownIt from 'markdown-it';
 
 export default {
-  components: { Summary },
   data() {
     return {
       isRunning:false,
@@ -25,7 +20,7 @@ export default {
       id : new Array(),
       receivedData: '',
       answer:'answer',
-      summary:'111111111111111111111111111111111111111111\n111111111',
+      summary:'会议结束后自动生成……',
       md : new MarkdownIt(),
     };
   },
@@ -102,7 +97,7 @@ export default {
       this.answer=this.receivedData.answer
     },
     ShowSummary() {
-      this.summary=this.receivedData.content
+      this.summary=this.receivedData.data.summary_text
     },
     ShowHistory(){
       const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data.text}
@@ -120,7 +115,7 @@ export default {
         else if(this.receivedData.type=="answer"){
           this.ShowAnswer()
         }
-        else if(this.receivedData.type=="summary"){
+        else if(this.receivedData.type=="summary_generated"){
           this.ShowSummary()
         }
         else if(this.receivedData.type=="audio_transcript"){
@@ -194,7 +189,9 @@ export default {
         </el-timeline>
       </div>
       <div class="tab-content" v-else>
-        <Summary/>
+        <div class="summary">
+          <p v-html="renderedSummary"></p>
+        </div>
       </div>
     </div>
   </div>
@@ -457,5 +454,13 @@ body, html {
 .tab-content::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.15);
   border-radius: 4px;
+}
+.summary {
+  padding-left: 45px;
+  padding-right: 20px;
+}
+.summary p {
+  word-break: break-all;
+  max-width: 100%;
 }
 </style>
