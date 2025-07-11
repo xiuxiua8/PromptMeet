@@ -8,6 +8,17 @@ node_modules/
 dist/
 build/
 
+# Python 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Vite
 .vitepress/cache/
 .cache/
