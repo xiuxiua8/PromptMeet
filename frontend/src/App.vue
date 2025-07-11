@@ -71,6 +71,15 @@ export default {
         },
       });
     },
+    async handleScreenshot(){
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-image-processing`
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+        'Content-Type': 'application/json',
+        },
+      });
+     },
     openTab(tabName) {
       this.activeTab = tabName;
     },
@@ -89,12 +98,12 @@ export default {
     },
 
     ShowQuestion() {
-        const num=this.receivedData.id;
-        this.questions[num%4] = this.receivedData.question; // 存储后端数据
-        this.id[num%4] = num;
+        const num=this.receivedData.data.id;
+        this.questions[num%3] = this.receivedData.data.content; // 存储后端数据
+        this.id[num%3] = num;
     },
     ShowAnswer() {
-      this.answer=this.receivedData.answer
+      this.answer=this.receivedData.data.answer
     },
     ShowSummary() {
       this.summary=this.receivedData.data.summary_text
@@ -103,7 +112,6 @@ export default {
       const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data.text}
       this.chatHistory.push(chat)
     },
-    
   },
   watch: {
     websocket(newVal, oldVal) {
@@ -146,6 +154,7 @@ export default {
         <div class="button-row">
           <button class="start-btn" :disabled="isRunning" @click="handleStartSession">开始</button>
           <button class="stop-btn" :disabled="!isRunning" @click="handleStopSession">终止</button>
+          <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
         </div>
       </div>
       <div class="chat-box">
@@ -272,7 +281,7 @@ body, html {
   display: flex;
   gap: 16px;
 }
-.start-btn, .stop-btn {
+.start-btn, .stop-btn, .screenshot-btn {
   padding: 6px 24px;
   font-size: 1rem;
   border: none;
@@ -294,6 +303,21 @@ body, html {
 }
 .stop-btn:disabled {
   background: #bdbdbd;
+  cursor: not-allowed;
+}
+.screenshot-btn {
+  background: #409eff;
+  color: #fff;
+}
+.screenshot-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
+.screenshot-btn:hover {
+  background: #1f8fff
+}
+.screenshot-btn:disabled:hover {
+  background: #bdbdbd !important;
   cursor: not-allowed;
 }
 .chat-box {
