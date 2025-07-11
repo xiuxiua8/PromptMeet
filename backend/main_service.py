@@ -498,7 +498,7 @@ async def on_questions_generated(session_id: str, questions_data: dict):
             question_message = {
                 "type": "question",
                 "data": {
-                    "id": f"question_{i}",
+                    "id": i,
                     "content": question_content
                 },
                 "timestamp": datetime.now().isoformat(),

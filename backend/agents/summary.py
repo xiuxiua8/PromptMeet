@@ -9,6 +9,14 @@ from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 import os
 from io import StringIO
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 class MeetingProcessor:
     def __init__(self, streaming: bool = True):
@@ -186,7 +194,13 @@ class MeetingProcessor:
             yield "⚠️ 输入内容为空"
             return
 
+        logger.info("="*50)
+        logger.info("开始处理会议内容...\n")
+        
         yield "\n=== 会议内容分析开始 ===\n"
+        
+        # 创建StringIO缓存完整结果
+        result_buffer = StringIO()
         
         # 先提取任务
         tasks = await self._extract_my_tasks(transcript)
@@ -194,25 +208,44 @@ class MeetingProcessor:
         # 生成整合了任务信息的总结
         yield "\n【会议总结】\n"
         async for text_chunk in self._generate_summary(transcript, tasks):
+            result_buffer.write(text_chunk)
             yield text_chunk
         
         # 原始任务JSON
         yield "\n【原始待办事项】\n"
-        yield json.dumps(tasks, ensure_ascii=False, indent=2)
+        tasks_json = json.dumps(tasks, ensure_ascii=False, indent=2)
+        result_buffer.write("\n【原始待办事项】\n")
+        result_buffer.write(tasks_json)
+        yield tasks_json
         
         # 结构化任务JSON
         yield "\n\n【结构化待办事项】\n"
+        result_buffer.write("\n\n【结构化待办事项】\n")
         async for json_chunk in self._generate_structured_tasks(tasks):
+            result_buffer.write(json_chunk)
             yield json_chunk
         
         yield "\n=== 分析完成 ===\n"
+        result_buffer.write("\n=== 分析完成 ===\n")
+        
+        # 保存结果到文件
+        try:
+            with open("Result.txt", "w", encoding="utf-8") as f:
+                f.write(result_buffer.getvalue())
+            logger.info("\n结果已保存到 Result.txt\n")
+        except Exception as e:
+            logger.error(f"保存结果到文件失败: {e}")
+        
+        logger.info("="*50)
+        logger.info(f"处理完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("="*50)
 
 
 async def run_processor(input_text: str):
     """执行入口，先保存结果到文件，再输出到前端"""
     processor = MeetingProcessor()
-    print("="*50)
-    print("开始处理会议内容...\n")
+    logger.info("="*50)
+    logger.info("开始处理会议内容...\n")
     # 创建StringIO缓存完整结果
     result_buffer = StringIO()
     all_chunks = []
@@ -222,7 +255,7 @@ async def run_processor(input_text: str):
     # 先写入文件
     with open("Result.txt", "w", encoding="utf-8") as f:
         f.write(result_buffer.getvalue())
-    print("\n结果已保存到 Result.txt\n")
+    logger.info("\n结果已保存到 Result.txt\n")
     # 再输出到前端/控制台
     for chunk in all_chunks:
         print(chunk, end="", flush=True)
