@@ -23,6 +23,7 @@ class MessageType(str, Enum):
     # 分析相关
     SUMMARY_GENERATED = "summary_generated"
     TASK_EXTRACTED = "task_extracted"
+    IMAGE_OCR_RESULT = "image_ocr_result"
     
     # 进度和状态
     PROGRESS_UPDATE = "progress_update"

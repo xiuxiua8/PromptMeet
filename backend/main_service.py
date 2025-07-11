@@ -405,7 +405,7 @@ async def on_image_result_received(session_id: str, image_result: dict):
             session_manager.update_session(session)
         # 通知前端
         await websocket_manager.broadcast_to_session(session_id, {
-            "type": "image_ocr_result",
+            "type": MessageType.IMAGE_OCR_RESULT,
             "data": image_result,
             "timestamp": datetime.now(),
             "session_id": session_id

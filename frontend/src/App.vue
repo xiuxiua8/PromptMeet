@@ -126,7 +126,7 @@ export default {
         else if(this.receivedData.type=="summary_generated"){
           this.ShowSummary()
         }
-        else if(this.receivedData.type=="audio_transcript"){
+        else if(this.receivedData.type=="audio_transcript" || this.receivedData.type=="image_ocr_result"){
           this.ShowHistory()
         }
         else{
