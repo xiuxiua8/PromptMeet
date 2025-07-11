@@ -149,6 +149,9 @@ async def start_recording(session_id: str):
         # 启动 Whisper 转录进程
         await process_manager.start_whisper_process(session_id)
         
+        # 启动 Question 生成进程
+        await process_manager.start_question_process(session_id)
+        
         # 更新会话状态
         session.is_recording = True
         session_manager.update_session(session)
@@ -161,7 +164,7 @@ async def start_recording(session_id: str):
             "session_id": session_id
         })
         
-        logger.info(f"会话 {session_id} 开始录音")
+        logger.info(f"会话 {session_id} 开始录音，问题生成进程已启动")
         return {
             "success": True,
             "message": "录音开始"
@@ -191,6 +194,9 @@ async def stop_recording(session_id: str):
         # 停止 Whisper 进程
         await process_manager.stop_whisper_process(session_id)
         
+        # 停止 Question 生成进程
+        await process_manager.stop_question_process(session_id)
+        
         # 更新会话状态
         session.is_recording = False
         session_manager.update_session(session)
@@ -203,7 +209,7 @@ async def stop_recording(session_id: str):
             "session_id": session_id
         })
         
-        logger.info(f"会话 {session_id} 停止录音")
+        logger.info(f"会话 {session_id} 停止录音，问题生成进程已停止")
         return {
             "success": True,
             "message": "录音停止"
@@ -323,7 +329,6 @@ async def handle_websocket_message(session_id: str, message: dict):
     """处理WebSocket消息"""
     message_type = message.get("type")
     data = message.get("data", {})
-    
     logger.info(f"收到WebSocket消息: session={session_id}, type={message_type}")
     
     if message_type == "ping":
@@ -449,6 +454,18 @@ async def on_questions_generated(session_id: str, questions_data: dict):
     """收到问题生成结果的回调"""
     try:
         questions = questions_data.get("questions", [])
+        
+        # 直接打印问题到终端
+        print("\n" + "="*80)
+        print(f"🎯 会话 {session_id[:8]} 生成了 {len(questions)} 个问题:")
+        print("="*80)
+        
+        for i, question in enumerate(questions, 1):
+            print(f"\n❓ 问题{i}: {question.get('question', '')}")
+            if 'timestamp' in question:
+                print(f"   时间: {question['timestamp']}")
+        
+        print("\n" + "="*80)
         
         # 通知前端
         await websocket_manager.broadcast_to_session(session_id, {

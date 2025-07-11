@@ -31,9 +31,8 @@ class QuestionQueue:
 class QAGenerator:
     def __init__(self, buffer_size: int = 5):
         self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_API_URL"),
-            model="deepseek-chat",
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            model="gpt-3.5-turbo",
             temperature=0.3,
             streaming=True
         )
@@ -50,12 +49,9 @@ class QAGenerator:
         combined_text = "\n".join(self.segment_buffer)
         
         prompt_template = """
-请根据以下会议对话内容生成2个与技术相关的问题，这些问题应该能够帮助理解会议的核心内容和技术要点。
-
-会议对话内容：
-{text}
-
-请生成2个问题，每个问题单独一行，以序号开头如1.xxx：
+请根据以下文本生成2-3个与技术相关的问题（每个问题单独一行，以序号开头如1.xxx）：
+文本：{text}
+生成问题：
         """
         chain = (
             PromptTemplate(template=prompt_template, input_variables=["text"])
