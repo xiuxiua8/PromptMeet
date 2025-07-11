@@ -256,12 +256,15 @@ class WhisperProcessor:
                 logger.info(f"API返回结果: {result}")
                 
                 if text:
+                    assert self.current_session_id is not None, "session_id 不能为空"
                     transcription_result = TranscriptionResult(
                         session_id=self.current_session_id,
                         text=text,
                         timestamp=datetime.now(),
                         audio_file=filename,
-                        duration=result.get('duration', 0.0)
+                        duration=result.get('duration', 0.0),
+                        confidence=result.get('confidence', 0.0),
+                        speaker=result.get('speaker', None)
                     )
                     
                     logger.info(f"转录成功: {text[:50]}...")
@@ -333,6 +336,7 @@ class WhisperProcessor:
                 return IPCResponse(
                     success=success,
                     data={"message": "录音已开始" if success else "录音启动失败"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -341,6 +345,7 @@ class WhisperProcessor:
                 return IPCResponse(
                     success=success,
                     data={"message": "录音已停止" if success else "录音停止失败"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -354,12 +359,14 @@ class WhisperProcessor:
                         "device_id": self.device_id,
                         "processor_status": "ready"
                     },
+                    error=None,
                     timestamp=datetime.now()
                 )
             
             else:
                 return IPCResponse(
                     success=False,
+                    data=None,
                     error=f"未知命令: {command.command}",
                     timestamp=datetime.now()
                 )
@@ -368,6 +375,7 @@ class WhisperProcessor:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
                 success=False,
+                data=None,
                 error=str(e),
                 timestamp=datetime.now()
             )

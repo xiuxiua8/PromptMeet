@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import json
 import re
-from typing import Iterator, Dict, List
+from typing import Iterator, Dict, List, AsyncGenerator, Any
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 import os
 from io import StringIO
 import logging
+from pydantic import SecretStr
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,25 +24,17 @@ class MeetingProcessor:
         """初始化处理器"""
         # 优先使用DEEPSEEK API，如果没有配置则使用OPENAI API
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        
+        deepseek_api_base = os.getenv("DEEPSEEK_API_BASE")
         if deepseek_api_key:
-            # 使用DEEPSEEK API
             api_key = deepseek_api_key
-            base_url = os.getenv("DEEPSEEK_API_BASE")
+            base_url = deepseek_api_base
             model = "deepseek-chat"
             print(f"使用DEEPSEEK API: {base_url}, Key: {api_key[:8]}...")
-        elif openai_api_key:
-            # 使用OPENAI API
-            api_key = openai_api_key
-            base_url = os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1"
-            model = "gpt-3.5-turbo"
-            print(f"使用OPENAI API: {base_url}, Key: {api_key[:8]}...")
         else:
-            raise ValueError("请设置DEEPSEEK_API_KEY或OPENAI_API_KEY环境变量")
-        
+            raise ValueError("请设置DEEPSEEK_API_KEY环境变量")
+        api_key = SecretStr(api_key) if api_key else None
         self.llm = ChatOpenAI(
-            openai_api_key=api_key,
+            api_key=api_key,
             base_url=base_url,
             model=model,
             temperature=0.2,
@@ -54,7 +47,7 @@ class MeetingProcessor:
         )
         self.my_aliases = ["qin_ran", "秦然", "qinran", "ran", "秦工", "秦老师"]
 
-    async def _stream_with_progress(self, prompt: ChatPromptTemplate, input_dict: dict, progress_msg: str) -> Iterator[str]:
+    async def _stream_with_progress(self, prompt: ChatPromptTemplate, input_dict: dict, progress_msg: str) -> AsyncGenerator[str, Any]:
         """带进度提示的流式处理方法"""
         yield f"{progress_msg}...\n"
         chain = prompt | self.llm | StrOutputParser()
@@ -130,7 +123,7 @@ class MeetingProcessor:
             return []
 
 
-    async def _generate_summary(self, text: str, tasks: List[Dict]) -> Iterator[str]:
+    async def _generate_summary(self, text: str, tasks: List[Dict]) -> AsyncGenerator[str, Any]:
         """生成整合了任务信息的会议摘要"""
         # 将任务转换为易读格式
         tasks_str = "\n".join(
@@ -154,7 +147,7 @@ class MeetingProcessor:
         }):
             yield chunk
 
-    async def _generate_structured_tasks(self, tasks: List[Dict]) -> Iterator[str]:
+    async def _generate_structured_tasks(self, tasks: List[Dict]) -> AsyncGenerator[str, Any]:
         """生成结构化的待办事项JSON"""
         prompt = ChatPromptTemplate.from_template("""
             请将以下任务列表转换为更结构化的JSON格式，要求：
@@ -188,7 +181,7 @@ class MeetingProcessor:
         }):
             yield chunk
 
-    async def process_meeting(self, transcript: str) -> Iterator[str]:
+    async def process_meeting(self, transcript: str) -> AsyncGenerator[str, Any]:
         """主处理流程"""
         if not transcript.strip():
             yield "⚠️ 输入内容为空"

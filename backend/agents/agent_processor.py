@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from pathlib import Path
 import traceback
+from pydantic import SecretStr
 
 # API配置 - 从项目根目录加载环境变量
 project_root = Path(__file__).parent.parent.parent
@@ -36,6 +37,9 @@ from tools.time_tool import TimeTool
 from tools.summary_tool import SummaryTool
 from models.data_models import IPCMessage, IPCCommand, IPCResponse
 
+# 重试机制导入
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 logger = logging.getLogger(__name__)
 
 class AgentProcessor:
@@ -54,15 +58,35 @@ class AgentProcessor:
         self.api_base_url = "http://localhost:8000"
         
         # 初始化LLM和Agent
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            logger.error("未设置DEEPSEEK_API_KEY环境变量")
+            raise ValueError("请在环境变量中设置DEEPSEEK_API_KEY")
+            
+        api_key = SecretStr(api_key)
+        base_url = os.getenv("DEEPSEEK_API_BASE")
+        if not base_url:
+            logger.error("未设置DEEPSEEK_API_BASE环境变量")
+            raise ValueError("请在环境变量中设置DEEPSEEK_API_BASE")
+            
         self.llm = ChatOpenAI(
-            temperature=0.2,
-            model="gpt-3.5-turbo",
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            api_key=api_key,
+            base_url=base_url,
+            model="deepseek-chat",
+            temperature=0.3,
+            streaming=True,
+            timeout=60,  # 增加超时时间
+            max_retries=3  # 增加重试次数
         )
         
         # 初始化嵌入模型
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            logger.error("未设置OPENAI_API_KEY环境变量")
+            raise ValueError("请在环境变量中设置OPENAI_API_KEY")
+            
         self.embeddings = OpenAIEmbeddings(
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+            api_key=SecretStr(openai_api_key)
         )
         
         self.tools = [TimeTool(), SummaryTool()]
@@ -95,7 +119,9 @@ class AgentProcessor:
         """初始化记忆系统"""
         try:
             # 尝试加载现有的向量数据库
-            vector_db_path = self.work_dir / "vector_db"
+            if not self.work_dir:
+                raise ValueError("work_dir未设置")
+            vector_db_path = Path(self.work_dir) / "vector_db"
             if vector_db_path.exists():
                 logger.info("加载现有向量数据库...")
                 self.vector_db = FAISS.load_local(str(vector_db_path), self.embeddings)
@@ -105,15 +131,17 @@ class AgentProcessor:
                 default_doc = Document(page_content="这是一个默认文档，用于初始化向量数据库。")
                 self.vector_db = FAISS.from_documents([default_doc], self.embeddings)
                 # 保存初始数据库
-                self.vector_db.save_local(str(vector_db_path))
+                if self.vector_db is not None:
+                    self.vector_db.save_local(str(vector_db_path))
             
             # 构建问答链
-            self.qa_chain = ConversationalRetrievalChain.from_llm(
-                llm=self.llm,
-                retriever=self.vector_db.as_retriever(),
-                memory=self.memory,
-                return_source_documents=True
-            )
+            if self.vector_db is not None:
+                self.qa_chain = ConversationalRetrievalChain.from_llm(
+                    llm=self.llm,
+                    retriever=self.vector_db.as_retriever(),
+                    memory=self.memory,
+                    return_source_documents=True
+                )
             
             logger.info("记忆系统初始化完成")
             
@@ -149,8 +177,11 @@ class AgentProcessor:
             self.vector_db.add_documents([doc])
             
             # 保存向量数据库
-            vector_db_path = self.work_dir / "vector_db"
-            self.vector_db.save_local(str(vector_db_path))
+            if not self.work_dir:
+                raise ValueError("work_dir未设置")
+            vector_db_path = Path(self.work_dir) / "vector_db"
+            if self.vector_db is not None:
+                self.vector_db.save_local(str(vector_db_path))
             
             logger.info(f"已添加会议内容到记忆系统: {content[:50]}...")
             
@@ -223,89 +254,19 @@ class AgentProcessor:
         except Exception as e:
             logger.error(f"刷新会话内容失败: {e}")
 
-    # async def _handle_chat_message(self, content: str) -> Dict[str, Any]:
-    #     """处理聊天消息"""
-    #     try:
-    #         # 普通对话，先查询记忆系统，然后使用Agent
-    #         memory_response = ""
-    #         if self.meeting_content:  # 如果有会议内容，先查询记忆
-    #             memory_response = await self._query_memory(content)
-            
-    #         # 使用Agent处理
-    #         try:
-    #             agent_response = await self.agent.ainvoke({"input": content})
-    #             # 处理不同的响应格式
-    #             if isinstance(agent_response, dict):
-    #                 agent_output = agent_response.get("output", str(agent_response))
-    #             else:
-    #                 agent_output = str(agent_response)
-    #         except Exception as e:
-    #             logger.error(f"Agent处理失败: {e}")
-    #             agent_output = f"Agent处理失败: {str(e)}"
-            
-    #         # 组合响应
-    #         if memory_response and memory_response != "记忆系统未初始化" and memory_response != "向量数据库未初始化":
-    #             final_response = f"{memory_response}\n\n---\n\nAgent回答：{agent_output}"
-    #         else:
-    #             final_response = agent_output
-            
-    #         return {
-    #             "success": True,
-    #             "response": final_response,
-    #             "timestamp": datetime.now().isoformat()
-    #         }
-    #     except Exception as e:
-    #         logger.error(f"处理聊天消息失败: {e}")
-    #         return {
-    #             "success": False,
-    #             "error": str(e),
-    #             "timestamp": datetime.now().isoformat()
-    #         }
-    async def _handle_chat_message(self, content: str) -> Dict[str, Any]:
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    async def _handle_chat_message(self, content: str) -> str:
+        """处理聊天消息（带重试机制）"""
         try:
-            memory_response = ""
-            if self.meeting_content:
-                memory_response = await self._query_memory(content)
-            try:
-                agent_response = await self.agent.ainvoke({"input": content})
-                logger.info(f"agent_response type: {type(agent_response)}, value: {agent_response}")
-                # 兼容dict和对象
-                if isinstance(agent_response, dict):
-                    agent_output = (
-                        agent_response.get("output")
-                        or agent_response.get("answer")
-                        or agent_response.get("action_input")
-                        or agent_response.get("result")
-                        or next(iter(agent_response.values()), None)
-                        or str(agent_response)
-                    )
-                else:
-                    # 兼容LangChain AgentFinish/AgentAction等对象
-                    agent_output = getattr(agent_response, "output", None) \
-                        or getattr(agent_response, "answer", None) \
-                        or getattr(agent_response, "action_input", None) \
-                        or getattr(agent_response, "result", None) \
-                        or str(agent_response)
-            except Exception as e:
-                logger.error(f"Agent处理失败: {e}")
-                logger.error(traceback.format_exc())
-                agent_output = f"Agent处理失败: {str(e)}"
-            if memory_response and memory_response not in ["记忆系统未初始化", "向量数据库未初始化"]:
-                final_response = f"{memory_response}\n\n---\n\nAgent回答：{agent_output}"
-            else:
-                final_response = agent_output
-            return {
-                "success": True,
-                "response": final_response,
-                "timestamp": datetime.now().isoformat()
-            }
+            logger.info(f"开始处理用户消息: {content[:50]}...")
+            agent_response = await self.agent.ainvoke({"input": content})
+            response_text = agent_response.get("output", "抱歉，我无法处理您的请求。")
+            logger.info(f"Agent响应成功: {response_text[:50]}...")
+            return response_text
         except Exception as e:
-            logger.error(f"处理聊天消息失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+            logger.error(f"Agent处理失败: {e}")
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            raise  # 重新抛出异常以触发重试
 
     async def handle_command(self, command: IPCCommand) -> IPCResponse:
         """处理IPC命令"""
@@ -316,18 +277,27 @@ class AgentProcessor:
                 
                 # 处理消息
                 content = command.params.get("content", "")
-                result = await self._handle_chat_message(content)
-                
-                return IPCResponse(
-                    success=result["success"],
-                    data=result,
-                    error=result.get("error"),
-                    timestamp=datetime.now()
-                )
+                try:
+                    result = await self._handle_chat_message(content)
+                    return IPCResponse(
+                        success=True,
+                        data={"response": result},
+                        error=None,
+                        timestamp=datetime.now()
+                    )
+                except Exception as e:
+                    logger.error(f"Agent处理消息失败: {e}")
+                    return IPCResponse(
+                        success=False,
+                        data=None,
+                        error=f"Agent处理失败: {str(e)}",
+                        timestamp=datetime.now()
+                    )
             
             else:
                 return IPCResponse(
                     success=False,
+                    data=None,
                     error=f"未知命令: {command.command}",
                     timestamp=datetime.now()
                 )
@@ -336,6 +306,7 @@ class AgentProcessor:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
                 success=False,
+                data=None,
                 error=str(e),
                 timestamp=datetime.now()
             )

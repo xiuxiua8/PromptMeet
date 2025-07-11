@@ -86,7 +86,11 @@ async def create_session():
     session = SessionState(
         session_id=session_id,
         is_recording=False,
-        start_time=datetime.now()
+        start_time=datetime.now(),
+        end_time=None,
+        current_summary=None,
+        participant_count=0,
+        audio_file_path=None
     )
     
     session_manager.add_session(session)
@@ -407,7 +411,9 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             text=transcript_data["text"],
             timestamp=datetime.fromisoformat(transcript_data["timestamp"]),
             confidence=transcript_data.get("confidence", 0.0),
-            speaker=transcript_data.get("speaker")
+            speaker=transcript_data.get("speaker"),
+            start_time=transcript_data.get("start_time"),  # 或者合适的默认值
+            end_time=transcript_data.get("end_time")       # 或者合适的默认值
         )
         
         # 更新会话状态

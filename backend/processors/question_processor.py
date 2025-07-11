@@ -114,7 +114,9 @@ class QuestionProcessor:
             logger.error(f"问题生成失败: {e}")
             return {
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "questions": [],
+                "processed_segments": 0
             }
     
     async def _process_session_transcripts(self, session_id: str):
@@ -149,10 +151,12 @@ class QuestionProcessor:
                                     },
                                     "timestamp": datetime.now().isoformat()
                                 }
-                                
-                                with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                    out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
-                                    out_f.flush()
+                                if not self.ipc_output_file:
+                                    logger.error("ipc_output_file 未设置，无法写入问题结果")
+                                else:
+                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                        out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
+                                        out_f.flush()
                                 
                                 logger.info(f"问题生成完成并已发送，共 {len(result['questions'])} 个问题")
                             else:
@@ -217,10 +221,12 @@ class QuestionProcessor:
                                         },
                                         "timestamp": datetime.now().isoformat()
                                     }
-                                    
-                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                        out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
-                                        out_f.flush()
+                                    if not self.ipc_output_file:
+                                        logger.error("ipc_output_file 未设置，无法写入问题结果")
+                                    else:
+                                        with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                            out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
+                                            out_f.flush()
                                     
                                     logger.info(f"问题已发送给前端，共 {len(result['questions'])} 个问题")
                                 else:
@@ -252,6 +258,7 @@ class QuestionProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Question处理器已启动"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -260,6 +267,7 @@ class QuestionProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Question处理器已停止"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -283,12 +291,14 @@ class QuestionProcessor:
                         "buffer_size": len(self.qa_generator.segment_buffer),
                         "processor_status": "ready"
                     },
+                    error=None,
                     timestamp=datetime.now()
                 )
             
             else:
                 return IPCResponse(
                     success=False,
+                    data=None,
                     error=f"未知命令: {command.command}",
                     timestamp=datetime.now()
                 )
@@ -297,6 +307,7 @@ class QuestionProcessor:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
                 success=False,
+                data=None,
                 error=str(e),
                 timestamp=datetime.now()
             )
@@ -354,6 +365,7 @@ async def main():
                                     response = IPCResponse(
                                         success=True,
                                         data={"message": "Question处理器已启动，开始监听转录片段"},
+                                        error=None,
                                         timestamp=datetime.now()
                                     )
                                 else:

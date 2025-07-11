@@ -118,7 +118,7 @@ class SummaryProcessor:
             
             # 创建摘要对象
             summary = MeetingSummary(
-                session_id=self.current_session_id,
+                session_id=self.current_session_id if self.current_session_id is not None else "",
                 summary_text=summary_text,
                 tasks=tasks,
                 key_points=key_points,
@@ -180,10 +180,12 @@ class SummaryProcessor:
                                     "data": result["summary"],
                                     "timestamp": datetime.now().isoformat()
                                 }
-                                
-                                with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                    out_f.write(json.dumps(summary_message, ensure_ascii=False, default=str) + '\n')
-                                    out_f.flush()
+                                if not self.ipc_output_file:
+                                    logger.error("ipc_output_file 未设置，无法写入摘要结果")
+                                else:
+                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                        out_f.write(json.dumps(summary_message, ensure_ascii=False, default=str) + '\n')
+                                        out_f.flush()
                                 
                                 logger.info("摘要生成完成并已发送")
                             else:
@@ -208,6 +210,7 @@ class SummaryProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Summary处理器已启动"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -216,6 +219,7 @@ class SummaryProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Summary处理器已停止"},
+                    error=None,
                     timestamp=datetime.now()
                 )
             
@@ -237,12 +241,14 @@ class SummaryProcessor:
                         "session_id": self.current_session_id,
                         "processor_status": "ready"
                     },
+                    error=None,
                     timestamp=datetime.now()
                 )
             
             else:
                 return IPCResponse(
                     success=False,
+                    data=None,
                     error=f"未知命令: {command.command}",
                     timestamp=datetime.now()
                 )
@@ -251,6 +257,7 @@ class SummaryProcessor:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
                 success=False,
+                data=None,
                 error=str(e),
                 timestamp=datetime.now()
             )
@@ -303,6 +310,7 @@ async def main():
                                     response = IPCResponse(
                                         success=True,
                                         data={"message": "Summary处理完成"},
+                                        error=None,
                                         timestamp=datetime.now()
                                     )
                                 else:
