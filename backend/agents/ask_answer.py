@@ -49,7 +49,7 @@ class QAGenerator:
         combined_text = "\n".join(self.segment_buffer)
         
         prompt_template = """
-请根据以下文本生成2-3个与技术相关的问题（每个问题单独一行，以序号开头如1.xxx）：
+请根据以下文本生成1个与技术相关的问题（以序号开头如1.xxx）：
 文本：{text}
 生成问题：
         """

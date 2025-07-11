@@ -209,29 +209,26 @@ class MeetingProcessor:
 
 
 async def run_processor(input_text: str):
-    """执行入口，同时支持流式输出和文件保存"""
+    """执行入口，先保存结果到文件，再输出到前端"""
     processor = MeetingProcessor()
-    
     print("="*50)
     print("开始处理会议内容...\n")
-    
     # 创建StringIO缓存完整结果
     result_buffer = StringIO()
-    
+    all_chunks = []
     async for chunk in processor.process_meeting(input_text):
-        # 实时输出到控制台
-        print(chunk, end="", flush=True)
-        # 同时写入缓存
+        all_chunks.append(chunk)
         result_buffer.write(chunk)
-    
+    # 先写入文件
+    with open("Result.txt", "w", encoding="utf-8") as f:
+        f.write(result_buffer.getvalue())
+    print("\n结果已保存到 Result.txt\n")
+    # 再输出到前端/控制台
+    for chunk in all_chunks:
+        print(chunk, end="", flush=True)
     print("\n" + "="*50)
     print(f"处理完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*50)
-    
-    # 将结果写入文件
-    with open("Result.txt", "w", encoding="utf-8") as f:
-        f.write(result_buffer.getvalue())
-    print("\n结果已保存到 Result.txt")
 
 
 if __name__ == "__main__":

@@ -360,11 +360,38 @@ async def handle_websocket_message(session_id: str, message: dict):
 # 添加Agent响应回调
 async def on_agent_response(session_id: str, response: dict):
     """处理Agent响应"""
+    # 兼容旧结构，提取最终回答内容
+    content = None
+    # response 可能是多层嵌套
+    try:
+        # 兼容多层data
+        if isinstance(response, dict):
+            # 兼容直接返回字符串
+            if isinstance(response.get("data"), str):
+                content = response["data"]
+            elif isinstance(response.get("data"), dict):
+                # 兼容多层data
+                data = response["data"]
+                # 可能有response字段
+                if isinstance(data.get("response"), str):
+                    content = data["response"]
+                elif isinstance(data.get("data"), dict) and isinstance(data["data"].get("response"), str):
+                    content = data["data"]["response"]
+                elif isinstance(data.get("output"), str):
+                    content = data["output"]
+                elif isinstance(data.get("content"), str):
+                    content = data["content"]
+    except Exception as e:
+        content = str(response)
+
+    if not content:
+        content = str(response)
+
     await websocket_manager.broadcast_to_session(session_id, {
-        "type": "agent_response",
-        "data": response,
-        "timestamp": datetime.now().isoformat(),
-        "session_id": session_id
+        "type": "answer",
+        "data": {
+            "content": content
+        }
     })
 # 注册回调
 process_manager.on_agent_response = on_agent_response
@@ -460,24 +487,29 @@ async def on_questions_generated(session_id: str, questions_data: dict):
         print(f"🎯 会话 {session_id[:8]} 生成了 {len(questions)} 个问题:")
         print("="*80)
         
+        # 为每个问题生成递增的ID并发送给前端
         for i, question in enumerate(questions, 1):
-            print(f"\n❓ 问题{i}: {question.get('question', '')}")
+            question_content = question.get('question', '')
+            print(f"\n❓ 问题{i}: {question_content}")
             if 'timestamp' in question:
                 print(f"   时间: {question['timestamp']}")
+            
+            # 发送单个问题给前端
+            question_message = {
+                "type": "question",
+                "data": {
+                    "id": f"question_{i}",
+                    "content": question_content
+                },
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id
+            }
+            
+            await websocket_manager.broadcast_to_session(session_id, question_message)
+            print(f"   📤 已发送问题{i}给前端")
         
         print("\n" + "="*80)
         
-        # 通知前端
-        await websocket_manager.broadcast_to_session(session_id, {
-            "type": "questions_generated",
-            "data": {
-                "session_id": session_id,
-                "questions": questions,
-                "processed_segments": questions_data.get("processed_segments", 0)
-            },
-            "timestamp": datetime.now(),
-            "session_id": session_id
-        })
         
         logger.info(f"问题已生成并发送: session={session_id}, 问题数={len(questions)}")
         

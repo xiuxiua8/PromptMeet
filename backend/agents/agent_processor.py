@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from pathlib import Path
+import traceback
 
 # API配置 - 从项目根目录加载环境变量
 project_root = Path(__file__).parent.parent.parent
@@ -70,7 +71,7 @@ class AgentProcessor:
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True,
-            output_key='answer'
+            output_key="output",  # 或 "output"，取决于你的Agent链路实际返回的key
         )
         
         self.agent = initialize_agent(
@@ -79,7 +80,8 @@ class AgentProcessor:
             agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
             verbose=True,
             memory=self.memory,
-            handle_parsing_errors=True
+            handle_parsing_errors=True,
+            output_key="output"
         )
         
         # IPC通信文件路径
@@ -166,6 +168,9 @@ class AgentProcessor:
             
             # 执行查询
             result = self.qa_chain.invoke({"question": question})
+            logger.info("="*100)
+            logger.info(f"result: {result}")
+            logger.info("="*100)
             
             # 获取答案和来源
             answer = result.get('answer', '')
@@ -218,32 +223,77 @@ class AgentProcessor:
         except Exception as e:
             logger.error(f"刷新会话内容失败: {e}")
 
-    async def _handle_chat_message(self, content: str) -> Dict[str, Any]:
-        """处理聊天消息"""
-        try:
-            # 普通对话，先查询记忆系统，然后使用Agent
-            memory_response = ""
-            if self.meeting_content:  # 如果有会议内容，先查询记忆
-                memory_response = await self._query_memory(content)
+    # async def _handle_chat_message(self, content: str) -> Dict[str, Any]:
+    #     """处理聊天消息"""
+    #     try:
+    #         # 普通对话，先查询记忆系统，然后使用Agent
+    #         memory_response = ""
+    #         if self.meeting_content:  # 如果有会议内容，先查询记忆
+    #             memory_response = await self._query_memory(content)
             
-            # 使用Agent处理
+    #         # 使用Agent处理
+    #         try:
+    #             agent_response = await self.agent.ainvoke({"input": content})
+    #             # 处理不同的响应格式
+    #             if isinstance(agent_response, dict):
+    #                 agent_output = agent_response.get("output", str(agent_response))
+    #             else:
+    #                 agent_output = str(agent_response)
+    #         except Exception as e:
+    #             logger.error(f"Agent处理失败: {e}")
+    #             agent_output = f"Agent处理失败: {str(e)}"
+            
+    #         # 组合响应
+    #         if memory_response and memory_response != "记忆系统未初始化" and memory_response != "向量数据库未初始化":
+    #             final_response = f"{memory_response}\n\n---\n\nAgent回答：{agent_output}"
+    #         else:
+    #             final_response = agent_output
+            
+    #         return {
+    #             "success": True,
+    #             "response": final_response,
+    #             "timestamp": datetime.now().isoformat()
+    #         }
+    #     except Exception as e:
+    #         logger.error(f"处理聊天消息失败: {e}")
+    #         return {
+    #             "success": False,
+    #             "error": str(e),
+    #             "timestamp": datetime.now().isoformat()
+    #         }
+    async def _handle_chat_message(self, content: str) -> Dict[str, Any]:
+        try:
+            memory_response = ""
+            if self.meeting_content:
+                memory_response = await self._query_memory(content)
             try:
                 agent_response = await self.agent.ainvoke({"input": content})
-                # 处理不同的响应格式
+                logger.info(f"agent_response type: {type(agent_response)}, value: {agent_response}")
+                # 兼容dict和对象
                 if isinstance(agent_response, dict):
-                    agent_output = agent_response.get("output", str(agent_response))
+                    agent_output = (
+                        agent_response.get("output")
+                        or agent_response.get("answer")
+                        or agent_response.get("action_input")
+                        or agent_response.get("result")
+                        or next(iter(agent_response.values()), None)
+                        or str(agent_response)
+                    )
                 else:
-                    agent_output = str(agent_response)
+                    # 兼容LangChain AgentFinish/AgentAction等对象
+                    agent_output = getattr(agent_response, "output", None) \
+                        or getattr(agent_response, "answer", None) \
+                        or getattr(agent_response, "action_input", None) \
+                        or getattr(agent_response, "result", None) \
+                        or str(agent_response)
             except Exception as e:
                 logger.error(f"Agent处理失败: {e}")
+                logger.error(traceback.format_exc())
                 agent_output = f"Agent处理失败: {str(e)}"
-            
-            # 组合响应
-            if memory_response and memory_response != "记忆系统未初始化" and memory_response != "向量数据库未初始化":
+            if memory_response and memory_response not in ["记忆系统未初始化", "向量数据库未初始化"]:
                 final_response = f"{memory_response}\n\n---\n\nAgent回答：{agent_output}"
             else:
                 final_response = agent_output
-            
             return {
                 "success": True,
                 "response": final_response,

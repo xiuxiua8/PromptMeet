@@ -93,12 +93,12 @@ export default {
     },
 
     ShowQuestion() {
-        const num=this.receivedData.id;
-        this.questions[num%4] = this.receivedData.question; // 存储后端数据
-        this.id[num%4] = num;
+        const num=this.receivedData.data.id;
+        this.questions[num%3] = this.receivedData.data.content; // 存储后端数据
+        this.id[num%3] = num;
     },
     ShowAnswer() {
-      this.answer=this.receivedData.answer
+      this.answer=this.receivedData.data.answer
     },
     ShowSummary() {
       this.summary=this.receivedData.data.summary_text

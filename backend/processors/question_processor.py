@@ -32,7 +32,7 @@ class QuestionProcessor:
     """问题生成处理器"""
     
     def __init__(self):
-        self.qa_generator = QAGenerator(buffer_size=5)  # 每5段对话生成问题
+        self.qa_generator = QAGenerator(buffer_size=3)  # 每3段对话生成问题
         self.running = False
         self.current_session_id = None
         self.processed_segments = 0  # 已处理的转录片段数
@@ -70,9 +70,9 @@ class QuestionProcessor:
             
             logger.info(f"当前缓冲区大小: {len(self.qa_generator.segment_buffer)}")
             
-            # 检查是否需要生成问题（每5段对话）
-            if len(self.qa_generator.segment_buffer) >= 5:
-                logger.info(f"缓冲区达到5段，开始生成问题")
+            # 检查是否需要生成问题（每3段对话）
+            if len(self.qa_generator.segment_buffer) >= 3:
+                logger.info(f"缓冲区达到3段，开始生成问题")
                 
                 # 生成问题
                 await self.qa_generator.generate_questions_from_buffer()
@@ -102,7 +102,7 @@ class QuestionProcessor:
                     "generated_at": datetime.now().isoformat()
                 }
             else:
-                logger.info(f"缓冲区未达到5段，当前: {len(self.qa_generator.segment_buffer)}")
+                logger.info(f"缓冲区未达到3段，当前: {len(self.qa_generator.segment_buffer)}")
                 return {
                     "success": True,
                     "questions": [],
