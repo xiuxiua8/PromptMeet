@@ -276,10 +276,36 @@ class WhisperProcessor:
         except Exception as e:
             logger.error(f"转录失败: {e}", exc_info=True)
             return None
-    
+        
     async def _send_transcription_result(self, result: TranscriptionResult):
-        """发送转录结果到主进程"""
+        """发送转录结果到主进程（过滤包含特定繁体关键词的内容并转换为简体中文）"""
         try:
+            # 检查是否包含过滤词（繁体中文）
+            filter_words = ["訂閱", "字幕","字幕","明镜与点点","歌曲","詞曲"]  # 注意：訂閱的"閱"是简繁体同形，这里使用"閱"的繁体形式            text = result.text or ""
+            text = result.text or "" 
+            if any(word in text for word in filter_words):
+                logger.info(f"过滤包含敏感词的转录结果: {text[:50]}...")
+                return  # 直接返回，不发送结果
+
+            # 繁体转简体（使用opencc库）
+            try:
+                # 延迟导入以减少依赖
+                import opencc
+                if not hasattr(self, '_cc_converter'):
+                    self._cc_converter = opencc.OpenCC('t2s')  # 繁体转简体
+                
+                # 执行转换
+                simplified_text = self._cc_converter.convert(text)
+                
+                # 更新结果对象中的文本
+                result.text = simplified_text
+                logger.debug(f"繁体转简体完成: {text[:20]}... → {simplified_text[:20]}...")
+            except ImportError:
+                logger.warning("未安装opencc-python-reimplemented，跳过繁体转简体")
+            except Exception as e:
+                logger.error(f"繁体转简体失败: {e}, 使用原文本")
+
+            # 原始发送逻辑
             message = {
                 "type": "transcript",
                 "data": result.model_dump(),
@@ -300,7 +326,8 @@ class WhisperProcessor:
             
         except Exception as e:
             logger.error(f"发送转录结果失败: {e}")
-    
+
+
     async def stop_recording(self):
         """停止录音"""
         try:
