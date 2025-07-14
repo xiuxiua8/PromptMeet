@@ -394,6 +394,43 @@ class ProcessManager:
             logger.error(f"启动 Image 进程失败: {e}")
             raise
 
+    async def stop_image_process(self, session_id: str):
+        """停止 Image OCR 进程"""
+        try:
+            if session_id not in self.image_processes:
+                logger.warning(f"会话 {session_id} 没有运行的 Image 进程")
+                return
+
+            process = self.image_processes[session_id]
+
+            # 发送停止信号
+            process.terminate()
+
+            # 等待进程结束
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(process.wait),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Image 进程 {process.pid} 未在5秒内结束，强制终止")
+                process.kill()
+
+            # 清理记录
+            del self.image_processes[session_id]
+
+            for process_id, status in self.processes.items():
+                if status.session_id == session_id and status.module_name == "image":
+                    status.status = "stopped"
+                    status.last_update = datetime.now()
+                    break
+
+            logger.info(f"Image 进程已停止: session={session_id}")
+
+        except Exception as e:
+            logger.error(f"停止 Image 进程失败: {e}")
+
+
     async def stop_session_processes(self, session_id: str):
         """停止会话相关的所有进程"""
         logger.info(f"停止会话 {session_id} 的所有进程")
@@ -404,7 +441,12 @@ class ProcessManager:
         
         # 停止 Summary 进程
         if session_id in self.summary_processes:
-            await self.stop_summary_process(session_id)   
+            await self.stop_summary_process(session_id)
+        
+        # 停止 Image 进程
+        if session_id in self.image_processes:
+            await self.stop_image_process(session_id)
+           
 
         
         # 清理会话目录
@@ -478,28 +520,32 @@ class ProcessManager:
             logger.error(f"监听 Summary 输出错误: {e}")
 
     async def _monitor_image_output(self, session_id: str, output_pipe: Path):
-        """监听 Image OCR 输出"""
+        """监听 Image 进程输出"""
         logger.info(f"开始监听 Image 输出: {output_pipe}")
-        last_line_count = 0
-
+        
         try:
             while session_id in self.image_processes:
                 if output_pipe.exists():
                     try:
                         with open(output_pipe, 'r', encoding='utf-8') as f:
                             lines = f.readlines()
-                            new_lines = lines[last_line_count:]
-                            last_line_count = len(lines)
-
-                            for line in new_lines:
-                                line =line.strip()
+                        
+                        if lines:  # 如果有内容
+                            for line in lines:
+                                line = line.strip()
                                 if line:
                                     message = json.loads(line)
                                     await self._handle_image_message(session_id, message)
+                        
+                            # 处理完后清空文件
+                            with open(output_pipe, 'w') as f:
+                                pass
+                            
                     except (json.JSONDecodeError, FileNotFoundError):
                         pass
+            
                 await asyncio.sleep(0.1)
-
+    
         except Exception as e:
             logger.error(f"监听 Image 输出错误: {e}")
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 import pyautogui
 import platform
+from datetime import datetime
 
 # 根据操作系统选择窗口管理库
 if platform.system() == "Darwin":  # macOS
@@ -220,7 +221,7 @@ def get_meeting_windows():
             for win in windows:
                 title = win.title.strip()
                 # 支持更多会议软件
-                meeting_keywords = ["腾讯会议", "Zoom Workplace", "Zoom", "Microsoft Teams", "钉钉", "飞书"]
+                meeting_keywords = ["腾讯会议", "Zoom Workplace", "Zoom", "Microsoft Teams", "钉钉", "飞书","会议"]
                 
                 if any(keyword in title for keyword in meeting_keywords):
                     # 使用窗口对象本身作为键，而不是hWnd（macOS可能没有）
@@ -242,7 +243,7 @@ def clean_title(title):
     if not title:
         return "unknown"
     
-    if "腾讯会议" in title:
+    if "腾讯会议" or "会议" in title:
         return "tencent_meeting"
     elif "Zoom Workplace" in title or "Zoom" in title:
         return "zoom"
@@ -262,6 +263,11 @@ def take_screenshots(window_dict, folder="screen_shot") -> List[str]:
     """截取窗口截图，支持fallback模式"""
     os.makedirs(folder, exist_ok=True)
     image_paths = []
+    print("当前窗口数:", len(window_dict))
+    for k in window_dict:
+        print("窗口key:", k)
+        print("窗口值:", window_dict[k])
+
 
     for hwnd, window in window_dict.items():
         # 处理fallback情况
@@ -354,14 +360,15 @@ def take_screenshots(window_dict, folder="screen_shot") -> List[str]:
                 left, top = window.left, window.top
                 width, height = window.width, window.height
                 
-                padding_ratio = 0.05  # 截掉边缘 5%
+                padding_ratio = 0.025  # 截掉边缘 5%
                 new_left = left + int(width * padding_ratio)
                 new_top = top + int(height * padding_ratio)
                 new_width = int(width * (1 - 2 * padding_ratio))
                 new_height = int(height * (1 - 2 * padding_ratio))
 
                 tag = clean_title(title)
-                filename = os.path.join(folder, f"screenshot_{tag}.png")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                filename = os.path.join(folder, f"screenshot_{tag}_{timestamp}.png")
                 screenshot = pyautogui.screenshot(region=(new_left, new_top, new_width, new_height))
                 screenshot.save(filename)
                 logger.info(f"截图已保存为 {filename}")

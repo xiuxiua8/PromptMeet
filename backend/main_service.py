@@ -248,8 +248,24 @@ async def start_image_processing(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
+    
     try:
+        if session_id in process_manager.image_processes:
+            process = process_manager.image_processes[session_id]
+            pid = process.pid
+            print(f"即将停止图像进程：session_id={session_id}, PID={pid}")
+        
+            await process_manager.stop_image_process(session_id)
+            print(f"图像进程已停止：session_id={session_id}")
+
         await process_manager.start_image_process(session_id)
+        process = process_manager.image_processes[session_id]
+        pid = process.pid
+        print(f"已启动图像进程：session_id={session_id}, PID={pid}")
+
+        await asyncio.sleep(2.0)
+
+        # await process_manager.stop_image_process(session_id)
         
         return {
             "success": True,
@@ -401,17 +417,23 @@ async def on_image_result_received(session_id: str, image_result: dict):
          # 更新会话状态
         session = session_manager.get_session(session_id)
         if session:
-            session.image_ocr_result.append(image_result)
+            
+            session.image_ocr_result=[image_result]
+            logger.info(f"image_ocr_result: {image_result}")
             session_manager.update_session(session)
         # 通知前端
         await websocket_manager.broadcast_to_session(session_id, {
             "type": MessageType.IMAGE_OCR_RESULT,
-            "data": image_result,
+            "data": image_result["text"],
             "timestamp": datetime.now(),
             "session_id": session_id
         })
 
         logger.info(f"图像 OCR 结果已发送: session={session_id}")
+        process = process_manager.image_processes[session_id]
+        pid = process.pid
+        print(f"发送图像的进程：session_id={session_id}, PID={pid}")
+        # await process_manager.stop_image_process(session_id)
 
     except Exception as e:
         logger.error(f"处理图像 OCR 结果失败: {e}")
