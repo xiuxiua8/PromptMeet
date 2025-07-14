@@ -106,6 +106,15 @@ export default {
           data: {content:this.message}
         }));
         this.message = "";
+        this.$nextTick(() => {
+          this.scrollToBottom();
+        });
+      }
+    },
+    scrollToBottom() {
+      const el = this.$refs.chatDisplay;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
       }
     },
     sendId(id) {
@@ -119,7 +128,19 @@ export default {
         this.id++; // 更新 id
     },
     ShowAnswer() {
-      this.qa.push({ from: 'agent', content: this.receivedData.data.content });
+      const fullText = this.receivedData.data.content;
+      let currentText = '';
+      this.qa.push({ from: 'agent', content: '' });
+      let i = 0;
+      const interval = setInterval(() => {
+        if (i < fullText.length) {
+          currentText += fullText[i];
+          this.$set(this.qa, this.qa.length - 1, { from: 'agent', content: currentText });
+          i++;
+        } else {
+          clearInterval(interval);
+        }
+      }, 20); // 20ms 每字，可根据需要调整速度
     },
     ShowSummary() {
       this.summary=this.receivedData.data.summary_text
@@ -159,6 +180,11 @@ export default {
         }
 
       };
+    },
+    qa() {
+      this.$nextTick(() => {
+        this.scrollToBottom();
+      });
     }
   },
   mounted() {
@@ -186,7 +212,7 @@ export default {
         </div>
       </div>
       <div class="chat-box">
-        <div class="chat-display">
+        <div class="chat-display" ref="chatDisplay">
           <!-- 聊天内容显示区域 -->
           <template v-if="qa.length === 0">
             <div class="chat-welcome">
