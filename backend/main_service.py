@@ -77,6 +77,57 @@ async def health_check():
         "connected_clients": len(websocket_manager.connections)
     }
 
+@app.get("/api/windows")
+async def get_available_windows():
+    """获取可用的会议窗口列表"""
+    try:
+        # 临时启动图像处理器来获取窗口列表
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'processors'))
+        
+        from image_processor import get_meeting_windows
+        
+        window_dict = get_meeting_windows()
+        if not window_dict:
+            return {
+                "success": True,
+                "windows": [],
+                "message": "未检测到会议窗口"
+            }
+        
+        # 格式化窗口信息供前端使用
+        windows = []
+        for window_id, window in window_dict.items():
+            if isinstance(window, dict):
+                # macOS 或 fallback 窗口
+                windows.append({
+                    "id": str(window_id),
+                    "title": window.get("title", "Unknown"),
+                    "type": window.get("type", "unknown")
+                })
+            else:
+                # pygetwindow 窗口对象
+                windows.append({
+                    "id": str(window_id),
+                    "title": window.title,
+                    "type": "window"
+                })
+        
+        return {
+            "success": True,
+            "windows": windows,
+            "message": f"找到 {len(windows)} 个可用窗口"
+        }
+        
+    except Exception as e:
+        logger.error(f"获取窗口列表失败: {e}")
+        return {
+            "success": False,
+            "windows": [],
+            "message": f"获取窗口列表失败: {str(e)}"
+        }
+
 @app.post("/api/sessions")
 async def create_session():
     """创建新的会议会话"""
@@ -242,13 +293,12 @@ async def generate_summary(session_id: str):
         }
 
 @app.post("/api/sessions/{session_id}/start-image-processing")
-async def start_image_processing(session_id: str):
+async def start_image_processing(session_id: str, window_id: Optional[str] = None):
     """启动图像 OCR 处理"""
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    
     try:
         if session_id in process_manager.image_processes:
             process = process_manager.image_processes[session_id]
@@ -258,7 +308,7 @@ async def start_image_processing(session_id: str):
             await process_manager.stop_image_process(session_id)
             print(f"图像进程已停止：session_id={session_id}")
 
-        await process_manager.start_image_process(session_id)
+        await process_manager.start_image_process(session_id, window_id)
         process = process_manager.image_processes[session_id]
         pid = process.pid
         print(f"已启动图像进程：session_id={session_id}, PID={pid}")
@@ -269,7 +319,7 @@ async def start_image_processing(session_id: str):
         
         return {
             "success": True,
-            "message": "图像处理已启动"
+            "message": f"图像处理已启动{f' (窗口ID: {window_id})' if window_id else ''}"
         }
 
     except Exception as e:
@@ -424,7 +474,7 @@ async def on_image_result_received(session_id: str, image_result: dict):
         # 通知前端
         await websocket_manager.broadcast_to_session(session_id, {
             "type": MessageType.IMAGE_OCR_RESULT,
-            "data": image_result["text"],
+            "data": image_result,
             "timestamp": datetime.now(),
             "session_id": session_id
         })

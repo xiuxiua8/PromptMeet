@@ -22,6 +22,10 @@ export default {
       answer:'answer',
       summary:'会议结束后自动生成……',
       md : new MarkdownIt(),
+      // 窗口选择相关
+      availableWindows: [],
+      selectedWindowId: null,
+      showWindowSelection: false,
     };
   },
   computed: {
@@ -71,15 +75,79 @@ export default {
         },
       });
     },
+    async getAvailableWindows() {
+      try {
+        const url = `${this.baseURL}/api/windows`;
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.success) {
+          this.availableWindows = data.windows;
+        } else {
+          console.error('获取窗口列表失败:', data.message);
+        }
+      } catch (error) {
+        console.error('获取窗口列表失败:', error);
+      }
+    },
+
     async handleScreenshot(){
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-image-processing`
-      await fetch(url, {
-        method: 'POST',
-        headers: {
-        'Content-Type': 'application/json',
-        },
-      });
-     },
+      // 首先获取可用窗口
+      await this.getAvailableWindows();
+      
+      if (this.availableWindows.length === 0) {
+        alert('未检测到会议窗口');
+        return;
+      }
+      
+      if (this.availableWindows.length === 1) {
+        // 只有一个窗口，直接使用
+        this.selectedWindowId = this.availableWindows[0].id;
+        await this.performScreenshot();
+      } else {
+        // 多个窗口，显示选择界面
+        this.showWindowSelection = true;
+      }
+    },
+
+    async performScreenshot() {
+      try {
+        let url = `${this.baseURL}/api/sessions/${this.sessionid}/start-image-processing`;
+        
+        if (this.selectedWindowId) {
+          url += `?window_id=${this.selectedWindowId}`;
+        }
+        
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+          console.log('截图处理已启动:', data.message);
+        } else {
+          console.error('截图处理失败:', data.message);
+        }
+      } catch (error) {
+        console.error('截图处理失败:', error);
+      }
+      
+      // 关闭窗口选择界面
+      this.showWindowSelection = false;
+    },
+
+    selectWindow(windowId) {
+      this.selectedWindowId = windowId;
+      this.performScreenshot();
+    },
+
+    cancelWindowSelection() {
+      this.showWindowSelection = false;
+      this.selectedWindowId = null;
+    },
     openTab(tabName) {
       this.activeTab = tabName;
     },
@@ -200,6 +268,36 @@ export default {
       <div class="tab-content" v-else>
         <div class="summary">
           <p v-html="renderedSummary"></p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 窗口选择模态框 -->
+    <div v-if="showWindowSelection" class="window-selection-modal">
+      <div class="modal-overlay" @click="cancelWindowSelection"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>选择要截图的窗口</h3>
+          <button class="close-btn" @click="cancelWindowSelection">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="window-list">
+            <div 
+              v-for="window in availableWindows" 
+              :key="window.id"
+              class="window-item"
+              @click="selectWindow(window.id)"
+            >
+              <div class="window-icon">🖼️</div>
+              <div class="window-info">
+                <div class="window-title">{{ window.title }}</div>
+                <div class="window-type">{{ window.type === 'window' ? '应用窗口' : window.type }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="cancel-btn" @click="cancelWindowSelection">取消</button>
         </div>
       </div>
     </div>
@@ -486,5 +584,140 @@ body, html {
 .summary p {
   word-break: break-all;
   max-width: 100%;
+}
+
+/* 窗口选择模态框样式 */
+.window-selection-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+  position: relative;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  min-width: 400px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  color: #666;
+}
+
+.modal-body {
+  padding: 20px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.window-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.window-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.window-item:hover {
+  border-color: #409eff;
+  background: #f0f8ff;
+}
+
+.window-icon {
+  font-size: 20px;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.window-info {
+  flex: 1;
+}
+
+.window-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.window-type {
+  font-size: 12px;
+  color: #666;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #eee;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cancel-btn {
+  padding: 8px 16px;
+  background: #f5f5f5;
+  color: #666;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.cancel-btn:hover {
+  background: #e8e8e8;
 }
 </style>

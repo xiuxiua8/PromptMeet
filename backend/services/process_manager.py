@@ -326,7 +326,7 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"停止 Summary 进程失败: {e}")
 
-    async def start_image_process(self, session_id: str) -> str:
+    async def start_image_process(self, session_id: str, window_id: Optional[str] = None) -> str:
         """启动 Image OCR 进程"""
         process_id = f"image_{session_id}_{uuid.uuid4().hex[:8]}"
         
@@ -346,6 +346,10 @@ class ProcessManager:
                 "--ipc-output", str(ipc_output),
                 "--work-dir", str(session_dir)
             ]
+
+            # 如果指定了窗口ID，添加到命令行参数
+            if window_id:
+                cmd.extend(["--window-id", window_id])
 
             logger.info(f"启动 Image OCR 进程: {' '.join(cmd)}")
 
@@ -383,11 +387,13 @@ class ProcessManager:
 
             asyncio.create_task(self._monitor_image_output(session_id, ipc_output))
 
-            await self._send_ipc_command(ipc_input, IPCCommand(command="start", session_id=session_id, params={}))
+            # 传递window_id参数到IPC命令
+            params = {"window_id": window_id} if window_id else {}
+            await self._send_ipc_command(ipc_input, IPCCommand(command="start", session_id=session_id, params=params))
 
             status.status = "running"
             status.last_update = datetime.now()
-            logger.info(f"Image 进程启动成功: {process_id}, PID: {process.pid}")
+            logger.info(f"Image 进程启动成功: {process_id}, PID: {process.pid}{f', 窗口ID: {window_id}' if window_id else ''}")
             return process_id
 
         except Exception as e:

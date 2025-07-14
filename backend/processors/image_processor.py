@@ -6,7 +6,7 @@ import logging
 import argparse
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import pyautogui
 import platform
@@ -458,9 +458,9 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
             "text": res["content"],
             "words": res["words"],  # [{"word": ..., "prob": ...}]
             "image_file": os.path.join("screen_shot", res["filename"]),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     try:
@@ -472,32 +472,70 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
         logger.error(f"写入 pipe 失败: {e}")
 
 
+def get_specific_window(window_id: str):
+    """根据窗口ID获取特定窗口"""
+    window_dict = get_meeting_windows()
+    if not window_dict:
+        return None
+    
+    # 查找指定的窗口ID
+    for wid, window in window_dict.items():
+        if str(wid) == window_id:
+            return {wid: window}
+    
+    logger.warning(f"未找到窗口ID: {window_id}")
+    return None
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--ipc-output', required=True)
     parser.add_argument('--session-id', required=False)
     parser.add_argument('--ipc-input', required=False)
     parser.add_argument('--work-dir', required=False)
+    parser.add_argument('--window-id', required=False, help='指定要截图的窗口ID')
     args = parser.parse_args()
 
     pipe_path = args.ipc_output
     session_id = args.session_id or "unknown-session"
+    window_id = args.window_id
 
-    window_dict = get_meeting_windows()
-    if not window_dict:
-        msg = {
-            "type": "transcript",
-            "data": {
+    # 如果指定了窗口ID，只处理该窗口
+    if window_id:
+        logger.info(f"处理指定窗口: {window_id}")
+        window_dict = get_specific_window(window_id)
+        if not window_dict:
+            msg = {
+                "type": "transcript",
+                "data": {
+                    "session_id": session_id,
+                    "text": f"未找到指定的窗口ID: {window_id}",
+                    "words": [],
+                    "image_file": None,
+                    "timestamp": datetime.utcnow().isoformat()
+                },
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            write_result_to_pipe(pipe_path, session_id, msg["data"])
+            exit(0)
+    else:
+        # 处理所有会议窗口
+        logger.info("处理所有会议窗口")
+        window_dict = get_meeting_windows()
+        if not window_dict:
+            msg = {
+                "type": "transcript",
+                "data": {
                 "session_id": session_id,
                 "text": "未检测到会议窗口。",
                 "words": [],
                 "image_file": None,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        write_result_to_pipe(pipe_path, session_id, msg["data"])
-        exit(0)
+            "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            write_result_to_pipe(pipe_path, session_id, msg["data"])
+            exit(0)
 
     logger.info("正在截图会议窗口...")
     captured_paths = take_screenshots(window_dict, folder="screen_shot")
@@ -513,9 +551,9 @@ if __name__ == '__main__':
                 "text": "未识别到任何图像文字内容。",
                 "words": [],
                 "image_file": None,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         write_result_to_pipe(pipe_path, session_id, msg["data"])
     else:
