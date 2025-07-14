@@ -265,6 +265,76 @@ class AgentProcessor:
         except Exception as e:
             logger.error(f"刷新会话内容失败: {e}")
 
+    def _read_result_file(self) -> dict:
+        """读取Result.txt文件并解析邮件信息"""
+        try:
+            # 尝试多个可能的路径
+            possible_paths = [
+                Path(self.work_dir) / "Result.txt",
+                Path(self.work_dir).parent / "temp" / "Result.txt",
+                Path(__file__).parent / "temp" / "Result.txt",
+                Path(__file__).parent.parent / "temp" / "Result.txt"
+            ]
+            
+            logger.info(f"当前work_dir: {self.work_dir}")
+            logger.info(f"当前文件路径: {__file__}")
+            
+            result_file_path = None
+            for i, path in enumerate(possible_paths):
+                logger.info(f"检查路径 {i+1}: {path} - 存在: {path.exists()}")
+                if path.exists():
+                    result_file_path = path
+                    break
+            
+            if not result_file_path:
+                logger.warning("未找到Result.txt文件，尝试的路径:")
+                for path in possible_paths:
+                    logger.warning(f"  - {path}")
+                return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+            
+            logger.info(f"找到Result.txt文件: {result_file_path}")
+            
+            with open(result_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            logger.info(f"文件内容长度: {len(content)} 字符")
+            logger.info(f"文件内容前200字符: {content[:200]}")
+            
+            # 解析邮件信息部分
+            import re
+            # 尝试多种匹配模式
+            email_match = re.search(r'【邮件信息】\n(.*?)(?=\n\n【|$)', content, re.DOTALL)
+            if not email_match:
+                # 如果第一种模式失败，尝试更宽松的模式
+                email_match = re.search(r'【邮件信息】\n(.*?)(?=\n【|$)', content, re.DOTALL)
+            if not email_match:
+                # 如果还是失败，尝试最简单的模式
+                email_match = re.search(r'【邮件信息】\n(.*?)(?=\n===|$)', content, re.DOTALL)
+            
+            if email_match:
+                email_json = email_match.group(1).strip()
+                logger.info(f"提取的邮件JSON: {email_json}")
+                try:
+                    email_info = json.loads(email_json)
+                    logger.info(f"解析到邮件信息: {email_info}")
+                    return email_info
+                except json.JSONDecodeError as e:
+                    logger.error(f"解析邮件信息JSON失败: {e}")
+                    logger.error(f"原始JSON字符串: {email_json}")
+                    return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+            else:
+                logger.info("Result.txt中未找到邮件信息部分")
+                # 尝试查找是否包含邮件相关的文本
+                if "邮件" in content:
+                    logger.info("文件中包含'邮件'关键词，但未找到【邮件信息】标记")
+                return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+                
+        except Exception as e:
+            logger.error(f"读取Result.txt文件失败: {e}")
+            import traceback
+            logger.error(f"详细错误: {traceback.format_exc()}")
+            return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+
     async def _detect_and_execute_tools(self, user_message: str, ai_response: str) -> List[Dict[str, Any]]:
         """检测并执行工具调用"""
         tools_used = []
@@ -430,8 +500,8 @@ class AgentProcessor:
         calendar_keywords = ['日历', '日程', '飞书', 'feishu', '同步', '添加到日历', '创建日程', '安排时间']
         if any(keyword in user_message.lower() for keyword in calendar_keywords):
             try:
-                # 默认使用 backend/agents/temp/Result.txt
-                result_file_path = os.path.join("backend", "agents", "temp", "Result.txt")
+                # 默认使用项目根目录的Result.txt文件
+                result_file_path = "Result.txt"
                 
                 # 检查是否有指定文件路径
                 import re
@@ -449,6 +519,253 @@ class AgentProcessor:
                     })
             except Exception as e:
                 logger.error(f"飞书日历工具执行错误: {e}")
+        
+        # 检测邮件发送需求
+        email_keywords = ['邮件', 'email', '发送邮件', '发邮件', '邮件发送', '寄邮件', '写邮件']
+        
+        # 检查是否包含邮件关键词，或者是否在补充邮件信息
+        has_email_keywords = any(keyword in user_message.lower() for keyword in email_keywords)
+        
+        # 检查用户消息是否包含邮箱地址
+        import re
+        email_pattern = r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+        email_matches = re.findall(email_pattern, user_message)
+        has_email_address = len(email_matches) > 0
+        
+        # 检查对话历史中是否有邮件相关的对话
+        has_email_history = False
+        if self.memory.chat_memory.messages:
+            recent_messages = self.memory.chat_memory.messages[-3:]  # 检查最近3条消息
+            for msg in recent_messages:
+                if isinstance(msg, (HumanMessage, AIMessage)):
+                    msg_content = msg.content.lower()
+                    if any(keyword in msg_content for keyword in email_keywords + ['收件人', '邮箱', '发送']):
+                        has_email_history = True
+                        break
+        
+        # 如果包含邮件关键词，或者包含邮箱地址且有邮件历史，则触发邮件检测
+        logger.info(f"邮件检测: 关键词={has_email_keywords}, 邮箱地址={has_email_address}, 邮件历史={has_email_history}")
+        if has_email_keywords or (has_email_address and has_email_history):
+            try:
+                # 默认邮件配置
+                sender_email = "3125193963@qq.com"  # 发件人QQ邮箱
+                auth_code = "lfivvgwgtxtudhch"  # QQ邮箱授权码
+                
+                # 从用户消息中提取邮件信息
+                import re
+                
+                # 提取收件人邮箱
+                email_pattern = r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+                email_matches = re.findall(email_pattern, user_message)
+                recipient_email = email_matches[0] if email_matches else ""
+                
+                # 提取邮件主题（多种格式）
+                subject_patterns = [
+                    r'主题[：:]\s*["""]([^"""]+)["""]',
+                    r'主题[：:]\s*([^\s，。！？]+)',
+                    r'标题[：:]\s*["""]([^"""]+)["""]',
+                    r'标题[：:]\s*([^\s，。！？]+)'
+                ]
+                subject = ""
+                for pattern in subject_patterns:
+                    subject_match = re.search(pattern, user_message)
+                    if subject_match:
+                        subject = subject_match.group(1)
+                        break
+                
+                # 提取邮件内容（多种格式）
+                content_patterns = [
+                    r'内容[：:]\s*["""]([^"""]+)["""]',
+                    r'内容[：:]\s*([^，。！？]+)',
+                    r'正文[：:]\s*["""]([^"""]+)["""]',
+                    r'正文[：:]\s*([^，。！？]+)',
+                    r'收件人[：:]\s*[^，。！？]*[，。！？]\s*主题[：:]\s*[^，。！？]*[，。！？]\s*(.+)',  # 提取完整格式中的内容
+                ]
+                content = ""
+                for pattern in content_patterns:
+                    content_match = re.search(pattern, user_message)
+                    if content_match:
+                        content = content_match.group(1)
+                        break
+                
+                # 如果没有明确指定，尝试从Result.txt文件中读取邮件信息
+                if not recipient_email or not subject or not content:
+                    logger.info("尝试从Result.txt文件读取邮件信息...")
+                    email_info = self._read_result_file()
+                    logger.info(f"读取到的邮件信息: {email_info}")
+                    
+                    if email_info.get("need_email", False):
+                        logger.info("检测到需要发送邮件，开始填充信息...")
+                        if not recipient_email:
+                            recipient_email = email_info.get("recipient_email", "")
+                            logger.info(f"设置收件人邮箱: {recipient_email}")
+                        if not subject:
+                            subject = email_info.get("subject", "会议纪要")
+                            logger.info(f"设置邮件主题: {subject}")
+                        if not content:
+                            content = email_info.get("content", "会议纪要已生成，请查看附件。")
+                            logger.info(f"设置邮件内容: {content}")
+                        
+                        # 如果从Result.txt成功获取了所有必要信息，直接发送邮件
+                        if recipient_email and subject and content:
+                            logger.info("从Result.txt获取到完整的邮件信息，准备发送邮件...")
+                            result = await self.execute_tool("email", {
+                                "sender": sender_email,
+                                "auth_code": auth_code,
+                                "recipient": recipient_email,
+                                "subject": subject,
+                                "content": content
+                            })
+                            if result["success"]:
+                                tools_used.append({
+                                    "tool": "email",
+                                    "parameters": {
+                                        "sender": sender_email,
+                                        "recipient": recipient_email,
+                                        "subject": subject,
+                                        "content": content
+                                    },
+                                    "result": {
+                                        "status": "success",
+                                        "message": f"邮件已成功发送至 {recipient_email}",
+                                        "details": {
+                                            "sender": sender_email,
+                                            "recipient": recipient_email,
+                                            "subject": subject,
+                                            "send_time": result["result"].get("send_time", ""),
+                                            "content_length": len(content)
+                                        }
+                                    }
+                                })
+                                return tools_used  # 直接返回，不再检查缺失信息
+                    else:
+                        logger.info("Result.txt中未检测到邮件需求")
+                
+                # 智能检查缺失信息并提供友好提示
+                missing_info = []
+                current_info = {}
+                
+                if not recipient_email:
+                    missing_info.append("收件人邮箱地址")
+                else:
+                    current_info["收件人邮箱"] = recipient_email
+                    
+                if not subject:
+                    missing_info.append("邮件主题")
+                else:
+                    current_info["邮件主题"] = subject
+                    
+                if not content:
+                    missing_info.append("邮件正文内容")
+                else:
+                    current_info["邮件内容"] = content[:50] + "..." if len(content) > 50 else content
+                
+                if missing_info:
+                    # 构建智能提示信息
+                    current_info_text = ""
+                    if current_info:
+                        current_info_text = f"\n\n📋 当前已有信息：\n"
+                        for key, value in current_info.items():
+                            current_info_text += f"• {key}: {value}\n"
+                    
+                    # 根据缺失信息数量提供不同的提示
+                    if len(missing_info) == 1:
+                        message = f"检测到您需要发送邮件，还缺少：{missing_info[0]}。{current_info_text}\n\n请提供{missing_info[0]}，我会立即为您发送邮件。"
+                    else:
+                        message = f"检测到您需要发送邮件，还缺少以下信息：\n• {chr(10).join('• ' + item for item in missing_info)}{current_info_text}\n\n请提供这些信息，我会立即为您发送邮件。"
+                    
+                    tools_used.append({
+                        "tool": "email",
+                        "parameters": {},
+                        "result": {
+                            "status": "missing_info",
+                            "missing_fields": missing_info,
+                            "current_info": current_info,
+                            "message": message
+                        }
+                    })
+                elif recipient_email:
+                    # 发送邮件
+                    logger.info(f"准备发送邮件: 收件人={recipient_email}, 主题={subject}")
+                    result = await self.execute_tool("email", {
+                        "sender": sender_email,
+                        "auth_code": auth_code,
+                        "recipient": recipient_email,
+                        "subject": subject,
+                        "content": content
+                    })
+                    logger.info(f"邮件发送结果: {result}")
+                    
+                    if result["success"]:
+                        logger.info("邮件发送成功，添加到工具结果")
+                        tools_used.append({
+                            "tool": "email",
+                            "parameters": {
+                                "sender": sender_email,
+                                "recipient": recipient_email,
+                                "subject": subject,
+                                "content": content
+                            },
+                            "result": {
+                                "status": "success",
+                                "message": f"邮件已成功发送至 {recipient_email}",
+                                "details": {
+                                    "sender": sender_email,
+                                    "recipient": recipient_email,
+                                    "subject": subject,
+                                    "send_time": result["result"].get("send_time", ""),
+                                    "content_length": len(content)
+                                }
+                            }
+                        })
+                    else:
+                        logger.error(f"邮件发送失败: {result.get('error')}")
+                        tools_used.append({
+                            "tool": "email",
+                            "parameters": {},
+                            "result": {
+                                "status": "error",
+                                "message": f"邮件发送失败: {result.get('error', '未知错误')}",
+                                "error": result.get('error', '邮件发送失败')
+                            }
+                        })
+                else:
+                    tools_used.append({
+                        "tool": "email",
+                        "parameters": {},
+                        "result": {
+                            "status": "error",
+                            "error": "未找到有效的收件人邮箱地址"
+                        }
+                    })
+                    
+            except Exception as e:
+                logger.error(f"邮件工具执行错误: {e}")
+                tools_used.append({
+                    "tool": "email",
+                    "parameters": {},
+                    "result": {
+                        "status": "error",
+                        "error": f"邮件处理异常: {str(e)}"
+                    }
+                })
+        
+        return tools_used
+
+    async def test_email_detection(self):
+        """测试邮件检测功能"""
+        logger.info("开始测试邮件检测功能...")
+        
+        # 测试读取Result.txt文件
+        email_info = self._read_result_file()
+        logger.info(f"测试读取邮件信息: {email_info}")
+        
+        # 测试邮件关键词检测
+        test_message = "发送邮件"
+        logger.info(f"测试消息: {test_message}")
+        
+        tools_used = await self._detect_and_execute_tools(test_message, "")
+        logger.info(f"检测到的工具: {tools_used}")
         
         return tools_used
 
@@ -480,20 +797,47 @@ class AgentProcessor:
             
             # 如果有工具结果，添加到上下文中
             if tools_used:
-                context += "\n工具执行结果:\n"
+                logger.info(f"工具执行结果: {tools_used}")
+                context += "\n=== 工具执行结果 ===\n"
                 for tool in tools_used:
-                    context += f"- {tool['tool']}: {tool['result']}\n"
-                context += "\n"
+                    if tool['tool'] == 'email':
+                        result = tool['result']
+                        if isinstance(result, dict):
+                            if result.get('status') == 'success':
+                                context += f"✅ 邮件发送成功！\n"
+                                context += f"📧 收件人: {result.get('details', {}).get('recipient', '')}\n"
+                                context += f"📌 主题: {result.get('details', {}).get('subject', '')}\n"
+                                context += f"⏰ 发送时间: {result.get('details', {}).get('send_time', '')}\n"
+                                context += f"📝 内容长度: {result.get('details', {}).get('content_length', 0)} 字符\n"
+                            elif result.get('status') == 'missing_info':
+                                context += f"❌ 邮件信息不完整: {result.get('message', '')}\n"
+                            elif result.get('status') == 'error':
+                                context += f"❌ 邮件发送失败: {result.get('error', '')}\n"
+                        else:
+                            context += f"邮件工具结果: {result}\n"
+                    else:
+                        context += f"- {tool['tool']}: {tool['result']}\n"
+                context += "=== 工具执行结果结束 ===\n\n"
             
             # 添加当前用户消息
             context += f"用户: {content}\n助手:"
             
+            # 记录完整上下文用于调试
+            logger.info(f"传递给AI模型的上下文长度: {len(context)}")
+            logger.info(f"上下文最后200字符: {context[-200:]}")
+            
             # 构建包含工具结果的提示词
             system_prompt = """你是一个智能助手，可以使用各种工具来帮助用户。当用户询问需要工具支持的问题时，请基于工具执行结果来回答。
 
-如果检测到用户需要工具支持（如查询时间、生成摘要等），请使用工具结果来提供准确的回答。
+重要：请仔细查看工具执行结果部分，并根据结果提供准确的回答。
 
-请用友好、自然的语气回答，并在适当时候使用工具结果。"""
+邮件处理规则：
+1. 如果看到"✅ 邮件发送成功！"，请告知用户邮件已成功发送，并重复发送详情
+2. 如果看到"❌ 邮件信息不完整"，请告知用户缺少哪些信息，并请求补充
+3. 如果看到"❌ 邮件发送失败"，请告知用户发送失败的原因
+4. 不要在没有工具执行结果的情况下假设邮件发送状态
+
+请用友好、自然的语气回答，并确保回答与工具执行结果一致。"""
             
             # 调用聊天模型
             messages = [
@@ -545,6 +889,25 @@ class AgentProcessor:
                         success=False,
                         data=None,
                         error=f"Agent处理失败: {str(e)}",
+                        timestamp=datetime.now()
+                    )
+            
+            elif command.command == "test_email":
+                # 测试邮件检测功能
+                try:
+                    test_result = await self.test_email_detection()
+                    return IPCResponse(
+                        success=True,
+                        data={"test_result": test_result},
+                        error=None,
+                        timestamp=datetime.now()
+                    )
+                except Exception as e:
+                    logger.error(f"邮件检测测试失败: {e}")
+                    return IPCResponse(
+                        success=False,
+                        data=None,
+                        error=f"邮件检测测试失败: {str(e)}",
                         timestamp=datetime.now()
                     )
             

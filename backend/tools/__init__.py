@@ -14,6 +14,7 @@ from .translator import TranslatorTool
 from .web_search import WebSearchTool
 from .summary_tool import SummaryTool
 from .feishu_calendar import FeishuCalendarTool
+from .email_tool import EmailTool
 from .manager import ToolManager
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     'WebSearchTool',
     'SummaryTool',
     'FeishuCalendarTool',
+    'EmailTool',
     'ToolManager'
 ]

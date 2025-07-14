@@ -73,6 +73,7 @@ class SummaryProcessor:
             summary_text = ""
             key_points = []
             decisions = []
+            email_info = {}
             
             try:
                 # 解析原始待办事项JSON
@@ -93,6 +94,19 @@ class SummaryProcessor:
                             tasks.append(task)
                     except json.JSONDecodeError:
                         logger.warning("无法解析原始待办事项JSON")
+                
+                # 解析邮件信息JSON
+                email_match = re.search(r'【邮件信息】\n(.*?)(?=\n\n【|$)', full_result, re.DOTALL)
+                if email_match:
+                    email_json = email_match.group(1).strip()
+                    try:
+                        email_info = json.loads(email_json)
+                        logger.info(f"解析到邮件信息: {email_info}")
+                    except json.JSONDecodeError:
+                        logger.warning("无法解析邮件信息JSON")
+                        email_info = {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+                else:
+                    email_info = {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
                 
                 # 提取会议总结
                 summary_match = re.search(r'【会议总结】\n(.*?)(?=\n【|$)', full_result, re.DOTALL)
@@ -133,6 +147,7 @@ class SummaryProcessor:
                 "summary": summary.dict(),
                 "full_ai_result": full_result,
                 "raw_tasks": tasks,
+                "email_info": email_info,
                 "processed_text_length": len(transcript_text)
             }
         
