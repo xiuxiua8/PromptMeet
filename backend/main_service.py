@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,10 +38,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时初始化
+    logger.info("PromptMeet 服务正在启动...")
+    await process_manager.initialize()
+    logger.info("PromptMeet 服务启动完成")
+    
+    yield  # 应用运行期间
+    
+    # 关闭时清理资源
+    logger.info("PromptMeet 服务正在关闭...")
+    await process_manager.cleanup()
+    logger.info("PromptMeet 服务已关闭")
+
 app = FastAPI(
     title="PromptMeet API",
     description="智能会议助手 - Vue + FastAPI + IPC 架构",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS配置
@@ -58,20 +76,7 @@ websocket_manager = WebSocketManager()
 process_manager = ProcessManager()
 
 
-@app.on_event("startup")
-async def startup_event():
-    """服务启动时初始化"""
-    logger.info("PromptMeet 服务正在启动...")
-    await process_manager.initialize()
-    logger.info("PromptMeet 服务启动完成")
 
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """服务关闭时清理资源"""
-    logger.info("PromptMeet 服务正在关闭...")
-    await process_manager.cleanup()
-    logger.info("PromptMeet 服务已关闭")
 
 
 # ============= HTTP API 接口 =============
