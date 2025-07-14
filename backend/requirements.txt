@@ -27,8 +27,15 @@ langchain-openai
 # 安装 pipwin 后用于安装 PyAudio（Windows）
 pipwin
 
-fastapi
-uvicorn
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+langchain-deepseek>=0.1.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+httpx>=0.25.0
+python-multipart>=0.0.6
+requests>=2.31.0
+pytz>=2023.3 
 
 # 可选：提供 ffmpeg 支持（仍推荐系统安装 ffmpeg）
 imageio[ffmpeg]
