@@ -223,7 +223,15 @@ class MeetingProcessor:
         
         # 保存结果到文件
         try:
-            with open("Result.txt", "w", encoding="utf-8") as f:
+            import os
+
+            # 获取 temp 目录路径（在 backend 目录下）
+            temp_dir = os.path.join(os.path.dirname(__file__), "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+
+            # 保存 Result.txt 到 temp 目录
+            result_path = os.path.join(temp_dir, "Result.txt")
+            with open(result_path, "w", encoding="utf-8") as f:
                 f.write(result_buffer.getvalue())
             logger.info("\n结果已保存到 Result.txt\n")
         except Exception as e:
@@ -246,9 +254,20 @@ async def run_processor(input_text: str):
         all_chunks.append(chunk)
         result_buffer.write(chunk)
     # 先写入文件
-    with open("Result.txt", "w", encoding="utf-8") as f:
-        f.write(result_buffer.getvalue())
-    logger.info("\n结果已保存到 Result.txt\n")
+    try:
+        import os
+
+        # 获取 temp 目录路径（在 backend 目录下）
+        temp_dir = os.path.join(os.path.dirname(__file__), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # 保存 Result.txt 到 temp 目录
+        result_path = os.path.join(temp_dir, "Result.txt")
+        with open(result_path, "w", encoding="utf-8") as f:
+            f.write(result_buffer.getvalue())
+        logger.info("\n结果已保存到 Result.txt\n")
+    except Exception as e:
+        logger.error(f"保存结果到文件失败: {e}")
     # 再输出到前端/控制台
     for chunk in all_chunks:
         print(chunk, end="", flush=True)

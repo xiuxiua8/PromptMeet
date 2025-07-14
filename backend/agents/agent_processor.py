@@ -16,26 +16,20 @@ from pathlib import Path
 import traceback
 from pydantic import SecretStr
 
-# API配置 - 从项目根目录加载环境变量
-project_root = Path(__file__).parent.parent.parent
-env_path = project_root / ".env"
-load_dotenv(env_path)
-
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from langchain.agents import initialize_agent
-from langchain.agents.agent_types import AgentType
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.memory import ConversationBufferMemory
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
+from langchain.schema import HumanMessage, AIMessage
 
 # 工具导入
-from tools.time_tool import TimeTool
-from tools.summary_tool import SummaryTool
+from tools.manager import ToolManager
 from models.data_models import IPCMessage, IPCCommand, IPCResponse
+from config import settings
 
 # 重试机制导入
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -49,6 +43,11 @@ class AgentProcessor:
         self.running = False
         self.current_session_id = None
         
+        # IPC通信文件路径
+        self.ipc_input_file = None
+        self.ipc_output_file = None
+        self.work_dir = None
+        
         # 记忆系统组件
         self.vector_db: Optional[FAISS] = None
         self.qa_chain: Optional[ConversationalRetrievalChain] = None
@@ -58,62 +57,74 @@ class AgentProcessor:
         self.api_base_url = "http://localhost:8000"
         
         # 初始化LLM和Agent
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            logger.error("未设置DEEPSEEK_API_KEY环境变量")
-            raise ValueError("请在环境变量中设置DEEPSEEK_API_KEY")
-            
-        api_key = SecretStr(api_key)
-        base_url = os.getenv("DEEPSEEK_API_BASE")
-        if not base_url:
-            logger.error("未设置DEEPSEEK_API_BASE环境变量")
-            raise ValueError("请在环境变量中设置DEEPSEEK_API_BASE")
-            
+        api_key = SecretStr(settings.DEEPSEEK_API_KEY)
+        base_url = settings.DEEPSEEK_API_BASE
+        
         self.llm = ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
-            model="deepseek-chat",
-            temperature=0.3,
+            model=settings.DEEPSEEK_MODEL,
+            temperature=settings.DEEPSEEK_TEMPERATURE,
             streaming=True,
             timeout=60,  # 增加超时时间
             max_retries=3  # 增加重试次数
         )
         
         # 初始化嵌入模型
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            logger.error("未设置OPENAI_API_KEY环境变量")
-            raise ValueError("请在环境变量中设置OPENAI_API_KEY")
-            
+        openai_api_key = SecretStr(settings.OPENAI_API_KEY)
+        
         self.embeddings = OpenAIEmbeddings(
-            api_key=SecretStr(openai_api_key)
+            api_key=openai_api_key
         )
         
-        self.tools = [TimeTool(), SummaryTool()]
+        # 工具管理器
+        self.tool_manager = ToolManager()
         
         # 配置记忆系统
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True,
-            output_key="output",  # 或 "output"，取决于你的Agent链路实际返回的key
+            output_key="output",
         )
         
-        self.agent = initialize_agent(
-            tools=self.tools,
-            llm=self.llm,
-            agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
-            verbose=True,
-            memory=self.memory,
-            handle_parsing_errors=True,
-            output_key="output"
-        )
-        
-        # IPC通信文件路径
-        self.ipc_input_file = None
-        self.ipc_output_file = None
-        self.work_dir = None
+        # 直接使用LLM进行对话，不使用agent框架
+        self._chat_model = None
     
-
+    @property
+    def chat_model(self):
+        """获取聊天模型"""
+        if self._chat_model is None:
+            self._chat_model = self.llm
+        return self._chat_model
+    
+    def get_available_tools(self):
+        """获取可用工具列表"""
+        return self.tool_manager.get_available_tools()
+    
+    async def execute_tool(self, tool_name: str, parameters: dict):
+        """执行工具"""
+        result = await self.tool_manager.execute_tool(tool_name, parameters)
+        return {
+            "tool_name": result.tool_name,
+            "result": result.result,
+            "success": result.success,
+            "error": result.error
+        }
+    
+    def _convert_messages_to_dict(self, messages: List) -> List[Dict[str, str]]:
+        """转换消息为字典格式"""
+        result = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                result.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                result.append({"role": "assistant", "content": msg.content})
+        return result
+    
+    def _convert_memory_to_history(self) -> List[Dict[str, str]]:
+        """获取对话历史"""
+        history = self.memory.chat_memory.messages
+        return self._convert_messages_to_dict(history)
     
     async def _init_memory_system(self):
         """初始化记忆系统"""
@@ -254,19 +265,262 @@ class AgentProcessor:
         except Exception as e:
             logger.error(f"刷新会话内容失败: {e}")
 
+    async def _detect_and_execute_tools(self, user_message: str, ai_response: str) -> List[Dict[str, Any]]:
+        """检测并执行工具调用"""
+        tools_used = []
+        
+        # 检测时间查询 - 更精确的检测
+        time_keywords = ['时间', '几点', '日期']
+        weather_keywords = ['天气', '温度', '气温', '下雨', '晴天', '阴天']
+        food_keywords = ['吃', '喝', '饭', '菜', '餐', '食']
+        emotion_keywords = ['心情', '感觉', '情绪', '开心', '难过', '高兴']
+        
+        # 检查是否包含各种上下文关键词
+        has_weather_context = any(keyword in user_message.lower() for keyword in weather_keywords)
+        has_food_context = any(keyword in user_message.lower() for keyword in food_keywords)
+        has_emotion_context = any(keyword in user_message.lower() for keyword in emotion_keywords)
+        
+        # 检查是否包含时间查询关键词
+        has_time_keywords = any(keyword in user_message.lower() for keyword in time_keywords)
+        
+        # 检查是否以"今天"开头但不包含其他上下文
+        starts_with_today = user_message.lower().startswith('今天')
+        has_other_context = has_weather_context or has_food_context or has_emotion_context
+        
+        if has_time_keywords or (starts_with_today and not has_other_context):
+            try:
+                result = await self.execute_tool("time", {})
+                if result["success"]:
+                    tools_used.append({
+                        "tool": "time",
+                        "parameters": {},
+                        "result": result["result"]
+                    })
+            except Exception as e:
+                logger.error(f"时间工具执行错误: {e}")
+        
+        # 检测天气查询
+        if has_weather_context:
+            try:
+                # 提取城市名（简化版本）
+                import re
+                city_pattern = r'([北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|青岛|大连|厦门|苏州|无锡|宁波|长沙|郑州|济南|哈尔滨|沈阳|长春|石家庄|太原|呼和浩特|合肥|福州|南昌|南宁|海口|贵阳|昆明|拉萨|兰州|西宁|银川|乌鲁木齐]+)'
+                matches = re.findall(city_pattern, user_message)
+                if matches:
+                    city = matches[0]
+                    result = await self.execute_tool("weather", {"city": city})
+                    if result["success"]:
+                        tools_used.append({
+                            "tool": "weather",
+                            "parameters": {"city": city},
+                            "result": result["result"]
+                        })
+            except Exception as e:
+                logger.error(f"天气工具执行错误: {e}")
+        
+        # 检测计算器调用
+        if any(keyword in user_message.lower() for keyword in ['计算', '算', '等于', '+', '-', '*', '/']):
+            try:
+                import re
+                # 改进的数学表达式匹配模式
+                math_pattern = r'(\d+[\+\-\*\/\s\(\)\d\.]+)'
+                matches = re.findall(math_pattern, user_message)
+                if matches:
+                    expression = matches[0].strip()
+                    result = await self.execute_tool("calculator", {"expression": expression})
+                    if result["success"]:
+                        tools_used.append({
+                            "tool": "calculator",
+                            "parameters": {"expression": expression},
+                            "result": result["result"]
+                        })
+            except Exception as e:
+                logger.error(f"计算器工具执行错误: {e}")
+        
+        # 检测翻译需求
+        if any(keyword in user_message.lower() for keyword in ['翻译', 'translate', '英文', '中文', '日文', '韩文', '法文', '德文', '西班牙文', '俄文']):
+            try:
+                import re
+                
+                # 检测目标语言
+                target_lang = "en"  # 默认翻译为英文
+                if any(lang in user_message.lower() for lang in ['中文', '汉语', 'chinese']):
+                    target_lang = "zh"
+                elif any(lang in user_message.lower() for lang in ['日文', '日语', 'japanese']):
+                    target_lang = "ja"
+                elif any(lang in user_message.lower() for lang in ['韩文', '韩语', 'korean']):
+                    target_lang = "ko"
+                elif any(lang in user_message.lower() for lang in ['法文', '法语', 'french']):
+                    target_lang = "fr"
+                elif any(lang in user_message.lower() for lang in ['德文', '德语', 'german']):
+                    target_lang = "de"
+                elif any(lang in user_message.lower() for lang in ['西班牙文', '西班牙语', 'spanish']):
+                    target_lang = "es"
+                elif any(lang in user_message.lower() for lang in ['俄文', '俄语', 'russian']):
+                    target_lang = "ru"
+                
+                # 提取要翻译的文本（在引号中的内容）
+                text_pattern = r'["""]([^"""]+)["""]'
+                matches = re.findall(text_pattern, user_message)
+                
+                if matches:
+                    text_to_translate = matches[0]
+                    result = await self.execute_tool("translate", {
+                        "text": text_to_translate,
+                        "target_lang": target_lang
+                    })
+                    if result["success"]:
+                        tools_used.append({
+                            "tool": "translate",
+                            "parameters": {
+                                "text": text_to_translate,
+                                "target_lang": target_lang
+                            },
+                            "result": result["result"]
+                        })
+            except Exception as e:
+                logger.error(f"翻译工具执行错误: {e}")
+        
+        # 检测网络搜索需求
+        if any(keyword in user_message.lower() for keyword in ['搜索', '查找', '查询', 'search', '查找', '了解', '联网', '上网']):
+            try:
+                import re
+                
+                # 提取搜索关键词
+                # 移除常见的搜索指示词
+                search_query = user_message
+                search_indicators = ['搜索', '查找', '查询', 'search', '查找', '了解', '什么是', '什么是', '如何', '怎么']
+                
+                for indicator in search_indicators:
+                    search_query = search_query.replace(indicator, '').strip()
+                
+                # 如果搜索查询不为空，执行搜索
+                if search_query and len(search_query) > 2:
+                    result = await self.execute_tool("web_search", {"query": search_query})
+                    if result["success"]:
+                        tools_used.append({
+                            "tool": "web_search",
+                            "parameters": {"query": search_query},
+                            "result": result["result"]
+                        })
+            except Exception as e:
+                logger.error(f"网络搜索工具执行错误: {e}")
+        
+        # 检测摘要生成 - 更全面的关键词检测
+        summary_keywords = ['摘要', '总结', '概括', 'summary', '生成摘要', '生成总结', '帮我生成', '做一个摘要', '做一个总结']
+        if any(keyword in user_message.lower() for keyword in summary_keywords):
+            try:
+                # 获取会议内容，如果没有内容则使用默认文本
+                if self.meeting_content:
+                    content = "\n".join(self.meeting_content[-5:])  # 最近5个片段
+                else:
+                    content = "这是一个测试会议内容，用于演示摘要生成功能。会议讨论了项目进展、技术方案和下一步计划。"
+                
+                result = await self.execute_tool("summary", {"text": content})
+                if result["success"]:
+                    tools_used.append({
+                        "tool": "summary",
+                        "parameters": {"text": content},
+                        "result": result["result"]
+                    })
+            except Exception as e:
+                logger.error(f"摘要工具执行错误: {e}")
+        
+        # 检测飞书日历同步需求
+        calendar_keywords = ['日历', '日程', '飞书', 'feishu', '同步', '添加到日历', '创建日程', '安排时间']
+        if any(keyword in user_message.lower() for keyword in calendar_keywords):
+            try:
+                # 默认使用项目根目录的Result.txt文件
+                result_file_path = "Result.txt"
+                
+                # 检查是否有指定文件路径
+                import re
+                file_pattern = r'文件[：:]\s*([^\s]+)'
+                file_match = re.search(file_pattern, user_message)
+                if file_match:
+                    result_file_path = file_match.group(1)
+                
+                result = await self.execute_tool("feishu_calendar", {"result_file_path": result_file_path})
+                if result["success"]:
+                    tools_used.append({
+                        "tool": "feishu_calendar",
+                        "parameters": {"result_file_path": result_file_path},
+                        "result": result["result"]
+                    })
+            except Exception as e:
+                logger.error(f"飞书日历工具执行错误: {e}")
+        
+        return tools_used
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _handle_chat_message(self, content: str) -> str:
         """处理聊天消息（带重试机制）"""
         try:
             logger.info(f"开始处理用户消息: {content[:50]}...")
-            agent_response = await self.agent.ainvoke({"input": content})
-            response_text = agent_response.get("output", "抱歉，我无法处理您的请求。")
-            logger.info(f"Agent响应成功: {response_text[:50]}...")
-            return response_text
+            
+            # 获取对话历史
+            history = self.memory.chat_memory.messages
+            
+            # 检测并执行工具调用
+            tools_used = await self._detect_and_execute_tools(content, "")
+            
+            # 构建完整的对话上下文
+            context = ""
+            for msg in history:
+                if isinstance(msg, HumanMessage):
+                    context += f"用户: {msg.content}\n"
+                elif isinstance(msg, AIMessage):
+                    context += f"助手: {msg.content}\n"
+            
+            # 添加工具信息到上下文
+            tools_info = "可用工具:\n"
+            for tool in self.get_available_tools():
+                tools_info += f"- {tool['name']}: {tool['description']}\n"
+            context += f"\n{tools_info}\n"
+            
+            # 如果有工具结果，添加到上下文中
+            if tools_used:
+                context += "\n工具执行结果:\n"
+                for tool in tools_used:
+                    context += f"- {tool['tool']}: {tool['result']}\n"
+                context += "\n"
+            
+            # 添加当前用户消息
+            context += f"用户: {content}\n助手:"
+            
+            # 构建包含工具结果的提示词
+            system_prompt = """你是一个智能助手，可以使用各种工具来帮助用户。当用户询问需要工具支持的问题时，请基于工具执行结果来回答。
+
+如果检测到用户需要工具支持（如查询时间、生成摘要等），请使用工具结果来提供准确的回答。
+
+请用友好、自然的语气回答，并在适当时候使用工具结果。"""
+            
+            # 调用聊天模型
+            messages = [
+                ("system", system_prompt),
+                ("human", context)
+            ]
+            response = await self.chat_model.ainvoke(messages)
+            ai_response = response.content
+            
+            # 保存到记忆
+            self.memory.chat_memory.add_user_message(content)
+            self.memory.chat_memory.add_ai_message(ai_response)
+            
+            logger.info(f"Agent响应成功: {ai_response[:50]}...")
+            return ai_response
         except Exception as e:
             logger.error(f"Agent处理失败: {e}")
             logger.error(f"详细错误信息: {traceback.format_exc()}")
             raise  # 重新抛出异常以触发重试
+    
+    def clear_memory(self):
+        """清空记忆"""
+        self.memory.clear()
+    
+    def get_conversation_history(self) -> List[Dict[str, str]]:
+        """获取对话历史"""
+        return self._convert_memory_to_history()
 
     async def handle_command(self, command: IPCCommand) -> IPCResponse:
         """处理IPC命令"""

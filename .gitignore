@@ -90,3 +90,6 @@ yarn.lock
 
 *.backup
 *.pipe
+
+*._test.py
+__pycache__/
