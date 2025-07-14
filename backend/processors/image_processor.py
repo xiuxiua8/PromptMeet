@@ -513,7 +513,7 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
         "data": {
             "session_id": session_id,
             "text": res["content"],
-            "words": res["words"],  # [{"word": ..., "prob": ...}]
+            #"words": res["words"],  # [{"word": ..., "prob": ...}]
             "image_file": os.path.join("screen_shot", res["filename"]),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
@@ -567,7 +567,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": f"未找到指定的窗口ID: {window_id}",
-                    "words": [],
+                    #"words": [],
                     "image_file": None,
                     "timestamp": datetime.utcnow().isoformat(),
                 },
@@ -585,7 +585,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": "未检测到会议窗口。",
-                    "words": [],
+                    #"words": [],
                     "image_file": None,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
@@ -606,7 +606,7 @@ if __name__ == "__main__":
             "data": {
                 "session_id": session_id,
                 "text": "未识别到任何图像文字内容。",
-                "words": [],
+                #"words": [],
                 "image_file": None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
