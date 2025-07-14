@@ -28,22 +28,23 @@ def main():
         .calendar_id(calendar_id) \
         .user_id_type("open_id") \
         .request_body(CalendarEvent.builder()
-            .summary("日程标题")
-            .description("日程描述")
-            .need_notification(False)
+            .summary("项目会议")
+            .description("讨论下周发布计划")
+            .need_notification(True)
             .start_time(TimeInfo.builder()
-                .date("2025-09-01")
-                .timestamp("1602504000")
+                #.date("2025-07-15")
+                .timestamp("1752636000")
                 .timezone("Asia/Shanghai")
                 .build())
             .end_time(TimeInfo.builder()
-                .date("2025-09-01")
-                .timestamp("1602504000")
+                #.date("2025-07-15")
+                .timestamp("1752639600")
                 .timezone("Asia/Shanghai")
                 .build())
             .visibility("default")
             .build()) \
         .build()
+
 
     # 发起请求
     option = lark.RequestOption.builder().user_access_token(user_access_token).build()
