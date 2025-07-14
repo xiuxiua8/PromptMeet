@@ -31,9 +31,8 @@ class QuestionQueue:
 class QAGenerator:
     def __init__(self, buffer_size: int = 5):
         self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_API_URL"),
-            model="deepseek-chat",
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            model="gpt-3.5-turbo",
             temperature=0.3,
             streaming=True
         )
@@ -50,7 +49,7 @@ class QAGenerator:
         combined_text = "\n".join(self.segment_buffer)
         
         prompt_template = """
-请根据以下文本生成2-3个与技术相关的问题（每个问题单独一行，以序号开头如1.xxx）：
+请根据以下文本生成1个与技术相关的问题（以序号开头如1.xxx）：
 文本：{text}
 生成问题：
         """
@@ -60,16 +59,25 @@ class QAGenerator:
             | StrOutputParser()
         )
         
-        questions_text = await chain.ainvoke({"text": combined_text})
-        
-        for line in questions_text.split("\n"):
-            line = line.strip()
-            if not line or '.' not in line:
-                continue
-            question = line[line.index('.')+1:].strip()
-            if question:
-                qid = await self.question_queue.add_question(question)
-                print(f"[系统] 新问题已加入队列 (ID: {qid})")
+        try:
+            questions_text = await chain.ainvoke({"text": combined_text})
+            
+            generated_questions = []
+            for line in questions_text.split("\n"):
+                line = line.strip()
+                if not line or '.' not in line:
+                    continue
+                question = line[line.index('.')+1:].strip()
+                if question:
+                    qid = await self.question_queue.add_question(question)
+                    generated_questions.append({"id": qid, "question": question})
+                    print(f"[系统] 新问题已加入队列 (ID: {qid}): {question}")
+            
+            return generated_questions
+            
+        except Exception as e:
+            print(f"[系统] 生成问题失败: {e}")
+            return []
 
     async def question_generator(self, segments: AsyncIterator[str]):
         """问题生成线程"""

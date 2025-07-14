@@ -17,8 +17,10 @@ import uvicorn
 
 from models.data_models import (
     SessionState, TranscriptSegment, MeetingSummary, 
-    TaskItem, ProgressUpdate, MessageType, WebSocketMessage
+    TaskItem, ProgressUpdate, MessageType, WebSocketMessage, IPCCommand
 )
+from models.data_models import WebSocketMessage
+
 from services.session_manager import SessionManager
 from services.websocket_manager import WebSocketManager
 from services.process_manager import ProcessManager
@@ -128,6 +130,57 @@ async def get_available_windows():
             "message": f"获取窗口列表失败: {str(e)}"
         }
 
+@app.get("/api/windows")
+async def get_available_windows():
+    """获取可用的会议窗口列表"""
+    try:
+        # 临时启动图像处理器来获取窗口列表
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'processors'))
+        
+        from image_processor import get_meeting_windows
+        
+        window_dict = get_meeting_windows()
+        if not window_dict:
+            return {
+                "success": True,
+                "windows": [],
+                "message": "未检测到会议窗口"
+            }
+        
+        # 格式化窗口信息供前端使用
+        windows = []
+        for window_id, window in window_dict.items():
+            if isinstance(window, dict):
+                # macOS 或 fallback 窗口
+                windows.append({
+                    "id": str(window_id),
+                    "title": window.get("title", "Unknown"),
+                    "type": window.get("type", "unknown")
+                })
+            else:
+                # pygetwindow 窗口对象
+                windows.append({
+                    "id": str(window_id),
+                    "title": window.title,
+                    "type": "window"
+                })
+        
+        return {
+            "success": True,
+            "windows": windows,
+            "message": f"找到 {len(windows)} 个可用窗口"
+        }
+        
+    except Exception as e:
+        logger.error(f"获取窗口列表失败: {e}")
+        return {
+            "success": False,
+            "windows": [],
+            "message": f"获取窗口列表失败: {str(e)}"
+        }
+
 @app.post("/api/sessions")
 async def create_session():
     """创建新的会议会话"""
@@ -139,6 +192,9 @@ async def create_session():
     )
     
     session_manager.add_session(session)
+    
+    # 启动Agent进程
+    await process_manager.start_agent_process(session_id)
     
     logger.info(f"创建新会话: {session_id}")
     return {
@@ -195,6 +251,9 @@ async def start_recording(session_id: str):
         # 启动 Whisper 转录进程
         await process_manager.start_whisper_process(session_id)
         
+        # 启动 Question 生成进程
+        await process_manager.start_question_process(session_id)
+        
         # 更新会话状态
         session.is_recording = True
         session_manager.update_session(session)
@@ -207,7 +266,7 @@ async def start_recording(session_id: str):
             "session_id": session_id
         })
         
-        logger.info(f"会话 {session_id} 开始录音")
+        logger.info(f"会话 {session_id} 开始录音，问题生成进程已启动")
         return {
             "success": True,
             "message": "录音开始"
@@ -237,6 +296,9 @@ async def stop_recording(session_id: str):
         # 停止 Whisper 进程
         await process_manager.stop_whisper_process(session_id)
         
+        # 停止 Question 生成进程
+        await process_manager.stop_question_process(session_id)
+        
         # 更新会话状态
         session.is_recording = False
         session_manager.update_session(session)
@@ -249,7 +311,7 @@ async def stop_recording(session_id: str):
             "session_id": session_id
         })
         
-        logger.info(f"会话 {session_id} 停止录音")
+        logger.info(f"会话 {session_id} 停止录音，问题生成进程已停止")
         return {
             "success": True,
             "message": "录音停止"
@@ -267,7 +329,7 @@ async def generate_summary(session_id: str):
     """生成会议摘要"""
     session = session_manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="会话不存在")   
     
     if not session.transcript_segments:
         return {
@@ -290,6 +352,36 @@ async def generate_summary(session_id: str):
         return {
             "success": False,
             "message": f"生成摘要失败: {str(e)}"
+        }
+
+@app.post("/api/sessions/{session_id}/generate-questions")
+async def generate_questions(session_id: str):
+    """生成会议问题"""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")   
+    
+    if not session.transcript_segments:
+        return {
+            "success": False,
+            "message": "没有转录内容可生成问题"
+        }
+    
+    try:
+        # 启动 Question 生成进程
+        await process_manager.start_question_process(session_id)
+        
+        logger.info(f"会话 {session_id} 开始生成问题")
+        return {
+            "success": True,
+            "message": "开始生成问题"
+        }
+        
+    except Exception as e:
+        logger.error(f"生成问题失败: {e}")
+        return {
+            "success": False,
+            "message": f"生成问题失败: {str(e)}"
         }
 
 @app.post("/api/sessions/{session_id}/start-image-processing")
@@ -377,7 +469,6 @@ async def handle_websocket_message(session_id: str, message: dict):
     """处理WebSocket消息"""
     message_type = message.get("type")
     data = message.get("data", {})
-    
     logger.info(f"收到WebSocket消息: session={session_id}, type={message_type}")
     
     if message_type == "ping":
@@ -387,14 +478,63 @@ async def handle_websocket_message(session_id: str, message: dict):
             "data": {"timestamp": datetime.now().isoformat()}
         })
     
-    elif message_type == "get_status":
-        # 获取会话状态
-        session = session_manager.get_session(session_id)
-        if session:
-            await websocket_manager.send_to_session(session_id, {
-                "type": "status_update",
-                "data": session.dict()
-            })
+    elif message_type == "agent_message":
+        # 转发消息到Agent进程
+        session_dir = process_manager.work_dir / session_id
+        ipc_input = session_dir / "agent_input.pipe"
+        
+        try:
+            await process_manager._send_ipc_command(
+                ipc_input,
+                IPCCommand(
+                    command="message",
+                    session_id=session_id,
+                    params={"content": data.get("content", "")}
+                )
+            )
+        except Exception as e:
+            logger.error(f"转发消息到Agent失败: {e}")
+
+
+
+# 添加Agent响应回调
+async def on_agent_response(session_id: str, response: dict):
+    """处理Agent响应"""
+    # 兼容旧结构，提取最终回答内容
+    content = None
+    # response 可能是多层嵌套
+    try:
+        # 兼容多层data
+        if isinstance(response, dict):
+            # 兼容直接返回字符串
+            if isinstance(response.get("data"), str):
+                content = response["data"]
+            elif isinstance(response.get("data"), dict):
+                # 兼容多层data
+                data = response["data"]
+                # 可能有response字段
+                if isinstance(data.get("response"), str):
+                    content = data["response"]
+                elif isinstance(data.get("data"), dict) and isinstance(data["data"].get("response"), str):
+                    content = data["data"]["response"]
+                elif isinstance(data.get("output"), str):
+                    content = data["output"]
+                elif isinstance(data.get("content"), str):
+                    content = data["content"]
+    except Exception as e:
+        content = str(response)
+
+    if not content:
+        content = str(response)
+
+    await websocket_manager.broadcast_to_session(session_id, {
+        "type": "answer",
+        "data": {
+            "content": content
+        }
+    })
+# 注册回调
+process_manager.on_agent_response = on_agent_response
 
 # ============= IPC 回调处理 =============
 
@@ -505,10 +645,50 @@ async def on_progress_update(session_id: str, progress_data: dict):
     except Exception as e:
         logger.error(f"处理进度更新失败: {e}")
 
+async def on_questions_generated(session_id: str, questions_data: dict):
+    """收到问题生成结果的回调"""
+    try:
+        questions = questions_data.get("questions", [])
+        
+        # 直接打印问题到终端
+        print("\n" + "="*80)
+        print(f"🎯 会话 {session_id[:8]} 生成了 {len(questions)} 个问题:")
+        print("="*80)
+        
+        # 为每个问题生成递增的ID并发送给前端
+        for i, question in enumerate(questions, 1):
+            question_content = question.get('question', '')
+            print(f"\n❓ 问题{i}: {question_content}")
+            if 'timestamp' in question:
+                print(f"   时间: {question['timestamp']}")
+            
+            # 发送单个问题给前端
+            question_message = {
+                "type": "question",
+                "data": {
+                    "id": f"question_{i}",
+                    "content": question_content
+                },
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id
+            }
+            
+            await websocket_manager.broadcast_to_session(session_id, question_message)
+            print(f"   📤 已发送问题{i}给前端")
+        
+        print("\n" + "="*80)
+        
+        
+        logger.info(f"问题已生成并发送: session={session_id}, 问题数={len(questions)}")
+        
+    except Exception as e:
+        logger.error(f"处理问题生成结果失败: {e}")
+
 # 注册IPC回调
 process_manager.on_transcript_received = on_transcript_received
 process_manager.on_summary_generated = on_summary_generated
 process_manager.on_progress_update = on_progress_update
+process_manager.on_questions_generated = on_questions_generated
 process_manager.on_image_result_received = on_image_result_received
 
 if __name__ == "__main__":
