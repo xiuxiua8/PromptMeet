@@ -1,9 +1,13 @@
 <script>
+// import Controller from './components/Controller.vue'
+// import Agent from './components/Agent.vue'
+// import Table from './components/Table.vue'
 import MarkdownIt from 'markdown-it';
 
 export default {
   data() {
     return {
+      isRecording : false,
       isRunning:false,
       baseURL:'http://localhost:8000',
       wsbaseURL:'ws://localhost:8000',
@@ -17,10 +21,10 @@ export default {
       data: {}, // 简化初始数据结构（根据后端返回调整）
       websocket: null, // 声明 websocket 变量，避免全局污染
       questions : new Array(),
-      id : new Array(),
+      id : 0,
       receivedData: '',
-      answer:'answer',
-      summary:'会议结束后自动生成……',
+      qa: [],
+      summary:'111111111111111111111111111111111111111111\n111111111',
       md : new MarkdownIt(),
     };
   },
@@ -31,9 +35,18 @@ export default {
     },
   },
   methods: {
-    async handleStartSession(){
+    handleRecommendClick(text) {
+      this.message = text
+    },
+    onInputKeydown(e) {
+      if (e.key === 'Enter') {
+        this.sendMessage()
+      }
+    },
+    async handleCreateSession(){
+      this.isRecording = false
       this.isRunning=true
-      var url=`${this.baseURL}/api/sessions`
+      const url=`${this.baseURL}/api/sessions`
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -44,7 +57,9 @@ export default {
       this.sessionid=data.session_id
       this.websocket = new WebSocket(`${this.wsbaseURL}/ws/${this.sessionid}`);
 
-      url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
+    },
+    async handleStartRecord(){
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -52,18 +67,18 @@ export default {
         },
       });
     },
-
-    async handleStopSession(){
-      this.isRunning=false
-      var url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
+    async handleStopRecord(){
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
       await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
       });
-
-      url=`${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`
+    },
+    async handleCreateSummary(){
+      this.isRunning=false
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -76,17 +91,19 @@ export default {
       await fetch(url, {
         method: 'POST',
         headers: {
-        'Content-Type': 'application/json',
+          'Content-Type': 'application/json',
         },
-      });
-     },
+      })
+    },
     openTab(tabName) {
       this.activeTab = tabName;
     },
     sendMessage() {
       if (this.message.trim()) {
+        this.qa.push({ from: 'user', content: this.message });
         this.websocket.send(JSON.stringify({
-          input: this.message
+          type: "agent_message",
+          data: {content:this.message}
         }));
         this.message = "";
       }
@@ -98,12 +115,11 @@ export default {
     },
 
     ShowQuestion() {
-        const num=this.receivedData.data.id;
-        this.questions[num%3] = this.receivedData.data.content; // 存储后端数据
-        this.id[num%3] = num;
+        this.questions[this.id%3] = this.receivedData.data.content; // 存储后端数据
+        this.id++; // 更新 id
     },
     ShowAnswer() {
-      this.answer=this.receivedData.data.answer
+      this.qa.push({ from: 'agent', content: this.receivedData.data.content });
     },
     ShowSummary() {
       this.summary=this.receivedData.data.summary_text
@@ -111,6 +127,15 @@ export default {
     ShowHistory(){
       const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data.text}
       this.chatHistory.push(chat)
+    },
+    handleRecord() {
+      if (!this.isRecording) {
+        this.handleStartRecord();
+        this.isRecording = true;
+      } else {
+        this.handleStopRecord();
+        this.isRecording = false;
+      }
     },
   },
   watch: {
@@ -126,7 +151,7 @@ export default {
         else if(this.receivedData.type=="summary_generated"){
           this.ShowSummary()
         }
-        else if(this.receivedData.type=="audio_transcript"){
+        else if(this.receivedData.type=="audio_transcript"||this.receivedData.type=="image_ocr_result"){
           this.ShowHistory()
         }
         else{
@@ -152,25 +177,28 @@ export default {
           <span class="status-indicator" :class="{ running: isRunning, stopped: !isRunning }"></span>
         </div>
         <div class="button-row">
-          <button class="start-btn" :disabled="isRunning" @click="handleStartSession">开始</button>
-          <button class="stop-btn" :disabled="!isRunning" @click="handleStopSession">终止</button>
+          <button class="start-btn" :disabled="isRunning" @click="handleCreateSession">开始</button>
+          <button class="record-btn" :disabled="!isRunning" :class="{ recording: isRecording }" @click="handleRecord">
+            {{ isRecording ? '停止' : '录音' }}
+          </button>
+          <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
           <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
         </div>
       </div>
       <div class="chat-box">
         <div class="chat-display">
           <!-- 聊天内容显示区域 -->
-          <template v-if="receivedData.length === 0">
+          <template v-if="qa.length === 0">
             <div class="chat-welcome">
               <el-icon size="20"><ChatDotRound /></el-icon>
               我是XXX，很高兴见到你！
             </div>
           </template>
           <template v-else>
-            <div v-for="(msg, idx) in receivedData" :key="idx"
+            <div v-for="(msg, idx) in qa" :key="idx"
               :class="['chat-message', msg.from === 'user' ? 'chat-message-right' : 'chat-message-left']">
-              <span v-if="msg.from === 'user'">{{ msg }}</span>
-              <span v-else>{{ msg }}</span>
+              <span v-if="msg.from === 'user'">{{ msg.content }}</span>
+              <span v-else>{{ msg.content }}</span>
             </div>
           </template>
         </div>
@@ -199,7 +227,7 @@ export default {
       </div>
       <div class="tab-content" v-else>
         <div class="summary">
-          <p v-html="renderedSummary"></p>
+          <p v-html="renderedSummary"></p >
         </div>
       </div>
     </div>
@@ -281,13 +309,28 @@ body, html {
   display: flex;
   gap: 16px;
 }
-.start-btn, .stop-btn, .screenshot-btn {
+.start-btn, .stop-btn, .screenshot-btn{
   padding: 6px 24px;
   font-size: 1rem;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   transition: background 0.2s;
+}
+.screenshot-btn {
+  background: #409eff;
+  color: #fff;
+}
+.screenshot-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
+.screenshot-btn:hover {
+  background: #1f8fff
+}
+.screenshot-btn:disabled:hover {
+  background: #bdbdbd !important;
+  cursor: not-allowed;
 }
 .start-btn {
   background: #4caf50;
@@ -303,21 +346,6 @@ body, html {
 }
 .stop-btn:disabled {
   background: #bdbdbd;
-  cursor: not-allowed;
-}
-.screenshot-btn {
-  background: #409eff;
-  color: #fff;
-}
-.screenshot-btn:disabled {
-  background: #bdbdbd;
-  cursor: not-allowed;
-}
-.screenshot-btn:hover {
-  background: #1f8fff
-}
-.screenshot-btn:disabled:hover {
-  background: #bdbdbd !important;
   cursor: not-allowed;
 }
 .chat-box {
@@ -485,6 +513,27 @@ body, html {
 }
 .summary p {
   word-break: break-all;
+  /* white-space: pre-wrap; */
+  /* 可选：限制最大宽度，防止撑大容器 */
   max-width: 100%;
+}
+.record-btn {
+  background: #ff9800;
+  color: #fff;
+  padding: 6px 24px;
+  font-size: 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.record-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
+.record-btn.recording {
+  background: #d32f2f;
+  color: #fff;
+  box-shadow: 0 0 8px #d32f2f;
 }
 </style>
