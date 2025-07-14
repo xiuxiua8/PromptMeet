@@ -7,8 +7,4 @@ from .session_manager import SessionManager
 from .websocket_manager import WebSocketManager
 from .process_manager import ProcessManager
 
-__all__ = [
-    "SessionManager",
-    "WebSocketManager", 
-    "ProcessManager"
-] 
+__all__ = ["SessionManager", "WebSocketManager", "ProcessManager"]

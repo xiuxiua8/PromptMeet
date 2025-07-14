@@ -48,3 +48,13 @@ alibabacloud_tea_openapi
 alibabacloud_darabonba_stream
 alibabacloud_tea_util
 pyobjc-framework-Quartz; sys_platform == "darwin"
+
+# 测试相关
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+httpx>=0.25.0  # 用于测试异步HTTP客户端
+
+# 开发工具
+black>=23.0.0  # 代码格式化
+flake8>=6.0.0  # 代码检查

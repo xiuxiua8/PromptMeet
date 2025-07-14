@@ -12,5 +12,5 @@ __all__ = [
     "parse_ipc_response",
     "AudioFileManager",
     "ensure_dir",
-    "get_file_size"
+    "get_file_size",
 ]

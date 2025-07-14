@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '18'
+
 jobs:
   test-backend:
     runs-on: ubuntu-latest
@@ -40,23 +44,25 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
+        python-version: ${{ env.PYTHON_VERSION }}
         
     - name: Install dependencies
       run: |
         cd backend
+        pip install --upgrade pip
         pip install -r requirements.txt
         
     - name: Run tests
       run: |
         cd backend
-        pytest -v
+        pytest -v --tb=short
         
     - name: Lint code
       run: |
         cd backend
-        pip install flake8
+        pip install flake8 black
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        black --check --diff .
 
   test-frontend:
     runs-on: ubuntu-latest
@@ -67,7 +73,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
-        node-version: '18'
+        node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
         cache-dependency-path: frontend/package-lock.json
         
@@ -79,7 +85,15 @@ jobs:
     - name: Run tests
       run: |
         cd frontend
-        npm test -- --coverage --watchAll=false
+        npm test
+        
+    - name: Type check (if TypeScript)
+      run: |
+        cd frontend
+        if [ -f "tsconfig.json" ]; then
+          npx vue-tsc --noEmit
+        fi
+        continue-on-error: true
         
     - name: Build
       run: |
@@ -100,6 +114,14 @@ jobs:
     - name: Test Docker setup
       run: |
         docker-compose -f docker/docker-compose.yml up -d
-        sleep 30
+        echo "Waiting for services to start..."
+        sleep 60
+        echo "Testing backend health endpoint..."
         curl -f http://localhost:8000/health || exit 1
-        docker-compose -f docker/docker-compose.yml down 
+        echo "Health check passed!"
+        
+    - name: Cleanup Docker
+      if: always()
+      run: |
+        docker-compose -f docker/docker-compose.yml down -v
+        docker system prune -f 
