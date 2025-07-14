@@ -70,14 +70,12 @@ class FeishuCalendarTool(BaseTool):
                     error="飞书日历ID未配置"
                 )
 
-            # 默认路径为 backend/agents/temp/Result.txt
+            # 路径修复：始终指向 backend/agents/temp/Result.txt
             if result_file_path is None:
-                backend_dir = os.path.dirname(os.path.abspath(__file__))
-                agents_dir = os.path.join(os.path.dirname(backend_dir), "agents")
-                temp_dir = os.path.join(agents_dir, "temp")
-                result_file_path = os.path.join(temp_dir, "Result.txt")
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                result_file_path = os.path.join(project_root, "agents", "temp", "Result.txt")
+            print("实际读取路径：", result_file_path)
 
-            # 只查找这一个路径
             if not os.path.exists(result_file_path):
                 return ToolResult(
                     tool_name=self.name,

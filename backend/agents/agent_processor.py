@@ -430,8 +430,8 @@ class AgentProcessor:
         calendar_keywords = ['日历', '日程', '飞书', 'feishu', '同步', '添加到日历', '创建日程', '安排时间']
         if any(keyword in user_message.lower() for keyword in calendar_keywords):
             try:
-                # 默认使用项目根目录的Result.txt文件
-                result_file_path = "Result.txt"
+                # 默认使用 backend/agents/temp/Result.txt
+                result_file_path = os.path.join("backend", "agents", "temp", "Result.txt")
                 
                 # 检查是否有指定文件路径
                 import re
