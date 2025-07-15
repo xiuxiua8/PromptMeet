@@ -879,6 +879,9 @@ class AgentProcessor:
         try:
             logger.info(f"开始处理用户消息: {content[:50]}...")
             
+            # 先刷新会议内容，确保有最新的转录数据
+            await self._refresh_session_content()
+            
             # 获取对话历史
             history = self.memory.chat_memory.messages
             
@@ -887,6 +890,38 @@ class AgentProcessor:
             
             # 构建完整的对话上下文
             context = ""
+            
+            # 添加会议内容作为背景知识
+            logger.info(f"当前会议内容片段数: {len(self.meeting_content)}")
+            if self.meeting_content:
+                context += "=== 会议内容背景 ===\n"
+                
+                # 使用向量数据库检索最相关的会议内容
+                if self.vector_db is not None:
+                    try:
+                        # 检索与当前问题最相关的会议内容
+                        relevant_docs = self.vector_db.similarity_search(content, k=2)
+                        if relevant_docs:
+                            context += "相关会议内容:\n"
+                            for i, doc in enumerate(relevant_docs, 1):
+                                context += f"相关内容{i}: {doc.page_content}\n"
+                        else:
+                            # 如果没有找到相关内容，使用最近的会议片段
+                            for i, content in enumerate(self.meeting_content[-2:], 1):
+                                context += f"会议片段{i}: {content}\n"
+                    except Exception as e:
+                        logger.warning(f"向量检索失败，使用最近会议片段: {e}")
+                        # 回退到使用最近的会议片段
+                        for i, content in enumerate(self.meeting_content[-2:], 1):
+                            context += f"会议片段{i}: {content}\n"
+                else:
+                    # 向量数据库不可用时，使用最近的会议片段
+                    for i, content in enumerate(self.meeting_content[-2:], 1):
+                        context += f"会议片段{i}: {content}\n"
+                
+                context += "=== 会议内容背景结束 ===\n\n"
+            
+            # 添加对话历史
             for msg in history:
                 if isinstance(msg, HumanMessage):
                     context += f"用户: {msg.content}\n"
@@ -931,9 +966,16 @@ class AgentProcessor:
             logger.info(f"上下文最后200字符: {context[-200:]}")
             
             # 构建包含工具结果的提示词
-            system_prompt = """你是一个智能助手，可以使用各种工具来帮助用户。当用户询问需要工具支持的问题时，请基于工具执行结果来回答。
+            system_prompt = """你是一个智能会议助手，可以帮助用户回答关于会议内容的问题，也可以使用各种工具来帮助用户。
 
-重要：请仔细查看工具执行结果部分，并根据结果提供准确的回答。
+重要说明：
+1. 会议内容背景：在"=== 会议内容背景 ==="部分包含了相关的会议内容，请基于这些内容回答用户的问题
+2. 如果用户询问会议相关的问题，请优先参考会议内容背景中的信息
+3. 如果会议内容背景中没有相关信息，可以根据自己的知识和理解自由生成答案，不必只说“没有相关信息”
+
+工具使用规则：
+- 当用户询问需要工具支持的问题时，请基于工具执行结果来回答
+- 请仔细查看工具执行结果部分，并根据结果提供准确的回答
 
 邮件处理规则：
 1. 如果看到"✅ 邮件发送成功！"，请告知用户邮件已成功发送，并重复发送详情
@@ -941,8 +983,7 @@ class AgentProcessor:
 3. 如果看到"❌ 邮件发送失败"，请告知用户发送失败的原因
 4. 不要在没有工具执行结果的情况下假设邮件发送状态
 
-请用友好、自然的语气回答，并确保回答与工具执行结果一致。"""
-            
+请用友好、自然的语气回答，确保回答准确且有用。"""
             # 调用聊天模型
             messages = [
                 ("system", system_prompt),
