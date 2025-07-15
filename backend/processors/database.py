@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import requests 
 import re
+import uuid
 from dotenv import load_dotenv
 import os
 import sys
@@ -152,6 +153,7 @@ class MeetingSessionStorage:
             return False
             
         return self.store_session(api_data)
+
     def create_database(self):
         """单独创建数据库的方法"""
         try:
@@ -514,114 +516,264 @@ class MeetingSessionStorage:
     def store_session(self, session_data):
         """存储完整的会议会话数据"""
         if not self.connect():
+            print("数据库连接失败")
             return False
         
+        cursor = None
         try:
             cursor = self.connection.cursor()
-            session = session_data['session']
+            session = session_data
+            session_id = session['session_id']
+            
+            # 开始事务
+            self.connection.start_transaction()
+            
+            # 检查会话是否已存在
+            cursor.execute("SELECT session_id FROM sessions WHERE session_id = %s", (session_id,))
+            if cursor.fetchone():
+                print(f"会话 {session_id} 已存在，执行更新操作")
+                return self._update_existing_session(cursor, session_data)
             
             # 1. 存储会话基本信息
+            print(f"存储会话基本信息: {session_id}")
             cursor.execute("""
                 INSERT INTO sessions (
                     session_id, is_recording, start_time, end_time,
                     participant_count, audio_file_path, created_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
-                session['session_id'],
-                session['is_recording'],
-                session['start_time'],
-                session['end_time'],
-                session['participant_count'],
-                session['audio_file_path'],
+                session_id,
+                session.get('is_recording', False),
+                self._format_datetime(session.get('start_time')),
+                self._format_datetime(session.get('end_time')),
+                session.get('participant_count', 0),
+                session.get('audio_file_path'),
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ))
             
-            # 2. 存储转录文本片段
-            if 'transcript_segments' in session:
+            # 2. 批量存储转录文本片段
+            if 'transcript_segments' in session and session['transcript_segments']:
+                print(f"存储 {len(session['transcript_segments'])} 个转录片段")
+                segment_values = []
                 for segment in session['transcript_segments']:
-                    cursor.execute("""
+                    segment_values.append((
+                        segment.get('id', str(uuid.uuid4())),
+                        session_id,
+                        segment.get('text', ''),
+                        self._format_datetime(segment.get('timestamp')),
+                        segment.get('confidence', 0.0),
+                        segment.get('speaker'),
+                        self._format_datetime(segment.get('start_time')),
+                        self._format_datetime(segment.get('end_time'))
+                    ))
+                
+                if segment_values:
+                    cursor.executemany("""
                         INSERT INTO transcript_segments (
                             id, session_id, text, timestamp, 
                             confidence, speaker, start_time, end_time
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        segment['id'],
-                        session['session_id'],
-                        segment['text'],
-                        segment['timestamp'],
-                        segment['confidence'],
-                        segment['speaker'],
-                        segment['start_time'],
-                        segment['end_time']
-                    ))
+                    """, segment_values)
             
             # 3. 存储会议摘要和相关数据
-            if 'current_summary' in session:
+            if 'current_summary' in session and session['current_summary'] is not None:
                 summary = session['current_summary']
-                
-                # 存储摘要
-                cursor.execute("""
-                    INSERT INTO session_summaries (
-                        session_id, summary_text, generated_at
-                    ) VALUES (%s, %s, %s)
-                """, (
-                    summary['session_id'],
-                    summary['summary_text'],
-                    summary['generated_at']
-                ))
-                
-                # 存储任务
-                if 'tasks' in summary:
-                    for task in summary['tasks']:
-                        cursor.execute("""
-                            INSERT INTO tasks (
-                                session_id, task_name, deadline, 
-                                description, priority, assignee, status
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            summary['session_id'],
-                            task['task'],
-                            task['deadline'],
-                            task.get('describe', task.get('description', '')),
-                            task['priority'],
-                            task['assignee'],
-                            task['status']
-                        ))
-                
-                # 存储关键点
-                if 'key_points' in summary:
-                    for point in summary['key_points']:
-                        cursor.execute("""
-                            INSERT INTO key_points (session_id, point_text)
-                            VALUES (%s, %s)
-                        """, (
-                            summary['session_id'],
-                            point
-                        ))
-                
-                # 存储决策
-                if 'decisions' in summary:
-                    for decision in summary['decisions']:
-                        cursor.execute("""
-                            INSERT INTO decisions (session_id, decision_text)
-                            VALUES (%s, %s)
-                        """, (
-                            summary['session_id'],
-                            decision
-                        ))
+                self._store_summary_data(cursor, summary)
             
+            # 提交事务
             self.connection.commit()
-            print(f"会话 {session['session_id']} 存储成功!")
+            print(f"会话 {session_id} 存储成功!")
             return True
             
         except Error as e:
             print(f"会话存储失败: {e}")
-            self.connection.rollback()
+            if self.connection:
+                self.connection.rollback()
+            return False
+        except Exception as e:
+            print(f"存储过程中发生意外错误: {e}")
+            if self.connection:
+                self.connection.rollback()
             return False
         finally:
             if cursor:
                 cursor.close()
             self.close()
+    
+    def _update_existing_session(self, cursor, session_data):
+        """更新已存在的会话"""
+        try:
+            session = session_data
+            session_id = session['session_id']
+            
+            # 更新会话基本信息
+            cursor.execute("""
+                UPDATE sessions SET 
+                    is_recording = %s, end_time = %s, 
+                    participant_count = %s, audio_file_path = %s
+                WHERE session_id = %s
+            """, (
+                session.get('is_recording', False),
+                self._format_datetime(session.get('end_time')),
+                session.get('participant_count', 0),
+                session.get('audio_file_path'),
+                session_id
+            ))
+            
+            # 删除旧的转录片段（如果有新的）
+            if 'transcript_segments' in session:
+                cursor.execute("DELETE FROM transcript_segments WHERE session_id = %s", (session_id,))
+                
+                # 重新插入转录片段
+                if session['transcript_segments']:
+                    segment_values = []
+                    for segment in session['transcript_segments']:
+                        segment_values.append((
+                            segment.get('id', str(uuid.uuid4())),
+                            session_id,
+                            segment.get('text', ''),
+                            self._format_datetime(segment.get('timestamp')),
+                            segment.get('confidence', 0.0),
+                            segment.get('speaker'),
+                            self._format_datetime(segment.get('start_time')),
+                            self._format_datetime(segment.get('end_time'))
+                        ))
+                    
+                    cursor.executemany("""
+                        INSERT INTO transcript_segments (
+                            id, session_id, text, timestamp, 
+                            confidence, speaker, start_time, end_time
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, segment_values)
+            
+            # 更新摘要信息
+            if 'current_summary' in session and session['current_summary'] is not None:
+                # 删除旧的摘要相关数据
+                cursor.execute("DELETE FROM session_summaries WHERE session_id = %s", (session_id,))
+                cursor.execute("DELETE FROM tasks WHERE session_id = %s", (session_id,))
+                cursor.execute("DELETE FROM key_points WHERE session_id = %s", (session_id,))
+                cursor.execute("DELETE FROM decisions WHERE session_id = %s", (session_id,))
+                
+                # 重新插入摘要数据
+                summary = session['current_summary']
+                self._store_summary_data(cursor, summary)
+            
+            self.connection.commit()
+            print(f"会话 {session_id} 更新成功!")
+            return True
+            
+        except Exception as e:
+            print(f"更新会话失败: {e}")
+            return False
+    
+    def _store_summary_data(self, cursor, summary):
+        """存储摘要相关数据"""
+        try:
+            # 检查摘要数据是否为None
+            if summary is None:
+                print("摘要数据为None，跳过存储")
+                return
+            
+            session_id = summary.get('session_id')
+            if not session_id:
+                print("摘要数据缺少session_id")
+                return
+            
+            print(f"存储会议摘要: {session_id}")
+            
+            # 存储摘要
+            if summary.get('summary_text'):
+                cursor.execute("""
+                    INSERT INTO session_summaries (
+                        session_id, summary_text, generated_at
+                    ) VALUES (%s, %s, %s)
+                """, (
+                    session_id,
+                    summary['summary_text'],
+                    self._format_datetime(summary.get('generated_at', datetime.now().isoformat()))
+                ))
+            
+            # 批量存储任务
+            if 'tasks' in summary and summary['tasks']:
+                print(f"存储 {len(summary['tasks'])} 个任务")
+                task_values = []
+                for task in summary['tasks']:
+                    task_values.append((
+                        session_id,
+                        task.get('task', task.get('task_name', '')),
+                        self._format_date(task.get('deadline')),
+                        task.get('describe', task.get('description', '')),
+                        task.get('priority', 'medium'),
+                        task.get('assignee'),
+                        task.get('status', 'pending')
+                    ))
+                
+                cursor.executemany("""
+                    INSERT INTO tasks (
+                        session_id, task_name, deadline, 
+                        description, priority, assignee, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, task_values)
+            
+            # 批量存储关键点
+            if 'key_points' in summary and summary['key_points']:
+                print(f"存储 {len(summary['key_points'])} 个关键点")
+                point_values = [(session_id, point) for point in summary['key_points']]
+                cursor.executemany("""
+                    INSERT INTO key_points (session_id, point_text)
+                    VALUES (%s, %s)
+                """, point_values)
+            
+            # 批量存储决策
+            if 'decisions' in summary and summary['decisions']:
+                print(f"存储 {len(summary['decisions'])} 个决策")
+                decision_values = [(session_id, decision) for decision in summary['decisions']]
+                cursor.executemany("""
+                    INSERT INTO decisions (session_id, decision_text)
+                    VALUES (%s, %s)
+                """, decision_values)
+                
+        except Exception as e:
+            print(f"存储摘要数据失败: {e}")
+            raise
+    
+    def _format_datetime(self, dt_value):
+        """格式化日期时间值"""
+        if not dt_value:
+            return None
+        
+        if isinstance(dt_value, str):
+            try:
+                # 处理ISO格式日期
+                if 'T' in dt_value:
+                    dt_value = dt_value.replace('Z', '+00:00')
+                    parsed_dt = datetime.fromisoformat(dt_value)
+                    return parsed_dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    return dt_value
+            except ValueError:
+                print(f"日期格式错误: {dt_value}")
+                return None
+        elif isinstance(dt_value, datetime):
+            return dt_value.strftime('%Y-%m-%d %H:%M:%S')
+        
+        return str(dt_value)
+    
+    def _format_date(self, date_value):
+        """格式化日期值"""
+        if not date_value:
+            return None
+        
+        if isinstance(date_value, str):
+            try:
+                if 'T' in date_value:
+                    date_value = date_value.split('T')[0]
+                return date_value
+            except ValueError:
+                print(f"日期格式错误: {date_value}")
+                return None
+        
+        return str(date_value)
     def get_all_sessions(self) -> str:
         """获取所有会话的元数据，返回JSON格式字符串，只包含session_id和前1个清理过格式的关键词"""
         if not self.connect():  # 确保连接已建立
@@ -804,69 +956,6 @@ if __name__ == "__main__":
     #storage.store_from_api('cecc947e-0d28-4486-aaa1-d83ec925cd9a')
     #storage.store_from_txt_file('D:\L\Vscode\Python\internship-ii\mysql\session_data.txt')
     
-    # 测试数据
-    test_session_id = "0aaecadb-73bf-40aa-90ca-9e32b5f78fbf"
-    test_data = {
-        "success": True,
-        "session": {
-            "session_id": "0aaecadb-73bf-40aa-90ca-9e32b5f78fbf",
-            "is_recording": False,
-            "start_time": "2025-07-08T02:12:44.258153",
-            "end_time": None,
-            "transcript_segments": [
-                {
-                    "id": "5c5203e2-2fcb-44e2-a60d-e116ad972968",
-                    "text": "今天我们组织了一支团队来谈论我们的计划路径,John会负责谈论我们的计划路径。",
-                    "timestamp": "2025-07-08T02:13:02.656902",
-                    "confidence": 0.0,
-                    "speaker": None,
-                    "start_time": None,
-                    "end_time": None
-                },
-                {
-                    "id": "a90c5a89-4f68-48f0-ba8f-c66f6852c41e",
-                    "text": "前线发展策略 约定 第一阶段 是下周五 12月15日",
-                    "timestamp": "2025-07-08T02:13:13.027288",
-                    "confidence": 0.0,
-                    "speaker": None,
-                    "start_time": None,
-                    "end_time": None
-                }
-            ],
-            "current_summary": {
-                "session_id": "0aaecadb-73bf-40aa-90ca-9e32b5f78fbf",
-                "summary_text": "### 会议内容总结：\n\n1. **主要讨论议题**  \n   - **前线发展策略**：讨论第一阶段的目标及截止时间（2025年12月15日）。  \n   - **AI开发项目（FastAPI）**：  \n     - 关键交付成果：用户认证系统、数据处理模块、报告生成功能。  \n     - 决定实施自动化测试以确保质量。  \n     - 项目预算确定为10万美元。  \n\n2. **重要结论或决定**  \n   - 前线发展策略第一阶段完成时间明确为**2025年12月15日**。  \n   - AI开发项目的核心功能、自动化测试及预算（$100,000）已敲定。  \n\n3. **我的待办事项**  \n   - **前线发展策略第一阶段**  \n     - 任务详情：确保按约定时间（2025-12-15）完成第一阶段目标。  \n     - 截止日期：2025年12月15日。  \n\n---  \n**注**：会议中提及的'下周五12月15日'与待办事项的'2025-12-15'存在年份矛盾，推测待办日期应为2025年（根据上下文优先级修正）。",
-                "tasks": [
-                    {
-                        "task": "前线发展策略第一阶段",
-                        "deadline": "2025-12-15",
-                        "describe": "约定第一阶段完成时间",
-                        "priority": "medium",
-                        "assignee": None,
-                        "status": "pending"
-                    }
-                ],
-                "key_points": [
-                    "**前线发展策略**：讨论第一阶段的目标及截止时间（2025年12月15日）。",
-                    "**AI开发项目（FastAPI）**：",
-                    "关键交付成果：用户认证系统、数据处理模块、报告生成功能。",
-                    "项目预算确定为10万美元。",
-                    "前线发展策略第一阶段完成时间明确为**2025年12月15日**。",
-                    "AI开发项目的核心功能、自动化测试及预算（$100,000）已敲定。",
-                    "**前线发展策略第一阶段**",
-                    "任务详情：确保按约定时间（2025-12-15）完成第一阶段目标。",
-                    "截止日期：2025年12月15日。"
-                ],
-                "decisions": [
-                    "决定实施自动化测试以确保质量。"
-                ],
-                "generated_at": "2025-07-08T02:14:16.250708"
-            },
-            "participant_count": 1,
-            "audio_file_path": None
-        }
-    }
-
     # === 测试代码 ===
     print("\n=== 开始测试 ===")
     
