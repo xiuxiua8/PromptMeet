@@ -19,29 +19,21 @@ class TimeTool(BaseTool):
         """执行时间查询"""
         try:
             import pytz
-            tz = pytz.timezone(timezone)
-            current_time = datetime.datetime.now(tz)
-            
+            import datetime
+            now = datetime.datetime.now(pytz.timezone(timezone))
+            msg = f"现在是北京时间{now.strftime('%Y年%m月%d日 %H:%M:%S')}"
             return ToolResult(
                 tool_name=self.name,
                 result={
-                    "timezone": timezone,
-                    "current_time": current_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "date": current_time.strftime("%Y-%m-%d"),
-                    "time": current_time.strftime("%H:%M:%S"),
-                    "day_of_week": current_time.strftime("%A"),
-                    "type": "time"
+                    "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+                    "message": msg
                 },
                 success=True
             )
         except Exception as e:
             return ToolResult(
                 tool_name=self.name,
-                result={
-                    "timezone": timezone,
-                    "error": f"时间查询错误: {str(e)}",
-                    "type": "error"
-                },
+                result={"error": str(e)},
                 success=False,
                 error=str(e)
             )

@@ -93,3 +93,4 @@ yarn.lock
 
 *._test.py
 __pycache__/
+*.pyc
