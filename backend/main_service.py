@@ -31,6 +31,7 @@ from models.data_models import WebSocketMessage
 from services.session_manager import SessionManager
 from services.websocket_manager import WebSocketManager
 from services.process_manager import ProcessManager
+from processors.database import MeetingSessionStorage
 
 # 配置日志
 logging.basicConfig(
@@ -46,7 +47,8 @@ async def lifespan(app: FastAPI):
     logger.info("PromptMeet 服务正在启动...")
     await process_manager.initialize()
     logger.info("PromptMeet 服务启动完成")
-    
+    if not db_storage.initialize_database():
+        logger.error("数据库初始化失败!") 
     yield  # 应用运行期间
     
     # 关闭时清理资源
@@ -74,6 +76,7 @@ app.add_middleware(
 session_manager = SessionManager()
 websocket_manager = WebSocketManager()
 process_manager = ProcessManager()
+db_storage = MeetingSessionStorage()
 
 
 
@@ -509,6 +512,72 @@ async def on_agent_response(session_id: str, response: dict):
 
 # 注册回调
 process_manager.on_agent_response = on_agent_response
+
+# ============= Database 接口 =============
+
+@app.get("/db/sessions", response_class=JSONResponse)
+async def get_all_sessions():
+    """获取所有会话列表"""
+    try:
+        sessions_json = db_storage.get_all_sessions()
+        return JSONResponse(content=json.loads(sessions_json))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
+
+@app.get("/db/sessions/{session_id}", response_class=JSONResponse)
+async def get_session_details(session_id: str):
+    """获取会话详情"""
+    try:
+        session_json = db_storage.get_session_details(session_id)
+        if not session_json or session_json == "null":
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return JSONResponse(content=json.loads(session_json))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
+
+@app.post("/db/sessions/{session_id}/export")
+async def export_session(session_id: str):
+    """导出会话数据"""
+    try:
+        filepath = db_storage.save_session_to_json_file(session_id)
+        if not filepath:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return {"success": True, "filepath": filepath}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
+
+# ============= Database 接口 =============
+
+@app.get("/db/sessions", response_class=JSONResponse)
+async def get_all_sessions():
+    """获取所有会话列表"""
+    try:
+        sessions_json = db_storage.get_all_sessions()
+        return JSONResponse(content=json.loads(sessions_json))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
+
+@app.get("/db/sessions/{session_id}", response_class=JSONResponse)
+async def get_session_details(session_id: str):
+    """获取会话详情"""
+    try:
+        session_json = db_storage.get_session_details(session_id)
+        if not session_json or session_json == "null":
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return JSONResponse(content=json.loads(session_json))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
+
+@app.post("/db/sessions/{session_id}/export")
+async def export_session(session_id: str):
+    """导出会话数据"""
+    try:
+        filepath = db_storage.save_session_to_json_file(session_id)
+        if not filepath:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return {"success": True, "filepath": filepath}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
 
 # ============= IPC 回调处理 =============
 

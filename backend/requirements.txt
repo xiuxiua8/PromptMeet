@@ -6,6 +6,9 @@ loguru
 aiofiles
 httpx
 
+# 数据库
+mysql-connector-python
+
 # 音频与科学计算
 sounddevice
 soundfile
