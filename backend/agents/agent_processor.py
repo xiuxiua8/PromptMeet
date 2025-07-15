@@ -642,9 +642,18 @@ class AgentProcessor:
         logger.info(f"邮件检测: 关键词={has_email_keywords}, 邮箱地址={has_email_address}, 邮件历史={has_email_history}")
         if has_email_keywords or (has_email_address and has_email_history):
             try:
-                # 默认邮件配置
-                sender_email = "3125193963@qq.com"  # 发件人QQ邮箱
-                auth_code = "lfivvgwgtxtudhch"  # QQ邮箱授权码
+                # 从.env文件读取邮件配置
+                import os
+                from dotenv import load_dotenv
+                
+                # 加载.env文件
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                env_path = os.path.join(project_root, ".env")
+                load_dotenv(env_path)
+                
+                # 从环境变量读取邮件配置
+                sender_email = os.getenv("SENDER_EMAIL")  # 发件人邮箱
+                auth_code = os.getenv("EMAIL_AUTH_CODE")  # 邮箱授权码
                 
                 # 从用户消息中提取邮件信息
                 import re

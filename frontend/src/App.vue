@@ -184,6 +184,31 @@ export default {
       };
       this.chatHistory.push(chat);
     },
+    ShowEmailResponse() {
+      // 处理邮件发送响应
+      const emailResult = this.receivedData.data.content;
+      
+      // 检查是否是邮件相关的响应
+      if (emailResult && typeof emailResult === 'string') {
+        // 检查是否包含邮件工具的结果
+        if (emailResult.includes('邮件') || emailResult.includes('email')) {
+          // 如果是缺失信息的情况，显示提示
+          if (emailResult.includes('邮件信息不完整') || emailResult.includes('请补充')) {
+            this.qa.push({ from: 'agent', content: emailResult });
+          } else if (emailResult.includes('邮件发送成功')) {
+            this.qa.push({ from: 'agent', content: '✅ 邮件发送成功！' });
+          } else if (emailResult.includes('邮件发送失败') || emailResult.includes('错误')) {
+            this.qa.push({ from: 'agent', content: `❌ ${emailResult}` });
+          } else {
+            this.qa.push({ from: 'agent', content: emailResult });
+          }
+        } else {
+          this.qa.push({ from: 'agent', content: emailResult });
+        }
+      } else {
+        this.qa.push({ from: 'agent', content: emailResult });
+      }
+    },
     handleRecord() {
       if (!this.isRecording) {
         this.handleStartRecord();
@@ -209,6 +234,9 @@ export default {
         }
         else if(this.receivedData.type=="audio_transcript" || this.receivedData.type=="image_ocr_result"){
           this.ShowHistory()
+        }
+        else if(this.receivedData.type=="email_response"){
+          this.ShowEmailResponse()
         }
         else{
           return
