@@ -345,7 +345,7 @@ export default {
         :class="['history-session-item']"
         @click="gainSession(session.session_id)"
       >
-        {{ session.key_points[0]}}
+        {{ session.key_points[0]?.split(/[:：]/)[0] || '无标题'}}
       </div>
     </div>
     <div class="left-panel">
