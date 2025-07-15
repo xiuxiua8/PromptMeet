@@ -40,6 +40,14 @@ export default {
         this.sendMessage();
       }
     },
+    async handleStart() {
+      if (!this.isRunning) {
+        await this.handleCreateSession();
+      } else {
+        await this.handleEndSession();
+        this.isRunning = false;
+      }
+    },
     async gainSessionId() {
       const url = `${this.baseURL}/db/sessions`;
       const response = await fetch(url, {
@@ -85,6 +93,15 @@ export default {
       this.sessionid = data.session_id;
       this.websocket = new WebSocket(`${this.wsbaseURL}/ws/${this.sessionid}`);
     },
+    async saveSession() {
+      const url = `${this.baseURL}/api/sessions/${this.sessionid}/store-session`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
     async handleStartRecord() {
       const url = `${this.baseURL}/api/sessions/${this.sessionid}/start-recording`;
       await fetch(url, {
@@ -104,7 +121,7 @@ export default {
       });
     },
     async handleCreateSummary() {
-      this.isRunning = false;
+      //this.isRunning = false;
       const url = `${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`;
       await fetch(url, {
         method: 'POST',
@@ -253,6 +270,21 @@ export default {
         this.isRecording = false;
       }
     },
+    handleEndSession() {
+      // 停止录音如果正在录音
+      if (this.isRecording) {
+        this.handleStopRecord();
+        this.isRecording = false;
+      }
+      // 关闭WebSocket连接
+      if (this.websocket) {
+        this.websocket.close();
+        this.websocket = null;
+      }
+      // 设置会话状态为结束
+      this.isRunning = false;
+      this.sessionid = '';
+    },
     clear() {
       this.qa = [];
       this.chatHistory = [];
@@ -324,12 +356,15 @@ export default {
           <span class="status-indicator" :class="{ running: isRunning, stopped: !isRunning }"></span>
         </div>
         <div class="button-row">
-          <button class="start-btn" :disabled="isRunning" @click="handleCreateSession">开始</button>
+          <button class="start-btn" :class="{ running: isRunning }" @click="handleStart">
+            {{ isRunning ? '结束' : '开始' }}
+          </button>
           <button class="record-btn" :disabled="!isRunning" :class="{ recording: isRecording }" @click="handleRecord">
             {{ isRecording ? '停止' : '录音' }}
           </button>
-          <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
           <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
+          <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
+          <button class="save-btn" :disabled="!isRunning" @click="saveSession">保存</button>
         </div>
       </div>
       <div class="chat-box">
@@ -504,7 +539,7 @@ html, body, #app {
   display: flex;
   gap: 16px;
 }
-.start-btn, .stop-btn, .screenshot-btn{
+.start-btn, .stop-btn, .save-btn, .screenshot-btn {
   padding: 6px 24px;
   font-size: 1rem;
   border: none;
@@ -556,6 +591,21 @@ html, body, #app {
 }
 .stop-btn:disabled {
   background: #bdbdbd;
+  cursor: not-allowed;
+}
+.end-session-btn {
+  background: #ff5722;
+  color: #fff;
+}
+.end-session-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
+.end-session-btn:hover {
+  background: #e64a19;
+}
+.end-session-btn:disabled:hover {
+  background: #bdbdbd !important;
   cursor: not-allowed;
 }
 .chat-box {
@@ -751,7 +801,14 @@ html, body, #app {
   color: #fff;
   box-shadow: 0 0 8px #d32f2f;
 }
-
+.save-btn {
+  background: #0eb64c;
+  color: #fff;
+}
+.save-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
 /* 窗口选择模态框样式 */
 .window-selection-modal {
   position: fixed;
@@ -908,5 +965,10 @@ html, body, #app {
 }
 .history-session-item:hover {
   background: #e6f4ff;
+}
+.start-btn.running {
+  background: #f44336;
+  color: #fff;
+  box-shadow: 0 0 8px #f44336;
 }
 </style>
