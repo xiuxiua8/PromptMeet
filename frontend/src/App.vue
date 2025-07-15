@@ -197,7 +197,7 @@ export default {
       this.summary=this.receivedData.data.summary_text
     },
     ShowHistory(){
-      const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data.text}
+      const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data}
       this.chatHistory.push(chat)
     },
     handleRecord() {

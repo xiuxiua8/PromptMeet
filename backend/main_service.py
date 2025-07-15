@@ -592,8 +592,8 @@ async def on_image_result_received(session_id: str, image_result: dict):
         # 更新会话状态
         session = session_manager.get_session(session_id)
         if session:
-
-            session.image_ocr_result = [image_result]
+            
+            session.image_ocr_result.append(image_result)
             logger.info(f"image_ocr_result: {image_result}")
             session_manager.update_session(session)
         # 通知前端

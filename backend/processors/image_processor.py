@@ -11,6 +11,9 @@ from pathlib import Path
 import pyautogui
 import platform
 from datetime import datetime
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 
 # 根据操作系统选择窗口管理库
 if platform.system() == "Darwin":  # macOS
@@ -529,6 +532,80 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
         logger.error(f"写入 pipe 失败: {e}")
 
 
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+
+def summarize_ocr_result(res: dict) -> dict:
+    """
+    接收一个 OCR 结果字典，读取其中 'content' 字段，
+    使用 GPT 模型生成自然语言总结。
+    """
+    # 初始化模型（建议用环境变量传 key，演示写死）
+    llm = ChatOpenAI(
+        model="gpt-4",
+        temperature=0.3,
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+
+    # Prompt 模板（可根据需求自定义语气）
+    prompt = PromptTemplate(
+        input_variables=["content"],
+        template=(
+            "以下是通过 OCR 识别的一段幻灯片内容：\n\n"
+            "{content}\n\n"
+            "请你将这段内容整理为一段完整、自然、可读性强的总结，"
+            "修正不通顺之处并补全语义。"
+        )
+    )
+
+    chain = LLMChain(llm=llm, prompt=prompt)
+
+    # 获取 content 字段并生成总结
+    content = res.get("content", "").strip()
+    if not content:
+        res["content"] = "OCR 内容为空，无法总结。"
+        return res
+    new_content = chain.run({"content": content})
+    res["content"] = new_content
+    return res
+
+
+def summarize_ocr_result(res: dict) -> dict:
+    """
+    接收一个 OCR 结果字典，读取其中 'content' 字段，
+    使用 GPT 模型生成自然语言总结。
+    """
+    # 初始化模型（建议用环境变量传 key，演示写死）
+    llm = ChatOpenAI(
+        model="gpt-4",
+        temperature=0.3,
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+
+    # Prompt 模板（可根据需求自定义语气）
+    prompt = PromptTemplate(
+        input_variables=["content"],
+        template=(
+            "以下是通过 OCR 识别的一段幻灯片内容：\n\n"
+            "{content}\n\n"
+            "请你将这段内容整理为一段完整、自然、可读性强的总结，"
+            "修正不通顺之处并补全语义。"
+        )
+    )
+
+    chain = LLMChain(llm=llm, prompt=prompt)
+
+    # 获取 content 字段并生成总结
+    content = res.get("content", "").strip()
+    if not content:
+        res["content"] = "OCR 内容为空，无法总结。"
+        return res
+    new_content = chain.run({"content": content})
+    res["content"] = new_content
+    return res
+
+
 def get_specific_window(window_id: str):
     """根据窗口ID获取特定窗口"""
     window_dict = get_meeting_windows()
@@ -599,6 +676,7 @@ if __name__ == "__main__":
 
     logger.info("正在调用 OCR 识别文字...")
     results = recognize_ocr_batch(captured_paths, max_workers=5)
+    results = [summarize_ocr_result(res) for res in results]
 
     if not results:
         msg = {
