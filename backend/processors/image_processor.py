@@ -301,7 +301,7 @@ def clean_title(title):
         return cleaned[:30]  # 限制长度
 
 
-def take_screenshots(window_dict, folder="screen_shot") -> List[str]:
+def take_screenshots(window_dict, folder="screenshots") -> List[str]:
     """截取窗口截图，支持fallback模式"""
     os.makedirs(folder, exist_ok=True)
     image_paths = []
@@ -517,7 +517,7 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
             "session_id": session_id,
             "text": res["content"],
             #"words": res["words"],  # [{"word": ..., "prob": ...}]
-            "image_file": os.path.join("screen_shot", res["filename"]),
+            "image_file": os.path.join("screenshots", res["filename"]),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -672,7 +672,7 @@ if __name__ == "__main__":
             exit(0)
 
     logger.info("正在截图会议窗口...")
-    captured_paths = take_screenshots(window_dict, folder="screen_shot")
+    captured_paths = take_screenshots(window_dict, folder="screenshots")
 
     logger.info("正在调用 OCR 识别文字...")
     results = recognize_ocr_batch(captured_paths, max_workers=5)
