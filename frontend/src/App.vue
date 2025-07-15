@@ -114,7 +114,8 @@
                 </div>
                 <div class="message-content">
                   <div class="message-bubble">
-                    {{ msg.content }}
+                    <div v-if="msg.from === 'agent'" class="message-html" v-html="md.render(msg.content)"></div>
+                    <div v-else class="message-text">{{ msg.content }}</div>
                   </div>
                   <div class="message-time">{{ formatTime(new Date()) }}</div>
                 </div>
@@ -294,6 +295,7 @@ export default {
         minute: '2-digit' 
       });
     },
+
     handleRecommendClick(text) {
       this.message = text;
     },
@@ -1065,6 +1067,18 @@ export default {
 
 .message-wrapper {
   margin-bottom: 20px;
+  animation: messageSlideIn 0.3s ease-out;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message {
@@ -1121,6 +1135,168 @@ export default {
 
 .user-message .message-time {
   text-align: left;
+}
+
+/* 消息内容格式化样式 */
+.message-html {
+  line-height: 1.6;
+}
+
+.message-text {
+  line-height: 1.5;
+}
+
+/* AI消息中的Markdown样式 */
+.message-html h1, .message-html h2, .message-html h3, .message-html h4, .message-html h5, .message-html h6 {
+  margin: 8px 0 4px 0;
+  color: #333;
+  font-weight: 600;
+}
+
+.message-html h1 { font-size: 18px; }
+.message-html h2 { font-size: 16px; }
+.message-html h3 { font-size: 15px; }
+.message-html h4 { font-size: 14px; }
+.message-html h5 { font-size: 13px; }
+.message-html h6 { font-size: 12px; }
+
+.message-html p {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.message-html ul, .message-html ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.message-html li {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.message-html ul li {
+  list-style-type: none;
+  position: relative;
+}
+
+.message-html ul li::before {
+  content: "•";
+  color: #667eea;
+  font-weight: bold;
+  position: absolute;
+  left: -16px;
+}
+
+.message-html ol li {
+  list-style-type: none;
+  position: relative;
+  counter-increment: item;
+}
+
+.message-html ol {
+  counter-reset: item;
+}
+
+.message-html ol li::before {
+  content: counter(item) ".";
+  color: #667eea;
+  font-weight: bold;
+  position: absolute;
+  left: -20px;
+  width: 16px;
+  text-align: right;
+}
+
+.message-html blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: rgba(102, 126, 234, 0.1);
+  border-left: 4px solid #667eea;
+  border-radius: 4px;
+  color: #555;
+  font-style: italic;
+}
+
+.message-html code {
+  background: rgba(0, 0, 0, 0.1);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #d63384;
+}
+
+.message-html pre {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.message-html pre code {
+  background: none;
+  padding: 0;
+  color: #333;
+  font-size: 13px;
+}
+
+.message-html table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.message-html th, .message-html td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.message-html th {
+  background: rgba(102, 126, 234, 0.1);
+  font-weight: 600;
+}
+
+.message-html strong {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.message-html em {
+  color: #666;
+  font-style: italic;
+}
+
+.message-html a {
+  color: #667eea;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.message-html a:hover {
+  color: #764ba2;
+  border-bottom-color: #764ba2;
+}
+
+.message-html hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 12px 0;
+}
+
+
+
+/* 用户消息保持简单样式 */
+.user-message .message-bubble {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+}
+
+.user-message .message-text {
+  color: white;
 }
 
 /* 推荐问题 */
