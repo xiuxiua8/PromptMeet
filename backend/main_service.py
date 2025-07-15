@@ -361,6 +361,49 @@ async def generate_questions(session_id: str):
     except Exception as e:
         logger.error(f"生成问题失败: {e}")
         return {"success": False, "message": f"生成问题失败: {str(e)}"}
+        
+@app.post("/api/sessions/{session_id}/store-session")
+async def store_session(session_id: str):
+    """存储会话数据到数据库"""
+    try:
+        # 验证会话是否存在
+        session = session_manager.get_session(session_id)
+        if not session:
+            logger.warning(f"尝试存储不存在的会话: {session_id}")
+            raise HTTPException(status_code=404, detail="会话不存在")
+        
+        # 简单验证会话数据
+        if not session.session_id:
+            logger.error(f"会话数据无效: {session_id}")
+            raise HTTPException(status_code=400, detail="会话数据无效")
+        
+        # 转换为字典格式
+        session_dict = session.model_dump()
+        logger.info(f"会话数据: {session_dict}")
+        
+        # 执行存储操作
+        logger.info(f"开始存储会话: {session_id}")
+        success = await asyncio.get_event_loop().run_in_executor(
+            None, db_storage.store_session, session_dict
+        )
+        
+        if not success:
+            logger.error(f"会话存储失败: {session_id}")
+            raise HTTPException(status_code=500, detail="会话存储失败")
+        
+        logger.info(f"会话存储成功: {session_id}")
+        return {
+            "success": True, 
+            "message": "会话存储成功",
+            "session_id": session_id,
+            "stored_at": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"存储会话时发生意外错误: {session_id}, 错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
 
 
 @app.post("/api/sessions/{session_id}/start-image-processing")

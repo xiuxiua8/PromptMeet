@@ -25,6 +25,7 @@ export default {
       availableWindows: [],
       selectedWindowId: null,
       showWindowSelection: false,
+      historySession: [],
     };
   },
   computed: {
@@ -42,7 +43,38 @@ export default {
         this.sendMessage()
       }
     },
+    async gainSessionId() {
+      const url = `${this.baseURL}/db/sessions`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await response.json();
+      for (const item of data) {
+        this.historySession.push(item);
+      }
+    },
+    async gainSession(sid) {
+      this.clear()
+      const url = `${this.baseURL}/db/sessions/${sid}`
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await response.json();
+      const transcript_segments=data.transcript_segments
+      for (const segment of transcript_segments) {  
+        const chat={sender:segment.speaker, time:segment.timestamp, content:segment.text}
+        this.chatHistory.push(chat)
+      }
+      this.summary = data.current_summary.summary_text;
+    },
     async handleCreateSession(){
+      this.clear()
       this.isRecording = false
       this.isRunning=true
       const url=`${this.baseURL}/api/sessions`
@@ -192,12 +224,15 @@ export default {
     },
     ShowAnswer() {
       this.qa.push({ from: 'agent', content: this.receivedData.data.content });
+      this.$nextTick(() => {
+        this.scrollToBottom();
+      });
     },
     ShowSummary() {
       this.summary=this.receivedData.data.summary_text
     },
     ShowHistory(){
-      const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data}
+      const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data.text}
       this.chatHistory.push(chat)
     },
     handleRecord() {
@@ -209,9 +244,20 @@ export default {
         this.isRecording = false;
       }
     },
+    clear() {
+      this.qa = [];
+      this.chatHistory = [];
+      this.questions = [];
+      this.id = 0;
+      this.receivedData = '';
+      this.summary = "会议结束后自动生成……";
+    },
   },
   watch: {
     websocket(newVal, oldVal) {
+      if (oldVal) {
+        oldVal.close()
+      }
       newVal.onmessage = (event) => {
         this.receivedData = JSON.parse(event.data);
         if(this.receivedData.type=="question"){
@@ -240,12 +286,24 @@ export default {
   },
   mounted() {
     this.openTab('tab1');
+    this.gainSessionId()
   },
 };
 </script>
 
 <template>
   <div class="main-layout">
+    <!-- 历史会议侧边栏，放在最左侧 -->
+    <div class="sidebar">
+      <div class="history-sidebar"
+        v-for="session in historySession"
+        :key="session.session_id"
+        :class="['history-session-item']"
+        @click="gainSession(session.session_id)"
+      >
+        {{ session.key_points[0]}}
+      </div>
+    </div>
     <div class="left-panel">
       <div class="controller-box">
         <div class="logo-title-row">
@@ -372,27 +430,46 @@ export default {
 </template>
 
 <style scoped>
-body, html {
-  height: 100vh;
+html, body, #app {
+  height: 95vh;
   margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 .main-layout {
   display: flex;
-  width: 80vw;
-  height: 97vh;
-  margin: auto;
-  min-height: 500px;
-  /* background-color: #f9f9f9; */
-  /* align-items: center; */
-  justify-content: center;
+  width: 98vw;
+  height: 95vh;
+  min-height: 0;
+  min-width: 0;
+  justify-content: flex-start;
+}
+.sidebar {
+  width: 150px;
+  background: #f3f6fa;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  height: 95vh;
+  min-height: 0;
+}
+.history-sidebar {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px;
 }
 .left-panel {
   display: flex;
   flex-direction: column;
-  width: 45%;
-  height: 100%;
+  width: 42%;
+  height: 98vh;
+  min-height: 0;
   gap: 10px;
-  margin: 0 0 0 40px;
+  margin-left: 20px;
   padding: 24px 24px 24px 24px;
   box-sizing: border-box;
 }
@@ -606,15 +683,20 @@ body, html {
   display: flex;
   flex-direction: column;
   background: #eeeeee;
-  margin: 24px 60px 24px 0;
+  margin: 24px 80px 24px 0;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
   padding: 0 0 24px 0;
   box-sizing: border-box;
+  height: 91vh;
+  min-height: 0;
+  overflow: hidden;
 }
 .nav-bar {
   display: flex;
-  padding: 16px 0 0 24px;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 16px 16px 0 16px;
   border-bottom: 1px solid #dddddd;
 }
 .nav-bar button {
@@ -807,5 +889,28 @@ body, html {
 
 .cancel-btn:hover {
   background: #e8e8e8;
+}
+.history-sidebar {
+  width: 70%;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.history-session-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #f5f5f5;
+  color: #333;
+  transition: background 0.2s, color 0.2s;
+  font-size: 15px;
+}
+.history-session-item.active {
+  background: #409eff;
+  color: #fff;
+}
+.history-session-item:hover {
+  background: #e6f4ff;
 }
 </style>
