@@ -315,22 +315,17 @@ class AgentProcessor:
             
             if email_match:
                 email_json = email_match.group(1).strip()
-                logger.info(f"提取的邮件JSON: {email_json}")
                 try:
                     email_info = json.loads(email_json)
-                    logger.info(f"解析到邮件信息: {email_info}")
                     return email_info
                 except json.JSONDecodeError as e:
-                    logger.error(f"解析邮件信息JSON失败: {e}")
-                    logger.error(f"原始JSON字符串: {email_json}")
                     return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
             else:
-                logger.info("Result.txt中未找到邮件信息部分")
                 # 尝试查找是否包含邮件相关的文本
                 if "邮件" in content:
-                    logger.info("文件中包含'邮件'关键词，但未找到【邮件信息】标记")
+                    return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+                # 如果没有匹配，直接返回空dict
                 return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
-                
         except Exception as e:
             logger.error(f"读取Result.txt文件失败: {e}")
             import traceback
@@ -856,23 +851,6 @@ class AgentProcessor:
         
         return tools_used
 
-    async def test_email_detection(self):
-        """测试邮件检测功能"""
-        logger.info("开始测试邮件检测功能...")
-        
-        # 测试读取Result.txt文件
-        email_info = self._read_result_file()
-        logger.info(f"测试读取邮件信息: {email_info}")
-        
-        # 测试邮件关键词检测
-        test_message = "发送邮件"
-        logger.info(f"测试消息: {test_message}")
-        
-        tools_used = await self._detect_and_execute_tools(test_message, "")
-        logger.info(f"检测到的工具: {tools_used}")
-        
-        return tools_used
-
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _handle_chat_message(self, content: str) -> str:
         """处理聊天消息（带重试机制）"""
@@ -928,11 +906,6 @@ class AgentProcessor:
                 elif isinstance(msg, AIMessage):
                     context += f"助手: {msg.content}\n"
             
-            # 添加工具信息到上下文
-            tools_info = "可用工具:\n"
-            for tool in self.get_available_tools():
-                tools_info += f"- {tool['name']}: {tool['description']}\n"
-            context += f"\n{tools_info}\n"
             
             # 如果有工具结果，添加到上下文中
             if tools_used:
@@ -963,7 +936,7 @@ class AgentProcessor:
             
             # 记录完整上下文用于调试
             logger.info(f"传递给AI模型的上下文长度: {len(context)}")
-            logger.info(f"上下文最后200字符: {context[-200:]}")
+            # logger.info(f"上下文最后200字符: {context[-200:]}")
             
             # 构建包含工具结果的提示词
             system_prompt = """你是一个智能会议助手，可以帮助用户回答关于会议内容的问题，也可以使用各种工具来帮助用户。

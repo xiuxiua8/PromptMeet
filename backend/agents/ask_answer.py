@@ -53,7 +53,9 @@ class QAGenerator:
         if not self.segment_buffer:
             return
 
-        combined_text = "\n".join(self.segment_buffer)
+        # 只取最新的3个片段生成问题，避免内容重复
+        buffer_to_use = self.segment_buffer[-self.buffer_size:]
+        combined_text = "\n".join(buffer_to_use)
 
         prompt_template = """
 请根据以下文本生成1个与技术相关的问题（以序号开头如1.xxx）：
@@ -79,6 +81,9 @@ class QAGenerator:
                     qid = await self.question_queue.add_question(question)
                     generated_questions.append({"id": qid, "question": question})
                     print(f"[系统] 新问题已加入队列 (ID: {qid}): {question}")
+
+            # 每次生成后清空缓冲区，避免内容高度相似
+            self.segment_buffer.clear()
 
             return generated_questions
 

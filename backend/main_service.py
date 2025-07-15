@@ -210,10 +210,10 @@ async def create_session():
     )
 
     session_manager.add_session(session)
-
+    logger.info("收到创建会话请求")
     # 启动Agent进程
     await process_manager.start_agent_process(session_id)
-
+    logger.info("Agent进程启动完成")
     logger.info(f"创建新会话: {session_id}")
     return {"success": True, "session_id": session_id, "message": "会话创建成功"}
 
