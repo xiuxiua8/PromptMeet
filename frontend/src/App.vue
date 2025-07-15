@@ -246,6 +246,8 @@
 
 <script>
 import MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
+import 'highlight.js/styles/github-dark.css';
 
 export default {
   data() {
@@ -265,7 +267,16 @@ export default {
       receivedData: '',
       qa: [],
       summary: '会议结束后自动生成……',
-      md: new MarkdownIt(),
+      md: new MarkdownIt({
+        highlight: function (str, lang) {
+          if (lang && hljs.getLanguage(lang)) {
+            try {
+              return `<pre class="hljs"><code class="language-${lang}">${hljs.highlight(str, { language: lang }).value}</code></pre>`;
+            } catch (__) {}
+          }
+          return `<pre class="hljs"><code>${MarkdownIt().utils.escapeHtml(str)}</code></pre>`;
+        }
+      }),
       availableWindows: [],
       selectedWindowId: null,
       showWindowSelection: false,
@@ -560,6 +571,43 @@ export default {
       this.receivedData = '';
       this.summary = "会议结束后自动生成……";
     },
+    enhanceCodeBlocks() {
+      this.$nextTick(() => {
+        const blocks = this.$el.querySelectorAll('.message-html pre code');
+        blocks.forEach(code => {
+          const pre = code.parentElement;
+          if (!pre || pre.tagName.toLowerCase() !== 'pre') return;
+          // 先移除旧的
+          pre.querySelectorAll('.code-lang-label, .copy-btn').forEach(e => e.remove());
+          // 语言标注
+          let lang = '';
+          code.classList.forEach(cls => {
+            if (cls.startsWith('language-')) {
+              lang = cls.replace('language-', '');
+            }
+          });
+          // 调试输出
+          console.log('代码块', pre, lang);
+          if (lang) {
+            const label = document.createElement('div');
+            label.className = 'code-lang-label';
+            label.innerText = lang.toUpperCase();
+            pre.appendChild(label);
+          }
+          // 复制按钮
+          const btn = document.createElement('button');
+          btn.className = 'copy-btn';
+          btn.innerText = '复制';
+          btn.onclick = () => {
+            navigator.clipboard.writeText(code.innerText);
+            btn.innerText = '已复制!';
+            setTimeout(() => (btn.innerText = '复制'), 1200);
+          };
+          pre.appendChild(btn);
+          pre.style.position = 'relative';
+        });
+      });
+    },
   },
   watch: {
     websocket(newVal, oldVal) {
@@ -588,16 +636,22 @@ export default {
         }
 
       };
+      this.enhanceCodeBlocks();
     },
     qa() {
       this.$nextTick(() => {
         this.scrollToBottom();
+        this.enhanceCodeBlocks();
       });
+    },
+    summary() {
+      this.enhanceCodeBlocks();
     }
   },
   mounted() {
     this.openTab('tab1');
-    this.gainSessionId()
+    this.gainSessionId();
+    this.enhanceCodeBlocks();
   },
 };
 </script>
@@ -1227,64 +1281,181 @@ export default {
   color: #d63384;
 }
 
-.message-html pre {
-  background: rgba(0, 0, 0, 0.05);
-  padding: 12px;
-  border-radius: 8px;
+/* DeepSeek风格Markdown增强样式（scoped穿透） */
+:deep(pre.hljs) {
+  background: #23272e !important;
+  border-radius: 10px;
+  padding: 18px 16px 16px 16px;
+  margin: 16px 0;
+  font-size: 14px;
+  font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', 'Menlo', monospace;
   overflow-x: auto;
-  margin: 8px 0;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(30, 34, 40, 0.08);
 }
 
-.message-html pre code {
+:deep(pre.hljs) .code-lang-label {
+  position: absolute;
+  top: 8px;
+  right: 60px;
+  background: #4f8cff;
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  z-index: 10;
+  pointer-events: none;
+  display: inline-block !important;
+}
+
+:deep(pre.hljs) .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  background: #23272e;
+  color: #fff;
+  border: 1px solid #4f8cff;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+  z-index: 10;
+  transition: background 0.2s, color 0.2s;
+  display: inline-block !important;
+}
+:deep(pre.hljs) .copy-btn:hover {
+  background: #4f8cff;
+  color: #fff;
+}
+
+:deep(.message-html) pre {
+  background: #23272e;
+  color: #f8f8f2;
+  border-radius: 10px;
+  padding: 18px 16px 16px 16px;
+  margin: 16px 0;
+  font-size: 14px;
+  font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', 'Menlo', monospace;
+  overflow-x: auto;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(30, 34, 40, 0.08);
+}
+
+:deep(.message-html) pre code {
   background: none;
+  color: inherit;
   padding: 0;
-  color: #333;
-  font-size: 13px;
+  font-size: inherit;
+  font-family: inherit;
 }
 
-.message-html table {
+:deep(.message-html) code {
+  background: #f4f4f5;
+  color: #d63384;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', 'Menlo', monospace;
+}
+
+:deep(.message-html) blockquote {
+  border-left: 4px solid #4f8cff;
+  background: #f6f8fa;
+  color: #444;
+  padding: 12px 18px;
+  margin: 16px 0;
+  border-radius: 8px;
+  font-style: normal;
+}
+
+:deep(.message-html) h1,
+:deep(.message-html) h2,
+:deep(.message-html) h3,
+:deep(.message-html) h4 {
+  color: #22223b;
+  font-weight: 700;
+  margin: 18px 0 10px 0;
+  line-height: 1.3;
+}
+
+:deep(.message-html) p {
+  color: #34344a;
+  margin: 10px 0;
+  line-height: 1.7;
+}
+
+:deep(.message-html) ul,
+:deep(.message-html) ol {
+  margin: 12px 0 12px 28px;
+  color: #34344a;
+}
+
+:deep(.message-html) li {
+  margin: 6px 0;
+  line-height: 1.7;
+}
+
+:deep(.message-html) blockquote {
+  border-left: 4px solid #4f8cff;
+  background: #f4f7fa;
+  color: #4a5568;
+  padding: 12px 18px;
+  margin: 16px 0;
+  border-radius: 8px;
+  font-style: normal;
+  font-size: 15px;
+}
+
+:deep(.message-html) table {
   width: 100%;
   border-collapse: collapse;
-  margin: 8px 0;
-  font-size: 13px;
+  margin: 16px 0;
+  font-size: 14px;
+  background: #f8fafd;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.message-html th, .message-html td {
-  border: 1px solid #ddd;
-  padding: 6px 8px;
+:deep(.message-html) th,
+:deep(.message-html) td {
+  border: 1px solid #e3e8ee;
+  padding: 8px 12px;
   text-align: left;
 }
 
-.message-html th {
-  background: rgba(102, 126, 234, 0.1);
+:deep(.message-html) th {
+  background: #eaf1fb;
+  color: #23272e;
   font-weight: 600;
 }
 
-.message-html strong {
-  color: #667eea;
-  font-weight: 600;
+:deep(.message-html) a {
+  color: #2563eb;
+  text-decoration: underline;
+  transition: color 0.2s;
+  word-break: break-all;
 }
 
-.message-html em {
-  color: #666;
+:deep(.message-html) a:hover {
+  color: #4f8cff;
+  background: #eaf1fb;
+}
+
+:deep(.message-html) strong {
+  color: #22223b;
+  font-weight: 700;
+}
+
+:deep(.message-html) em {
+  color: #4f8cff;
   font-style: italic;
 }
 
-.message-html a {
-  color: #667eea;
-  text-decoration: none;
-  border-bottom: 1px solid rgba(102, 126, 234, 0.3);
-}
-
-.message-html a:hover {
-  color: #764ba2;
-  border-bottom-color: #764ba2;
-}
-
-.message-html hr {
+:deep(.message-html) hr {
   border: none;
-  border-top: 1px solid #ddd;
-  margin: 12px 0;
+  border-top: 1px solid #e3e8ee;
+  margin: 18px 0;
 }
 
 
