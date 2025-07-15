@@ -14,7 +14,10 @@ from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from pathlib import Path
 import traceback
-from pydantic import SecretStr
+try:
+    from pydantic import SecretStr
+except ImportError:
+    SecretStr = str
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -990,14 +993,43 @@ class AgentProcessor:
             if command.command == "message":
                 # 先刷新会话内容
                 await self._refresh_session_content()
-                
-                # 处理消息
                 content = command.params.get("content", "")
                 try:
-                    result = await self._handle_chat_message(content)
+                    # ====== 流式AI回复实现 ======
+                    messages = [
+                        ("system", "你是一个智能会议助手，可以帮助用户回答关于会议内容的问题，也可以使用各种工具来帮助用户。"),
+                        ("human", content)
+                    ]
+                    full_response = ""
+                    async for chunk in self.chat_model.astream(messages):
+                        text = getattr(chunk, "content", str(chunk))  # 取出内容
+                        response_message = {
+                            "type": "response",
+                            "data": {"delta": text},
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        if self.ipc_output_file:
+                            with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
+                                out_f.flush()
+                        full_response += text
+                    # 最后写入完整内容
+                    final_message = {
+                        "type": "response",
+                        "data": {"content": full_response},
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    if self.ipc_output_file:
+                        with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                            out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
+                            out_f.flush()
+                    # 保存到记忆
+                    self.memory.chat_memory.add_user_message(content)
+                    self.memory.chat_memory.add_ai_message(full_response)
+                    logger.info(f"Agent响应成功: {full_response[:50]}...")
                     return IPCResponse(
                         success=True,
-                        data={"response": result},
+                        data={"response": full_response},
                         error=None,
                         timestamp=datetime.now()
                     )
@@ -1100,9 +1132,10 @@ async def main():
                                     "timestamp": datetime.now().isoformat()
                                 }
                                 
-                                with open(processor.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                    out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
-                                    out_f.flush()
+                                if processor.ipc_output_file:
+                                    with open(processor.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                        out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
+                                        out_f.flush()
                                 
                                 # 清空输入文件
                                 open(processor.ipc_input_file, 'w').close()

@@ -495,7 +495,24 @@ export default {
       this.id++;
     },
     ShowAnswer() {
-      this.qa.push({ from: 'agent', content: this.receivedData.data.content });
+      const data = this.receivedData;
+      const delta = data.data && (data.data.delta || data.data.chunk);
+      const content = data.data && data.data.content;
+      if (delta !== undefined) {
+        // 流式分片，拼接
+        if (this.qa.length > 0 && this.qa[this.qa.length - 1].from === 'agent') {
+          this.qa[this.qa.length - 1].content = (this.qa[this.qa.length - 1].content || '') + delta;
+        } else {
+          this.qa.push({ from: 'agent', content: delta });
+        }
+      } else if (content !== undefined) {
+        // 完整内容，直接覆盖最后一条 agent 消息
+        if (this.qa.length > 0 && this.qa[this.qa.length - 1].from === 'agent') {
+          this.qa[this.qa.length - 1].content = content;
+        } else {
+          this.qa.push({ from: 'agent', content: content });
+        }
+      }
       this.$nextTick(() => {
         this.scrollToBottom();
       });
