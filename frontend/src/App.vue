@@ -5,11 +5,14 @@
     
     <div class="main-layout">
       <!-- 历史会议侧边栏 -->
-      <div class="sidebar">
+      <div class="sidebar" :class="{ collapsed: sidebarCollapsed }">
         <div class="sidebar-header">
-          <h3>历史会议</h3>
+          <h3 v-if="!sidebarCollapsed">历史会议</h3>
+          <button class="toggle-btn" @click="toggleSidebar" :title="sidebarCollapsed ? '展开历史会议' : '折叠历史会议'">
+            {{ sidebarCollapsed ? '📂' : '📁' }}
+          </button>
         </div>
-        <div class="history-list">
+        <div class="history-list" v-if="!sidebarCollapsed">
           <div class="history-session-item"
             v-for="session in historySession"
             :key="session.session_id"
@@ -25,7 +28,7 @@
       </div>
 
       <!-- 主要内容区域 -->
-      <div class="main-content">
+      <div class="main-content" :class="{ expanded: sidebarCollapsed }">
         <!-- 控制面板 -->
         <div class="control-panel">
           <div class="panel-header">
@@ -152,7 +155,7 @@
       </div>
 
       <!-- 右侧面板 -->
-      <div class="right-panel">
+      <div class="right-panel" :class="{ expanded: sidebarCollapsed }">
         <div class="panel-tabs">
           <button 
             class="tab-btn" 
@@ -266,6 +269,7 @@ export default {
       selectedWindowId: null,
       showWindowSelection: false,
       historySession: [],
+      sidebarCollapsed: false,
     };
   },
   computed: {
@@ -543,6 +547,9 @@ export default {
       this.isRunning = false;
       this.sessionid = '';
     },
+    toggleSidebar() {
+      this.sidebarCollapsed = !this.sidebarCollapsed;
+    },
     clear() {
       this.qa = [];
       this.chatHistory = [];
@@ -642,6 +649,16 @@ export default {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.sidebar.collapsed {
+  width: 60px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar.collapsed .sidebar-header {
+  border-bottom: none;
 }
 
 .sidebar-header {
@@ -649,18 +666,47 @@ export default {
   border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   background: linear-gradient(135deg, #667eea, #764ba2);
   color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 80px;
+}
+
+.sidebar.collapsed .sidebar-header {
+  padding: 24px 10px 16px;
+  justify-content: center;
 }
 
 .sidebar-header h3 {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
+  transition: opacity 0.3s ease;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  transition: background 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .history-list {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+  transition: all 0.3s ease;
 }
 
 .history-session-item {
@@ -710,6 +756,11 @@ export default {
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+  transition: all 0.3s ease;
+}
+
+.main-content.expanded {
+  /* 当侧边栏折叠时，主内容区可以获得更多空间 */
 }
 
 /* 控制面板 */
@@ -1194,6 +1245,11 @@ export default {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.right-panel.expanded {
+  width: 600px;
 }
 
 .panel-tabs {
@@ -1552,8 +1608,16 @@ export default {
     width: 240px;
   }
   
+  .sidebar.collapsed {
+    width: 60px;
+  }
+  
   .right-panel {
     width: 320px;
+  }
+  
+  .right-panel.expanded {
+    width: 520px;
   }
   
   .control-buttons {
@@ -1579,9 +1643,23 @@ export default {
     max-height: 200px;
   }
   
+  .sidebar.collapsed {
+    width: 100%;
+    max-height: 80px;
+  }
+  
+  .sidebar.collapsed .sidebar-header {
+    padding: 16px;
+    justify-content: center;
+  }
+  
   .right-panel {
     width: 100%;
     order: 3;
+  }
+  
+  .right-panel.expanded {
+    width: 100%;
   }
   
   .main-content {
