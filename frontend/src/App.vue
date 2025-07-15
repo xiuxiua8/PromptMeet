@@ -1076,38 +1076,59 @@ export default {
 .suggestions {
   padding: 16px 20px;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(102, 126, 234, 0.02);
 }
 
 .suggestions-title {
-  font-size: 12px;
-  color: #666;
-  margin-bottom: 8px;
+  font-size: 13px;
+  color: #667eea;
+  margin-bottom: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.suggestions-title::before {
+  content: '💡';
+  font-size: 14px;
 }
 
 .suggestion-chips {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .suggestion-chip {
   background: rgba(102, 126, 234, 0.1);
   border: 1px solid rgba(102, 126, 234, 0.2);
   color: #667eea;
-  padding: 6px 12px;
-  border-radius: 16px;
+  padding: 8px 12px;
+  border-radius: 12px;
   font-size: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
-  max-width: 200px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  word-wrap: break-word;
+  line-height: 1.4;
+  text-align: left;
+  display: block;
 }
 
 .suggestion-chip:hover {
-  background: rgba(102, 126, 234, 0.2);
+  background: rgba(102, 126, 234, 0.15);
+  border-color: rgba(102, 126, 234, 0.3);
   transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+}
+
+.suggestion-chip:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(102, 126, 234, 0.2);
 }
 
 /* 输入区域 */
