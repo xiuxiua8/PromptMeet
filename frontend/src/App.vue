@@ -4,77 +4,57 @@ import MarkdownIt from 'markdown-it';
 export default {
   data() {
     return {
-      isRecording : false,
-      isRecording : false,
-      isRunning:false,
-      baseURL:'http://localhost:8000',
-      wsbaseURL:'ws://localhost:8000',
-      sessionid:'',
+      isRecording: false,
+      isRunning: false,
+      baseURL: 'http://localhost:8000',
+      wsbaseURL: 'ws://localhost:8000',
+      sessionid: '',
       message: '',
       activeTab: 'tab1',
-      chatHistory: [
-      ],
-      data: {}, // 简化初始数据结构（根据后端返回调整）
-      websocket: null, // 声明 websocket 变量，避免全局污染
-      questions : new Array(),
-      id : 0,
-      id : 0,
+      chatHistory: [],
+      data: {},
+      websocket: null,
+      questions: [],
+      id: 0,
       receivedData: '',
       qa: [],
-      summary:'会议结束后自动生成……',
-      md : new MarkdownIt(),
-      // 窗口选择相关
+      summary: '会议结束后自动生成……',
+      md: new MarkdownIt(),
       availableWindows: [],
       selectedWindowId: null,
       showWindowSelection: false,
     };
   },
   computed: {
-    // 计算属性将 Markdown 转换为 HTML
     renderedSummary() {
       return this.md.render(this.summary);
     },
   },
   methods: {
     handleRecommendClick(text) {
-      this.message = text
+      this.message = text;
     },
     onInputKeydown(e) {
       if (e.key === 'Enter') {
-        this.sendMessage()
+        this.sendMessage();
       }
     },
-    async handleCreateSession(){
-      this.isRecording = false
-    handleRecommendClick(text) {
-      this.message = text
-    },
-    onInputKeydown(e) {
-      if (e.key === 'Enter') {
-        this.sendMessage()
-      }
-    },
-    async handleCreateSession(){
-      this.isRecording = false
-      this.isRunning=true
-      const url=`${this.baseURL}/api/sessions`
-      const url=`${this.baseURL}/api/sessions`
+    async handleCreateSession() {
+      this.isRecording = false;
+      this.isRunning = true;
+      const url = `${this.baseURL}/api/sessions`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
       });
-      const data = await response.json()
-      this.sessionid=data.session_id
+      const data = await response.json();
+      this.sessionid = data.session_id;
       this.websocket = new WebSocket(`${this.wsbaseURL}/ws/${this.sessionid}`);
-
     },
-    async handleStartRecord(){
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
-    },
-    async handleStartRecord(){
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
+    async handleStartRecord() {
+      const url = `${this.baseURL}/api/sessions/${this.sessionid}/start-recording`;
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -82,10 +62,8 @@ export default {
         },
       });
     },
-    async handleStopRecord(){
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
-    async handleStopRecord(){
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
+    async handleStopRecord() {
+      const url = `${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`;
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -93,13 +71,9 @@ export default {
         },
       });
     },
-    async handleCreateSummary(){
-      this.isRunning=false
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`
-    },
-    async handleCreateSummary(){
-      this.isRunning=false
-      const url=`${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`
+    async handleCreateSummary() {
+      this.isRunning = false;
+      const url = `${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`;
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -112,7 +86,6 @@ export default {
         const url = `${this.baseURL}/api/windows`;
         const response = await fetch(url);
         const data = await response.json();
-        
         if (data.success) {
           this.availableWindows = data.windows;
         } else {
@@ -122,41 +95,31 @@ export default {
         console.error('获取窗口列表失败:', error);
       }
     },
-
-    async handleScreenshot(){
-      // 首先获取可用窗口
+    async handleScreenshot() {
       await this.getAvailableWindows();
-      
       if (this.availableWindows.length === 0) {
         alert('未检测到会议窗口');
         return;
       }
-      
       if (this.availableWindows.length === 1) {
-        // 只有一个窗口，直接使用
         this.selectedWindowId = this.availableWindows[0].id;
         await this.performScreenshot();
       } else {
-        // 多个窗口，显示选择界面
         this.showWindowSelection = true;
       }
     },
-
     async performScreenshot() {
       try {
         let url = `${this.baseURL}/api/sessions/${this.sessionid}/start-image-processing`;
-        
         if (this.selectedWindowId) {
           url += `?window_id=${this.selectedWindowId}`;
         }
-        
         const response = await fetch(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
         });
-        
         const data = await response.json();
         if (data.success) {
           console.log('截图处理已启动:', data.message);
@@ -166,16 +129,12 @@ export default {
       } catch (error) {
         console.error('截图处理失败:', error);
       }
-      
-      // 关闭窗口选择界面
       this.showWindowSelection = false;
     },
-
     selectWindow(windowId) {
       this.selectedWindowId = windowId;
       this.performScreenshot();
     },
-
     cancelWindowSelection() {
       this.showWindowSelection = false;
       this.selectedWindowId = null;
@@ -186,12 +145,11 @@ export default {
     sendMessage() {
       if (this.message.trim()) {
         this.qa.push({ from: 'user', content: this.message });
-        this.qa.push({ from: 'user', content: this.message });
         this.websocket.send(JSON.stringify({
-          type: "agent_message",
-          data: {content:this.message}
+          type: 'agent_message',
+          data: { content: this.message },
         }));
-        this.message = "";
+        this.message = '';
         this.$nextTick(() => {
           this.scrollToBottom();
         });
@@ -205,26 +163,26 @@ export default {
     },
     sendId(id) {
       this.websocket.send(JSON.stringify({
-        input: id
+        input: id,
       }));
     },
-
     ShowQuestion() {
-        this.questions[this.id%3] = this.receivedData.data.content; // 存储后端数据
-        this.id++; // 更新 id
-        this.questions[this.id%3] = this.receivedData.data.content; // 存储后端数据
-        this.id++; // 更新 id
+      this.questions[this.id % 3] = this.receivedData.data.content;
+      this.id++;
     },
     ShowAnswer() {
       this.qa.push({ from: 'agent', content: this.receivedData.data.content });
-      this.qa.push({ from: 'agent', content: this.receivedData.data.content });
     },
     ShowSummary() {
-      this.summary=this.receivedData.data.summary_text
+      this.summary = this.receivedData.data.summary_text;
     },
-    ShowHistory(){
-      const chat={sender:this.receivedData.data.speaker, time:this.receivedData.timestamp, content:this.receivedData.data}
-      this.chatHistory.push(chat)
+    ShowHistory() {
+      const chat = {
+        sender: this.receivedData.data.speaker,
+        time: this.receivedData.timestamp,
+        content: this.receivedData.data,
+      };
+      this.chatHistory.push(chat);
     },
     handleRecord() {
       if (!this.isRecording) {
@@ -286,18 +244,11 @@ export default {
           </button>
           <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
           <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
-          <button class="start-btn" :disabled="isRunning" @click="handleCreateSession">开始</button>
-          <button class="record-btn" :disabled="!isRunning" :class="{ recording: isRecording }" @click="handleRecord">
-            {{ isRecording ? '停止' : '录音' }}
-          </button>
-          <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
-          <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
         </div>
       </div>
       <div class="chat-box">
         <div class="chat-display" ref="chatDisplay">
           <!-- 聊天内容显示区域 -->
-          <template v-if="qa.length === 0">
           <template v-if="qa.length === 0">
             <div class="chat-welcome">
               <el-icon size="20"><ChatDotRound /></el-icon>
@@ -306,10 +257,7 @@ export default {
           </template>
           <template v-else>
             <div v-for="(msg, idx) in qa" :key="idx"
-            <div v-for="(msg, idx) in qa" :key="idx"
               :class="['chat-message', msg.from === 'user' ? 'chat-message-right' : 'chat-message-left']">
-              <span v-if="msg.from === 'user'">{{ msg.content }}</span>
-              <span v-else>{{ msg.content }}</span>
               <span v-if="msg.from === 'user'">{{ msg.content }}</span>
               <span v-else>{{ msg.content }}</span>
             </div>
@@ -344,37 +292,6 @@ export default {
         </div>
       </div>
     </div>
-    
-    <!-- 窗口选择模态框 -->
-    <div v-if="showWindowSelection" class="window-selection-modal">
-      <div class="modal-overlay" @click="cancelWindowSelection"></div>
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3>选择要截图的窗口</h3>
-          <button class="close-btn" @click="cancelWindowSelection">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="window-list">
-            <div 
-              v-for="window in availableWindows" 
-              :key="window.id"
-              class="window-item"
-              @click="selectWindow(window.id)"
-            >
-              <div class="window-icon">🖼️</div>
-              <div class="window-info">
-                <div class="window-title">{{ window.title }}</div>
-                <div class="window-type">{{ window.type === 'window' ? '应用窗口' : window.type }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="cancel-btn" @click="cancelWindowSelection">取消</button>
-        </div>
-      </div>
-    </div>
-    
     <!-- 窗口选择模态框 -->
     <div v-if="showWindowSelection" class="window-selection-modal">
       <div class="modal-overlay" @click="cancelWindowSelection"></div>
@@ -482,7 +399,6 @@ body, html {
   display: flex;
   gap: 16px;
 }
-.start-btn, .stop-btn, .screenshot-btn{
 .start-btn, .stop-btn, .screenshot-btn{
   padding: 6px 24px;
   font-size: 1rem;
