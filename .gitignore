@@ -106,3 +106,6 @@ yarn.lock
 
 venv/
 __pycache__/
+temp_sessions/
+
+*.pyc
