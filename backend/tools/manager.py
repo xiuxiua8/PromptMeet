@@ -10,6 +10,7 @@ from .translator import TranslatorTool
 from .web_search import WebSearchTool
 from .summary_tool import SummaryTool
 from .feishu_calendar import FeishuCalendarTool
+from .email_tool import EmailTool
 
 
 class ToolManager:
@@ -28,6 +29,7 @@ class ToolManager:
         self.register_tool(WebSearchTool())
         self.register_tool(SummaryTool())
         self.register_tool(FeishuCalendarTool())
+        self.register_tool(EmailTool())
     
     def register_tool(self, tool: BaseTool):
         """注册工具"""

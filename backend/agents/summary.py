@@ -147,6 +147,66 @@ class MeetingProcessor:
         }):
             yield chunk
 
+    async def _extract_email_info(self, text: str) -> Dict:
+        """提取邮件信息"""
+        prompt = ChatPromptTemplate.from_template("""
+            请从以下会议内容中识别出需要发送邮件的信息，包括：
+            1. 收信人姓名或部门
+            2. 收信人邮箱地址
+            3. 邮件主题
+            4. 邮件内容要点
+            
+            如果会议中没有明确提到需要发送邮件，请返回空结果。
+            
+            要求返回严格合法的JSON格式：
+            {{
+                "need_email": true/false,
+                "recipient_name": "收信人姓名",
+                "recipient_email": "收信人邮箱",
+                "subject": "邮件主题",
+                "content": "邮件内容要点"
+            }}
+            
+            如果没有需要发送邮件的信息，返回：
+            {{
+                "need_email": false,
+                "recipient_name": "",
+                "recipient_email": "",
+                "subject": "",
+                "content": ""
+            }}
+            
+            会议内容：
+            {text}""")
+        
+        chain = prompt | self.llm | StrOutputParser()
+        email_json = await chain.ainvoke({"text": text[:3000]})
+        
+        try:
+            if not email_json.strip():
+                return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+            
+            # 清理可能的非JSON内容
+            json_str = re.search(r'\{.*\}', email_json.replace('\n', ''), re.DOTALL)
+            if json_str:
+                email_json = json_str.group(0)
+            email_info = json.loads(email_json)
+            
+            # 数据清洗
+            email_info.setdefault("need_email", False)
+            email_info.setdefault("recipient_name", "")
+            email_info.setdefault("recipient_email", "")
+            email_info.setdefault("subject", "")
+            email_info.setdefault("content", "")
+            
+            return email_info
+        except json.JSONDecodeError:
+            print(f"⚠️ 邮件信息JSON解析失败，原始输出:\n{email_json}")
+            return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+        except Exception as e:
+            print(f"⚠️ 邮件信息解析错误: {str(e)}")
+            return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+
     async def _generate_structured_tasks(self, tasks: List[Dict]) -> AsyncGenerator[str, Any]:
         """生成结构化的待办事项JSON"""
         prompt = ChatPromptTemplate.from_template("""
@@ -198,6 +258,9 @@ class MeetingProcessor:
         # 先提取任务
         tasks = await self._extract_my_tasks(transcript)
         
+        # 提取邮件信息
+        email_info = await self._extract_email_info(transcript)
+        
         # 生成整合了任务信息的总结
         yield "\n【会议总结】\n"
         async for text_chunk in self._generate_summary(transcript, tasks):
@@ -210,6 +273,13 @@ class MeetingProcessor:
         result_buffer.write("\n【原始待办事项】\n")
         result_buffer.write(tasks_json)
         yield tasks_json
+        
+        # 邮件信息JSON
+        yield "\n\n【邮件信息】\n"
+        email_json = json.dumps(email_info, ensure_ascii=False, indent=2)
+        result_buffer.write("\n\n【邮件信息】\n")
+        result_buffer.write(email_json)
+        yield email_json
         
         # 结构化任务JSON
         yield "\n\n【结构化待办事项】\n"

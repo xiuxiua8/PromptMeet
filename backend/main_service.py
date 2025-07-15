@@ -511,11 +511,21 @@ async def on_agent_response(session_id: str, response: dict):
     if not content:
         content = str(response)
 
-    await websocket_manager.broadcast_to_session(
-        session_id, {"type": "answer", "data": {"content": content}}
-    )
-
-
+    # 检查是否是邮件相关的响应
+    if content and ("邮件" in content or "email" in content.lower()):
+        await websocket_manager.broadcast_to_session(session_id, {
+            "type": "email_response",
+            "data": {
+                "content": content
+            }
+        })
+    else:
+        await websocket_manager.broadcast_to_session(session_id, {
+            "type": "answer",
+            "data": {
+                "content": content
+            }
+        })
 # 注册回调
 process_manager.on_agent_response = on_agent_response
 
