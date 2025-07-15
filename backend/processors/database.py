@@ -880,7 +880,15 @@ class MeetingSessionStorage:
             # 构建完整响应结构
             result = {
                 "metadata": session_data,
-                "transcript_segments": transcripts,
+                "transcript_segments": [{
+                    "id": transcript['id'],
+                    "text": transcript['text'],
+                    "timestamp": transcript['timestamp'],
+                    "confidence": transcript['confidence'],
+                    "speaker": transcript['speaker'],
+                    "start_time": transcript['start_time'],
+                    "end_time": transcript['end_time']
+                } for transcript in transcripts],
                 "current_summary": {
                     "summary_text": summaries[0]['summary_text'] if summaries else "",
                     "generated_at": summaries[0]['generated_at'] if summaries else None,

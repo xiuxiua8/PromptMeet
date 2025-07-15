@@ -232,7 +232,7 @@ export default {
       const chat = {
         sender: this.receivedData.data.speaker,
         time: this.receivedData.timestamp,
-        content: this.receivedData.data,
+        content: this.receivedData.data.text,
       };
       this.chatHistory.push(chat);
     },
