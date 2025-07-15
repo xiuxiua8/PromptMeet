@@ -6,6 +6,7 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 import os
+from pydantic import SecretStr
 
 
 class QuestionQueue:
@@ -33,9 +34,12 @@ class QuestionQueue:
 
 class QAGenerator:
     def __init__(self, buffer_size: int = 5):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        api_key = SecretStr(api_key) if api_key else None
         self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            model="gpt-3.5-turbo",
+            api_key=api_key,
+            base_url=os.getenv("DEEPSEEK_API_BASE"),
+            model="deepseek-chat",
             temperature=0.3,
             streaming=True,
         )

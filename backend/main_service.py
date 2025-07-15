@@ -200,7 +200,13 @@ async def create_session():
     """创建新的会议会话"""
     session_id = str(uuid.uuid4())
     session = SessionState(
-        session_id=session_id, is_recording=False, start_time=datetime.now()
+        session_id=session_id,
+        is_recording=False,
+        start_time=datetime.now(),
+        end_time=None,
+        current_summary=None,
+        participant_count=0,
+        audio_file_path=None
     )
 
     session_manager.add_session(session)
@@ -592,6 +598,8 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             timestamp=datetime.fromisoformat(transcript_data["timestamp"]),
             confidence=transcript_data.get("confidence", 0.0),
             speaker=transcript_data.get("speaker"),
+            start_time=transcript_data.get("start_time"),  # 或者合适的默认值
+            end_time=transcript_data.get("end_time")       # 或者合适的默认值
         )
 
         # 更新会话状态
@@ -726,7 +734,10 @@ async def on_questions_generated(session_id: str, questions_data: dict):
             # 发送单个问题给前端
             question_message = {
                 "type": "question",
-                "data": {"id": f"question_{i}", "content": question_content},
+                "data": {
+                    "id": i,
+                    "content": question_content
+                },
                 "timestamp": datetime.now().isoformat(),
                 "session_id": session_id,
             }

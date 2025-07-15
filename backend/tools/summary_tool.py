@@ -1,25 +1,48 @@
-from langchain.tools import BaseTool
-from typing import Optional, Type, ClassVar
-from pydantic import BaseModel, Field
+"""
+摘要生成工具
+"""
+from typing import Dict, Any
+from .base import BaseTool, ToolResult
 
-
-class SummaryToolInput(BaseModel):
-    text: str = Field(..., description="需要生成摘要的文本内容")
 
 
 class SummaryTool(BaseTool):
-    name: ClassVar[str] = "generate_summary"  # 添加类型注解
-    description: ClassVar[str] = "为会议内容生成简洁摘要"  # 添加类型注解
-    args_schema: ClassVar[Type[BaseModel]] = SummaryToolInput  # 添加类型注解
-
-    def _run(self, text: str) -> str:
-        """同步执行方法"""
-        return self._generate_summary(text)
-
-    async def _arun(self, text: str) -> str:
-        """异步执行方法"""
-        return self._generate_summary(text)
-
+    """摘要生成工具"""
+    
+    def __init__(self):
+        super().__init__(
+            name="summary",
+            description="为会议内容生成简洁摘要"
+        )
+    
+    async def execute(self, text: str) -> ToolResult:
+        """执行摘要生成"""
+        try:
+            summary = self._generate_summary(text)
+            
+            return ToolResult(
+                tool_name=self.name,
+                result={
+                    "original_text": text,
+                    "summary": summary,
+                    "original_length": len(text),
+                    "summary_length": len(summary),
+                    "type": "summary"
+                },
+                success=True
+            )
+        except Exception as e:
+            return ToolResult(
+                tool_name=self.name,
+                result={
+                    "text": text,
+                    "error": f"摘要生成错误: {str(e)}",
+                    "type": "error"
+                },
+                success=False,
+                error=str(e)
+            )
+    
     def _generate_summary(self, text: str) -> str:
         """实际的摘要生成逻辑"""
         if len(text) <= 100:

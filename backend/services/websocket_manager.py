@@ -5,7 +5,7 @@ WebSocket 连接管理器
 
 import json
 import logging
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Set, Any, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -99,8 +99,8 @@ class WebSocketManager:
     def get_all_sessions(self) -> List[str]:
         """获取所有活跃会话ID"""
         return list(self.connections.keys())
-
-    def get_connection_count(self, session_id: str = None) -> int:
+    
+    def get_connection_count(self, session_id: Optional[str] = None) -> int:
         """获取连接数量"""
         if session_id:
             return len(self.connections.get(session_id, []))

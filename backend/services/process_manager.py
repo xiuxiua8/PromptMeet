@@ -35,8 +35,8 @@ class ProcessManager:
         self.on_summary_generated: Optional[Callable] = None
         self.on_progress_update: Optional[Callable] = None
         self.on_questions_generated: Optional[Callable] = None
-        self.on_image_result_received: Optional[Callable] = None
-
+        self.on_agent_response: Optional[Callable] = None
+        
         # 工作目录 - 使用项目根目录下的temp_sessions，与进程cwd保持一致
         project_root = Path(__file__).parent.parent.parent
         self.work_dir = project_root / "temp_sessions"
@@ -604,7 +604,7 @@ class ProcessManager:
 
     async def _handle_agent_message(self, session_id: str, message: dict):
         """处理来自Agent进程的消息"""
-        if hasattr(self, "on_agent_response"):
+        if self.on_agent_response is not None:
             await self.on_agent_response(session_id, message)
 
     async def start_image_process(
@@ -996,16 +996,19 @@ class ProcessManager:
     async def _forward_process_logs(self, process: subprocess.Popen, process_name: str):
         """转发子进程的日志到主程序日志"""
         try:
-            while process.poll() is None:  # 进程还在运行
-                line = await asyncio.to_thread(process.stdout.readline)
-                if line:
-                    # 移除末尾的换行符并添加进程名前缀
-                    log_line = line.rstrip("\n\r")
-                    if log_line:
-                        # 使用主程序的logger输出子进程日志
-                        logger.info(f"[{process_name}] {log_line}")
+            while process.poll() is None:
+                if process.stdout is not None:
+                    line = await asyncio.to_thread(process.stdout.readline)
+                    if line:
+                        # 移除末尾的换行符并添加进程名前缀
+                        log_line = line.rstrip('\n\r')
+                        if log_line:
+                            # 使用主程序的logger输出子进程日志
+                            logger.info(f"[{process_name}] {log_line}")
+                    else:
+                        # 如果没有输出，稍等一下
+                        await asyncio.sleep(0.1)
                 else:
-                    # 如果没有输出，稍等一下
                     await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"转发{process_name}日志失败: {e}")

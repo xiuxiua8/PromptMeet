@@ -129,7 +129,7 @@ class SummaryProcessor:
 
             # 创建摘要对象
             summary = MeetingSummary(
-                session_id=self.current_session_id,
+                session_id=self.current_session_id if self.current_session_id is not None else "",
                 summary_text=summary_text,
                 tasks=tasks,
                 key_points=key_points,
@@ -193,20 +193,13 @@ class SummaryProcessor:
                                     "data": result["summary"],
                                     "timestamp": datetime.now().isoformat(),
                                 }
-
-                                with open(
-                                    self.ipc_output_file, "a", encoding="utf-8"
-                                ) as out_f:
-                                    out_f.write(
-                                        json.dumps(
-                                            summary_message,
-                                            ensure_ascii=False,
-                                            default=str,
-                                        )
-                                        + "\n"
-                                    )
-                                    out_f.flush()
-
+                                if not self.ipc_output_file:
+                                    logger.error("ipc_output_file 未设置，无法写入摘要结果")
+                                else:
+                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                        out_f.write(json.dumps(summary_message, ensure_ascii=False, default=str) + '\n')
+                                        out_f.flush()
+                                
                                 logger.info("摘要生成完成并已发送")
                             else:
                                 logger.error(f"摘要生成失败: {result.get('error')}")
@@ -230,7 +223,8 @@ class SummaryProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Summary处理器已启动"},
-                    timestamp=datetime.now(),
+                    error=None,
+                    timestamp=datetime.now()
                 )
 
             elif command.command == "stop":
@@ -238,7 +232,8 @@ class SummaryProcessor:
                 return IPCResponse(
                     success=True,
                     data={"message": "Summary处理器已停止"},
-                    timestamp=datetime.now(),
+                    error=None,
+                    timestamp=datetime.now()
                 )
 
             elif command.command == "process":
@@ -259,20 +254,26 @@ class SummaryProcessor:
                         "session_id": self.current_session_id,
                         "processor_status": "ready",
                     },
-                    timestamp=datetime.now(),
+                    error=None,
+                    timestamp=datetime.now()
                 )
 
             else:
                 return IPCResponse(
                     success=False,
+                    data=None,
                     error=f"未知命令: {command.command}",
                     timestamp=datetime.now(),
                 )
 
         except Exception as e:
             logger.error(f"处理命令失败: {e}")
-            return IPCResponse(success=False, error=str(e), timestamp=datetime.now())
-
+            return IPCResponse(
+                success=False,
+                data=None,
+                error=str(e),
+                timestamp=datetime.now()
+            )
 
 async def main():
     """主函数 - 作为独立进程运行"""
@@ -324,7 +325,8 @@ async def main():
                                     response = IPCResponse(
                                         success=True,
                                         data={"message": "Summary处理完成"},
-                                        timestamp=datetime.now(),
+                                        error=None,
+                                        timestamp=datetime.now()
                                     )
                                 else:
                                     response = await processor.handle_command(command)

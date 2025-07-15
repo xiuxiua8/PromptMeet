@@ -5,6 +5,7 @@ export default {
   data() {
     return {
       isRecording : false,
+      isRecording : false,
       isRunning:false,
       baseURL:'http://localhost:8000',
       wsbaseURL:'ws://localhost:8000',
@@ -16,6 +17,7 @@ export default {
       data: {}, // 简化初始数据结构（根据后端返回调整）
       websocket: null, // 声明 websocket 变量，避免全局污染
       questions : new Array(),
+      id : 0,
       id : 0,
       receivedData: '',
       qa: [],
@@ -44,7 +46,18 @@ export default {
     },
     async handleCreateSession(){
       this.isRecording = false
+    handleRecommendClick(text) {
+      this.message = text
+    },
+    onInputKeydown(e) {
+      if (e.key === 'Enter') {
+        this.sendMessage()
+      }
+    },
+    async handleCreateSession(){
+      this.isRecording = false
       this.isRunning=true
+      const url=`${this.baseURL}/api/sessions`
       const url=`${this.baseURL}/api/sessions`
       const response = await fetch(url, {
         method: 'POST',
@@ -59,6 +72,9 @@ export default {
     },
     async handleStartRecord(){
       const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
+    },
+    async handleStartRecord(){
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/start-recording`
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -68,12 +84,18 @@ export default {
     },
     async handleStopRecord(){
       const url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
+    async handleStopRecord(){
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/stop-recording`
       await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
       });
+    },
+    async handleCreateSummary(){
+      this.isRunning=false
+      const url=`${this.baseURL}/api/sessions/${this.sessionid}/generate-summary`
     },
     async handleCreateSummary(){
       this.isRunning=false
@@ -164,6 +186,7 @@ export default {
     sendMessage() {
       if (this.message.trim()) {
         this.qa.push({ from: 'user', content: this.message });
+        this.qa.push({ from: 'user', content: this.message });
         this.websocket.send(JSON.stringify({
           type: "agent_message",
           data: {content:this.message}
@@ -189,8 +212,11 @@ export default {
     ShowQuestion() {
         this.questions[this.id%3] = this.receivedData.data.content; // 存储后端数据
         this.id++; // 更新 id
+        this.questions[this.id%3] = this.receivedData.data.content; // 存储后端数据
+        this.id++; // 更新 id
     },
     ShowAnswer() {
+      this.qa.push({ from: 'agent', content: this.receivedData.data.content });
       this.qa.push({ from: 'agent', content: this.receivedData.data.content });
     },
     ShowSummary() {
@@ -260,11 +286,18 @@ export default {
           </button>
           <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
           <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
+          <button class="start-btn" :disabled="isRunning" @click="handleCreateSession">开始</button>
+          <button class="record-btn" :disabled="!isRunning" :class="{ recording: isRecording }" @click="handleRecord">
+            {{ isRecording ? '停止' : '录音' }}
+          </button>
+          <button class="stop-btn" :disabled="!isRunning" @click="handleCreateSummary">生成摘要</button>
+          <button class="screenshot-btn" :disabled="!isRunning" @click="handleScreenshot" style="margin-left:auto;">截图</button>
         </div>
       </div>
       <div class="chat-box">
         <div class="chat-display" ref="chatDisplay">
           <!-- 聊天内容显示区域 -->
+          <template v-if="qa.length === 0">
           <template v-if="qa.length === 0">
             <div class="chat-welcome">
               <el-icon size="20"><ChatDotRound /></el-icon>
@@ -273,7 +306,10 @@ export default {
           </template>
           <template v-else>
             <div v-for="(msg, idx) in qa" :key="idx"
+            <div v-for="(msg, idx) in qa" :key="idx"
               :class="['chat-message', msg.from === 'user' ? 'chat-message-right' : 'chat-message-left']">
+              <span v-if="msg.from === 'user'">{{ msg.content }}</span>
+              <span v-else>{{ msg.content }}</span>
               <span v-if="msg.from === 'user'">{{ msg.content }}</span>
               <span v-else>{{ msg.content }}</span>
             </div>
@@ -447,12 +483,28 @@ body, html {
   gap: 16px;
 }
 .start-btn, .stop-btn, .screenshot-btn{
+.start-btn, .stop-btn, .screenshot-btn{
   padding: 6px 24px;
   font-size: 1rem;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   transition: background 0.2s;
+}
+.screenshot-btn {
+  background: #409eff;
+  color: #fff;
+}
+.screenshot-btn:disabled {
+  background: #bdbdbd;
+  cursor: not-allowed;
+}
+.screenshot-btn:hover {
+  background: #1f8fff
+}
+.screenshot-btn:disabled:hover {
+  background: #bdbdbd !important;
+  cursor: not-allowed;
 }
 .screenshot-btn {
   background: #409eff;
