@@ -249,17 +249,27 @@ class AgentProcessor:
                 if session_data.get("success"):
                     session = session_data["session"]
                     transcript_segments = session.get("transcript_segments", [])
+                    image_ocr_result = session.get("image_ocr_result", [])
                     
                     # 合并转录文本
                     if transcript_segments:
                         transcript_text = ""
                         for segment in transcript_segments:
                             transcript_text += segment.get("text", "") + "\n"
-                        
                         if transcript_text.strip():
                             logger.info(f"获取到转录文本，长度: {len(transcript_text)}")
-                            # 添加到记忆系统
-                            await self._add_meeting_content(transcript_text)
+                            # 添加到记忆系统，带标记
+                            await self._add_meeting_content("[转录]\n" + transcript_text)
+                    
+                    # 合并OCR文本
+                    if image_ocr_result:
+                        ocr_text = ""
+                        for ocr in image_ocr_result:
+                            ocr_text += ocr.get("text", "") + "\n"
+                        if ocr_text.strip():
+                            logger.info(f"获取到OCR文本，长度: {len(ocr_text)}")
+                            # 添加到记忆系统，带标记
+                            await self._add_meeting_content("[截图OCR]\n" + ocr_text)
                     
                     logger.info(f"会话内容刷新完成，当前内容片段数: {len(self.meeting_content)}")
                 else:
