@@ -675,19 +675,46 @@ export default {
 
 
 <style scoped>
-/* 全局样式重置 */
+/* 全局样式重置 - 确保无滚动无白边 */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
 /* 主容器 */
 .app-container {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  position: fixed;
+  top: 0;
+  left: 0;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 /* 背景装饰 */
@@ -709,8 +736,10 @@ export default {
   height: 100vh;
   position: relative;
   z-index: 1;
-  gap: 20px;
-  padding: 20px;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* 侧边栏 */
