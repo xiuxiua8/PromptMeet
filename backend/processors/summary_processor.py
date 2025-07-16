@@ -189,17 +189,33 @@ class SummaryProcessor:
                     if session_data.get("success"):
                         session = session_data["session"]
                         transcript_segments = session.get("transcript_segments", [])
+                        image_ocr_result = session.get("image_ocr_result", [])
 
                         # 合并所有转录文本
                         transcript_text = ""
                         for segment in transcript_segments:
                             transcript_text += segment.get("text", "") + "\n"
-
                         if transcript_text.strip():
-                            logger.info(f"获取到转录文本，长度: {len(transcript_text)}")
+                            transcript_text = "[转录]\n" + transcript_text
+                        else:
+                            transcript_text = ""
 
-                            # 处理转录文本
-                            result = await self.process_transcript(transcript_text)
+                        # 合并所有OCR文本
+                        ocr_text = ""
+                        for ocr in image_ocr_result:
+                            ocr_text += ocr.get("text", "") + "\n"
+                        if ocr_text.strip():
+                            ocr_text = "[截图OCR]\n" + ocr_text
+                        else:
+                            ocr_text = ""
+
+                        # 拼接两部分
+                        full_text = transcript_text + ocr_text
+
+                        if full_text.strip():
+                            logger.info(f"获取到全部文本，长度: {len(full_text)}")
+                            # 处理拼接后的文本
+                            result = await self.process_transcript(full_text)
 
                             if result["success"]:
                                 # 发送摘要结果
@@ -219,7 +235,7 @@ class SummaryProcessor:
                             else:
                                 logger.error(f"摘要生成失败: {result.get('error')}")
                         else:
-                            logger.warning("没有找到转录文本")
+                            logger.warning("没有找到可用文本")
                     else:
                         logger.error(f"获取会话数据失败: {session_data}")
                 else:

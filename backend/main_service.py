@@ -210,10 +210,10 @@ async def create_session():
     )
 
     session_manager.add_session(session)
-
+    logger.info("收到创建会话请求")
     # 启动Agent进程
     await process_manager.start_agent_process(session_id)
-
+    logger.info("Agent进程启动完成")
     logger.info(f"创建新会话: {session_id}")
     return {"success": True, "session_id": session_id, "message": "会话创建成功"}
 
@@ -524,50 +524,50 @@ async def handle_websocket_message(session_id: str, message: dict):
 
 # 添加Agent响应回调
 async def on_agent_response(session_id: str, response: dict):
-    """处理Agent响应"""
+    """处理Agent响应，支持流式分片"""
     # 兼容旧结构，提取最终回答内容
-    content = None
-    # response 可能是多层嵌套
     try:
-        # 兼容多层data
-        if isinstance(response, dict):
-            # 兼容直接返回字符串
-            if isinstance(response.get("data"), str):
-                content = response["data"]
-            elif isinstance(response.get("data"), dict):
-                # 兼容多层data
-                data = response["data"]
-                # 可能有response字段
-                if isinstance(data.get("response"), str):
-                    content = data["response"]
-                elif isinstance(data.get("data"), dict) and isinstance(
-                    data["data"].get("response"), str
-                ):
-                    content = data["data"]["response"]
-                elif isinstance(data.get("output"), str):
-                    content = data["output"]
-                elif isinstance(data.get("content"), str):
-                    content = data["content"]
+        data = response.get("data", {})
+        # 流式分片
+        if isinstance(data, dict) and ("delta" in data or "chunk" in data):
+            delta = data.get("delta") or data.get("chunk")
+            await websocket_manager.broadcast_to_session(session_id, {
+                "type": "answer",
+                "data": {"delta": delta}
+            })
+            return
+        # 完整内容
+        if isinstance(data, dict) and "content" in data:
+            await websocket_manager.broadcast_to_session(session_id, {
+                "type": "answer",
+                "data": {"content": data["content"]}
+            })
+            return
+        # 邮件相关
+        content = None
+        if isinstance(data, str):
+            content = data
+        elif isinstance(data, dict):
+            if isinstance(data.get("response"), str):
+                content = data["response"]
+            elif isinstance(data.get("output"), str):
+                content = data["output"]
+            elif isinstance(data.get("content"), str):
+                content = data["content"]
+        if content and ("邮件" in content or "email" in content.lower()):
+            await websocket_manager.broadcast_to_session(session_id, {
+                "type": "email_response",
+                "data": {"content": content}
+            })
+        elif content:
+            await websocket_manager.broadcast_to_session(session_id, {
+                "type": "answer",
+                "data": {"content": content}
+            })
     except Exception as e:
-        content = str(response)
-
-    if not content:
-        content = str(response)
-
-    # 检查是否是邮件相关的响应
-    if content and ("邮件" in content or "email" in content.lower()):
-        await websocket_manager.broadcast_to_session(session_id, {
-            "type": "email_response",
-            "data": {
-                "content": content
-            }
-        })
-    else:
         await websocket_manager.broadcast_to_session(session_id, {
             "type": "answer",
-            "data": {
-                "content": content
-            }
+            "data": {"content": str(response)}
         })
 # 注册回调
 process_manager.on_agent_response = on_agent_response
