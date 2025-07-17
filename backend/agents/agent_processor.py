@@ -512,7 +512,7 @@ class AgentProcessor:
         # 新增：检测用户输入是否为具体日程内容
         is_concrete_calendar = False
         import re
-        # 简单判断：包含“时间”、“标题”或常见日期时间表达
+        # 简单判断：包含"时间"、"标题"或常见日期时间表达
         if re.search(r'(标题|时间|提醒|\d{1,2}月\d{1,2}日|\d{4}-\d{1,2}-\d{1,2}|上午|下午|全天|点|:)', user_message):
             is_concrete_calendar = True
         if is_concrete_calendar:
@@ -597,7 +597,7 @@ class AgentProcessor:
                 "result": getattr(result, 'result', result)
             })
             return tools_used
-        # 只有明确“发送日程”等指令且没有具体日程输入时才读Result.txt
+        # 只有明确"发送日程"等指令且没有具体日程输入时才读Result.txt
         if any(keyword in user_message.lower() for keyword in calendar_keywords):
             import os
             import re
@@ -939,10 +939,13 @@ class AgentProcessor:
                 title_patterns = [
                     r'标题[：:]\s*["""]([^"""]+)["""]',
                     r'标题[：:]\s*([^\s，。！？\n]+)',
+                    r'标题是\s*([^\s，。！？\n]+)',  # 新增：匹配"标题是"
                     r'页面标题[：:]\s*["""]([^"""]+)["""]',
                     r'页面标题[：:]\s*([^\s，。！？\n]+)',
+                    r'页面标题是\s*([^\s，。！？\n]+)',  # 新增：匹配"页面标题是"
                     r'名称[：:]\s*["""]([^"""]+)["""]',
                     r'名称[：:]\s*([^\s，。！？\n]+)',
+                    r'名称是\s*([^\s，。！？\n]+)',  # 新增：匹配"名称是"
                 ]
                 title = ""
                 for pattern in title_patterns:
@@ -989,57 +992,122 @@ class AgentProcessor:
                 
                 # 如果没有明确指定内容，尝试使用不同来源
                 if not content:
-                    # 优先使用会议内容
-                    if self.meeting_content:
+                    # 检查是否要求写入当前对话
+                    conversation_keywords = ['对话', '聊天记录', '当前对话', '这次对话', '聊天的内容', '聊天内容', '我们的对话']
+                    is_conversation_request = any(keyword in user_message for keyword in conversation_keywords)
+                    
+                    if is_conversation_request:
+                        # 获取最近的对话记录
+                        recent_messages = []
+                        if hasattr(self.memory, 'chat_memory') and self.memory.chat_memory.messages:
+                            for msg in self.memory.chat_memory.messages[-10:]:  # 最近10条消息
+                                if hasattr(msg, 'content'):
+                                    msg_type = "用户" if msg.__class__.__name__ == "HumanMessage" else "AI助手"
+                                    recent_messages.append(f"**{msg_type}**: {msg.content}")
+                        
+                        # 确保对话请求有内容，即使没有历史记录
+                        if recent_messages:
+                            content = "\n\n".join(recent_messages)
+                            logger.info(f"使用对话记录作为Notion页面内容，共{len(recent_messages)}条消息")
+                        else:
+                            import datetime
+                            content = f"# 对话记录\n\n暂无对话历史记录。\n\n*记录时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+                            logger.info("没有对话历史，使用默认对话内容")
+                    
+                    # 如果不是对话内容需求，优先使用会议内容
+                    elif self.meeting_content:
                         content = "\n".join(self.meeting_content[-10:])  # 最近10个片段
                         logger.info("使用会议内容作为Notion页面内容")
-                    else:
-                        # 检查是否要求写入当前对话
-                        conversation_keywords = ['对话', '聊天记录', '当前对话', '这次对话']
-                        if any(keyword in user_message for keyword in conversation_keywords):
-                            # 获取最近的对话记录
-                            recent_messages = []
-                            if hasattr(self.memory, 'chat_memory') and self.memory.chat_memory.messages:
-                                for msg in self.memory.chat_memory.messages[-6:]:  # 最近6条消息
-                                    if hasattr(msg, 'content'):
-                                        msg_type = "用户" if msg.__class__.__name__ == "HumanMessage" else "AI助手"
-                                        recent_messages.append(f"**{msg_type}**: {msg.content}")
-                                content = "\n\n".join(recent_messages)
-                                logger.info("使用对话记录作为Notion页面内容")
+                    
+                    # 如果还是没有内容，使用用户消息本身
+                    if not content:
+                        # 移除Notion相关的指令词汇，保留实际内容
+                        clean_content = user_message
+                        for keyword in notion_keywords:
+                            clean_content = re.sub(rf'\b{re.escape(keyword)}\b', '', clean_content, flags=re.IGNORECASE)
                         
-                        # 如果还是没有内容，使用用户消息本身
-                        if not content:
-                            # 移除Notion相关的指令词汇，保留实际内容
-                            clean_content = user_message
-                            for keyword in notion_keywords:
-                                clean_content = re.sub(rf'\b{re.escape(keyword)}\b', '', clean_content, flags=re.IGNORECASE)
-                            
-                            # 移除常见的指令词汇
-                            instruction_words = ['请', '帮我', '帮忙', '麻烦', '标题:', '内容:', '写入:', '保存:', '记录:']
-                            for word in instruction_words:
-                                clean_content = clean_content.replace(word, '')
-                            
-                            content = clean_content.strip()
-                            if len(content) < 10:  # 内容太短，使用默认内容
-                                content = f"用户请求: {user_message}\n\n创建时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        # 移除常见的指令词汇
+                        instruction_words = ['请', '帮我', '帮忙', '麻烦', '标题:', '内容:', '写入:', '保存:', '记录:']
+                        for word in instruction_words:
+                            clean_content = clean_content.replace(word, '')
+                        
+                        content = clean_content.strip()
+                        if len(content) < 10:  # 内容太短，使用默认内容
+                            content = f"用户请求: {user_message}\n\n创建时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 
                 # 将内容转换为Markdown格式
                 markdown_content = self._format_content_as_markdown(content, title)
                 
-                # 检查是否需要指定父页面ID
-                parent_id = None
-                parent_patterns = [
+                # 硬编码父页面ID - 答辩成果展示页面 (从URL提取的原始格式)
+                parent_id = "23346aa64eeb8077b1fdfa557c8a09ef"
+                specified_parent_name = None
+                logger.info(f"🎯 使用硬编码的父页面ID: {parent_id}")
+                
+                # 检查是否有用户自定义的父页面ID覆盖硬编码值
+                parent_id_patterns = [
                     r'父页面[：:]\s*([a-f0-9\-]{32,})',
                     r'parent[：:]\s*([a-f0-9\-]{32,})',
                     r'页面ID[：:]\s*([a-f0-9\-]{32,})',
                 ]
-                for pattern in parent_patterns:
+                for pattern in parent_id_patterns:
                     parent_match = re.search(pattern, user_message)
                     if parent_match:
                         parent_id = parent_match.group(1)
+                        logger.info(f"🔄 用户指定了新的父页面ID，覆盖硬编码值: {parent_id}")
                         break
                 
-                # 如果没有指定父页面，尝试智能搜索合适的页面作为父页面
+                # 由于已经有硬编码的父页面ID，以下逻辑仅作为备用（通常不会执行）
+                if not parent_id:
+                    parent_name_patterns = [
+                        r'页面是\s*([^\s，。！？\n]+)',
+                        r'页面[：:]\s*([^\s，。！？\n]+)',
+                        r'父页面是\s*([^\s，。！？\n]+)',
+                        r'父页面[：:]\s*([^\s，。！？\n]+)',
+                        r'保存到\s*([^\s，。！？\n]+)\s*页面',
+                        r'写入\s*([^\s，。！？\n]+)\s*页面',
+                    ]
+                    for pattern in parent_name_patterns:
+                        parent_name_match = re.search(pattern, user_message)
+                        if parent_name_match:
+                            specified_parent_name = parent_name_match.group(1).strip()
+                            logger.info(f"🎯 检测到明确指定的父页面名称: '{specified_parent_name}'")
+                            break
+                
+                # 如果有明确指定的父页面名称，直接搜索该页面
+                if specified_parent_name:
+                    logger.info(f"🔍 搜索指定的父页面: '{specified_parent_name}'")
+                    
+                    search_result = await self.execute_tool("notion", {
+                        "action": "search", 
+                        "query": specified_parent_name,
+                        "filter_type": "page"
+                    })
+                    
+                    if search_result.get("success") and search_result.get("result", {}).get("results"):
+                        results = search_result["result"]["results"]
+                        # 寻找最佳匹配的页面（标题完全匹配或包含指定名称）
+                        best_match = None
+                        for result in results:
+                            result_title = result.get("title", "").strip()
+                            if result_title.lower() == specified_parent_name.lower():
+                                # 完全匹配，优先选择
+                                best_match = result
+                                break
+                            elif specified_parent_name.lower() in result_title.lower():
+                                # 部分匹配，作为备选
+                                if not best_match:
+                                    best_match = result
+                        
+                        if best_match:
+                            parent_id = best_match["id"]
+                            parent_title = best_match.get("title", "无标题")
+                            logger.info(f"✅ 找到指定的父页面: {parent_title} (ID: {parent_id[:8]}...)")
+                        else:
+                            logger.warning(f"❌ 找到了页面但无法匹配指定名称: '{specified_parent_name}'")
+                    else:
+                        logger.warning(f"❌ 未找到指定的父页面: '{specified_parent_name}'")
+                
+                # 如果没有指定父页面或未找到指定页面，尝试智能搜索合适的页面作为父页面
                 if not parent_id:
                     # 获取智能推断的搜索查询
                     search_queries = await self._infer_parent_page_queries(user_message)
