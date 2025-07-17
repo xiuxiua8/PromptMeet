@@ -638,11 +638,16 @@ class AgentProcessor:
         # 检查对话历史中是否有邮件相关的对话
         has_email_history = False
         if self.memory.chat_memory.messages:
-            recent_messages = self.memory.chat_memory.messages[-3:]  # 检查最近3条消息
+            recent_messages = self.memory.chat_memory.messages[-5:]  # 检查最近5条消息
             for msg in recent_messages:
                 if isinstance(msg, (HumanMessage, AIMessage)):
                     msg_content = msg.content.lower()
-                    if any(keyword in msg_content for keyword in email_keywords + ['收件人', '邮箱', '发送']):
+                    # 检查是否包含邮件相关关键词或补充提示
+                    if any(keyword in msg_content for keyword in email_keywords + ['收件人', '邮箱', '发送', '邮件信息不完整', '缺少', '补充']):
+                        has_email_history = True
+                        break
+                    # 检查是否包含邮箱地址模式
+                    if re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', msg_content):
                         has_email_history = True
                         break
         
@@ -1023,51 +1028,101 @@ class AgentProcessor:
                                 out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
                                 out_f.flush()
                         full_response += text
-                    # 最后写入完整内容
-                    final_message = {
-                        "type": "response",
-                        "data": {"content": full_response},
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    if self.ipc_output_file:
-                        with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                            out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
-                            out_f.flush()
-                    # 保存到记忆
-                    self.memory.chat_memory.add_user_message(content)
-                    self.memory.chat_memory.add_ai_message(full_response)
-                    logger.info(f"Agent响应成功: {full_response[:50]}...")
-                    return IPCResponse(
-                        success=True,
-                        data={"response": full_response},
-                        error=None,
-                        timestamp=datetime.now()
-                    )
+                    
+                    # 检测并执行工具调用
+                    tools_used = await self._detect_and_execute_tools(content, full_response)
+                    
+                    # 如果有工具执行结果，需要重新生成回复
+                    if tools_used:
+                        logger.info(f"检测到工具执行: {tools_used}")
+                        # 构建包含工具结果的上下文
+                        context = f"用户消息: {content}\n\n工具执行结果:\n"
+                        for tool in tools_used:
+                            if tool['tool'] == 'email':
+                                result = tool['result']
+                                if isinstance(result, dict):
+                                    if result.get('status') == 'success':
+                                        context += f"✅ 邮件发送成功！\n"
+                                        context += f"📧 收件人: {result.get('details', {}).get('recipient', '')}\n"
+                                        context += f"📌 主题: {result.get('details', {}).get('subject', '')}\n"
+                                        context += f"⏰ 发送时间: {result.get('details', {}).get('send_time', '')}\n"
+                                    elif result.get('status') == 'missing_info':
+                                        context += f"❌ 邮件信息不完整: {result.get('message', '')}\n"
+                                    elif result.get('status') == 'error':
+                                        context += f"❌ 邮件发送失败: {result.get('error', '')}\n"
+                                else:
+                                    context += f"邮件工具结果: {result}\n"
+                            else:
+                                context += f"- {tool['tool']}: {tool['result']}\n"
+                        
+                        # 重新生成包含工具结果的回复
+                        tool_messages = [
+                            ("system", "你是一个智能会议助手。请根据工具执行结果回答用户。如果邮件发送成功，请确认成功；如果失败，请说明原因；如果信息不完整，请提示用户补充信息。"),
+                            ("human", f"{content}\n\n=== 工具执行结果 ===\n{context}\n=== 工具执行结果结束 ===")
+                        ]
+                        
+                        tool_response = ""
+                        async for chunk in self.chat_model.astream(tool_messages):
+                            text = getattr(chunk, "content", str(chunk))
+                            response_message = {
+                                "type": "response",
+                                "data": {"delta": text},
+                                "timestamp": datetime.now().isoformat()
+                            }
+                            if self.ipc_output_file:
+                                with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                    out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
+                                    out_f.flush()
+                            tool_response += text
+                        
+                        # 写入最终完整内容
+                        final_message = {
+                            "type": "response",
+                            "data": {"content": tool_response},
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        if self.ipc_output_file:
+                            with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
+                                out_f.flush()
+                            
+                        # 保存到记忆
+                        self.memory.chat_memory.add_user_message(content)
+                        self.memory.chat_memory.add_ai_message(tool_response)
+                        logger.info(f"Agent响应成功（含工具执行）: {tool_response[:50]}...")
+                        return IPCResponse(
+                            success=True,
+                            data={"response": tool_response},
+                            error=None,
+                            timestamp=datetime.now()
+                        )
+                    else:
+                        # 没有工具执行，使用原始回复
+                        final_message = {
+                            "type": "response",
+                            "data": {"content": full_response},
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        if self.ipc_output_file:
+                            with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                                out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
+                                out_f.flush()
+                        # 保存到记忆
+                        self.memory.chat_memory.add_user_message(content)
+                        self.memory.chat_memory.add_ai_message(full_response)
+                        logger.info(f"Agent响应成功: {full_response[:50]}...")
+                        return IPCResponse(
+                            success=True,
+                            data={"response": full_response},
+                            error=None,
+                            timestamp=datetime.now()
+                        )
                 except Exception as e:
                     logger.error(f"Agent处理消息失败: {e}")
                     return IPCResponse(
                         success=False,
                         data=None,
                         error=f"Agent处理失败: {str(e)}",
-                        timestamp=datetime.now()
-                    )
-            
-            elif command.command == "test_email":
-                # 测试邮件检测功能
-                try:
-                    test_result = await self.test_email_detection()
-                    return IPCResponse(
-                        success=True,
-                        data={"test_result": test_result},
-                        error=None,
-                        timestamp=datetime.now()
-                    )
-                except Exception as e:
-                    logger.error(f"邮件检测测试失败: {e}")
-                    return IPCResponse(
-                        success=False,
-                        data=None,
-                        error=f"邮件检测测试失败: {str(e)}",
                         timestamp=datetime.now()
                     )
             
