@@ -176,7 +176,7 @@
         
         <div class="panel-content">
           <!-- 会议记录 -->
-          <div v-if="activeTab === 'tab1'" class="tab-panel">
+          <div v-if="activeTab === 'tab1'" class="tab-panel record-panel">
             <div class="timeline-container">
               <div v-if="chatHistory.length === 0" class="empty-state">
                 <div class="empty-icon">📝</div>
@@ -198,7 +198,7 @@
           </div>
           
           <!-- 会议摘要 -->
-          <div v-if="activeTab === 'tab2'" class="tab-panel">
+          <div v-if="activeTab === 'tab2'" class="tab-panel summary-panel">
             <div class="summary-container">
               <div class="summary-header">
                 <h4>会议摘要</h4>
@@ -717,7 +717,7 @@ body {
   padding: 0;
 }
 
-/* 背景装饰 */
+/* 背景装饰 - 优化莫兰迪风格 */
 .bg-decoration {
   position: absolute;
   top: 0;
@@ -725,8 +725,9 @@ body {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    radial-gradient(circle at 20% 80%, var(--morandi-shadow-light) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, var(--morandi-glass-control) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(148, 158, 155, 0.08) 0%, transparent 70%);
   pointer-events: none;
 }
 
@@ -742,13 +743,14 @@ body {
   box-sizing: border-box;
 }
 
-/* 侧边栏 */
+/* 侧边栏 - 历史会议区域专用配色 */
 .sidebar {
   width: 280px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-sidebar);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -757,7 +759,7 @@ body {
 
 .sidebar.collapsed {
   width: 60px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 16px var(--morandi-shadow-medium);
 }
 
 .sidebar.collapsed .sidebar-header {
@@ -766,8 +768,8 @@ body {
 
 .sidebar-header {
   padding: 24px 20px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-bottom: 1px solid var(--morandi-gray-400);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   color: white;
   display: flex;
   align-items: center;
@@ -802,7 +804,7 @@ body {
 }
 
 .toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .history-list {
@@ -817,17 +819,18 @@ body {
   align-items: center;
   padding: 16px;
   margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-sidebar-bg);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--morandi-gray-400);
 }
 
 .history-session-item:hover {
-  background: rgba(102, 126, 234, 0.1);
+  background: var(--morandi-gray-50);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
+  border-color: var(--morandi-gray-500);
 }
 
 .session-icon {
@@ -842,14 +845,14 @@ body {
 .session-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--morandi-text-sidebar);
   margin-bottom: 4px;
   line-height: 1.4;
 }
 
 .session-date {
   font-size: 12px;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 /* 主内容区 */
@@ -866,12 +869,13 @@ body {
   /* 当侧边栏折叠时，主内容区可以获得更多空间 */
 }
 
-/* 控制面板 */
+/* 控制面板 - 专用配色 */
 .control-panel {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-control);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   padding: 24px;
 }
 
@@ -888,12 +892,12 @@ body {
 .logo-container {
   width: 60px;
   height: 60px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .logo {
@@ -909,9 +913,9 @@ body {
 .app-title {
   font-size: 28px;
   font-weight: 700;
-  color: #333;
+  color: var(--morandi-text-primary);
   margin: 0 0 4px 0;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -919,7 +923,7 @@ body {
 
 .app-subtitle {
   font-size: 14px;
-  color: #666;
+  color: var(--morandi-text-secondary);
   margin: 0;
 }
 
@@ -933,31 +937,31 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(244, 67, 54, 0.1);
+  background: rgba(212, 181, 176, 0.2);
   border-radius: 20px;
   transition: all 0.3s ease;
 }
 
 .status-indicator.active {
-  background: rgba(76, 175, 80, 0.1);
+  background: rgba(156, 175, 158, 0.2);
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #f44336;
+  background: var(--morandi-rose);
   animation: pulse 2s infinite;
 }
 
 .status-indicator.active .status-dot {
-  background: #4caf50;
+  background: var(--morandi-sage);
 }
 
 .status-text {
   font-size: 12px;
   font-weight: 500;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 @keyframes pulse {
@@ -1006,55 +1010,55 @@ body {
 }
 
 .control-btn.primary {
-  background: linear-gradient(135deg, #4caf50, #45a049);
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
   color: white;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.primary.active {
-  background: linear-gradient(135deg, #f44336, #d32f2f);
-  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+  background: linear-gradient(135deg, var(--morandi-rose), var(--morandi-accent-secondary));
+  box-shadow: 0 4px 12px var(--morandi-shadow-heavy);
 }
 
 .control-btn.secondary {
-  background: linear-gradient(135deg, #ff9800, #f57c00);
+  background: linear-gradient(135deg, var(--morandi-sand), var(--morandi-accent-primary));
   color: white;
-  box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.secondary.recording {
-  background: linear-gradient(135deg, #f44336, #d32f2f);
+  background: linear-gradient(135deg, var(--morandi-rose), var(--morandi-accent-secondary));
   animation: recording-pulse 1.5s infinite;
 }
 
 .control-btn.info {
-  background: linear-gradient(135deg, #2196f3, #1976d2);
+  background: linear-gradient(135deg, var(--morandi-lavender), var(--morandi-gray-100));
   color: white;
-  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.warning {
-  background: linear-gradient(135deg, #ff5722, #d84315);
+  background: linear-gradient(135deg, var(--morandi-accent-primary), var(--morandi-accent-secondary));
   color: white;
-  box-shadow: 0 4px 12px rgba(255, 87, 34, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.success {
-  background: linear-gradient(135deg, #4caf50, #388e3c);
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
   color: white;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn:disabled {
-  background: #e0e0e0;
-  color: #9e9e9e;
+  background: var(--morandi-gray-300);
+  color: var(--morandi-text-tertiary);
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .control-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 16px var(--morandi-shadow-heavy);
 }
 
 .btn-icon {
@@ -1062,18 +1066,19 @@ body {
 }
 
 @keyframes recording-pulse {
-  0% { box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3); }
-  50% { box-shadow: 0 4px 20px rgba(244, 67, 54, 0.6); }
-  100% { box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3); }
+  0% { box-shadow: 0 4px 12px var(--morandi-shadow-medium); }
+  50% { box-shadow: 0 4px 20px var(--morandi-shadow-heavy); }
+  100% { box-shadow: 0 4px 12px var(--morandi-shadow-medium); }
 }
 
-/* 聊天容器 */
+/* 聊天容器 - 对话区域专用配色 */
 .chat-container {
   flex: 1;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-chat);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1084,14 +1089,14 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: linear-gradient(135deg, rgba(148, 167, 155, 0.15), rgba(184, 160, 130, 0.15));
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .chat-header h3 {
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--morandi-text-chat);
   margin: 0;
 }
 
@@ -1100,14 +1105,14 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #4caf50;
+  color: var(--morandi-sage);
 }
 
 .online-indicator {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4caf50;
+  background: var(--morandi-sage);
   animation: pulse 2s infinite;
 }
 
@@ -1124,12 +1129,12 @@ body {
 }
 
 .chat-messages::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-gray-400);
   border-radius: 3px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--morandi-gray-500);
   border-radius: 3px;
 }
 
@@ -1148,20 +1153,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   border-radius: 20px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .welcome-text h4 {
   font-size: 20px;
-  color: #333;
+  color: var(--morandi-text-primary);
   margin: 0 0 8px 0;
 }
 
 .welcome-text p {
   font-size: 14px;
-  color: #666;
+  color: var(--morandi-text-secondary);
   margin: 0;
   line-height: 1.5;
 }
@@ -1196,7 +1201,7 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1205,7 +1210,7 @@ body {
 }
 
 .user-message .message-avatar {
-  background: linear-gradient(135deg, #4caf50, #45a049);
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
 }
 
 .message-content {
@@ -1213,23 +1218,25 @@ body {
 }
 
 .message-bubble {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-chat-bg);
   padding: 12px 16px;
   border-radius: 16px;
+  border: 1px solid var(--morandi-gray-400);
   font-size: 14px;
   line-height: 1.5;
-  color: #333;
+  color: var(--morandi-text-chat);
   word-wrap: break-word;
 }
 
 .user-message .message-bubble {
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  border: 1px solid var(--morandi-gray-500);
   color: white;
 }
 
 .message-time {
   font-size: 11px;
-  color: #999;
+  color: var(--morandi-text-tertiary);
   margin-top: 4px;
   text-align: right;
 }
@@ -1247,10 +1254,10 @@ body {
   line-height: 1.5;
 }
 
-/* AI消息中的Markdown样式 */
+/* AI消息中的Markdown样式 - 莫兰迪风格 */
 .message-html h1, .message-html h2, .message-html h3, .message-html h4, .message-html h5, .message-html h6 {
   margin: 8px 0 4px 0;
-  color: #333;
+  color: var(--morandi-text-primary);
   font-weight: 600;
 }
 
@@ -1283,7 +1290,7 @@ body {
 
 .message-html ul li::before {
   content: "•";
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-weight: bold;
   position: absolute;
   left: -16px;
@@ -1301,7 +1308,7 @@ body {
 
 .message-html ol li::before {
   content: counter(item) ".";
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-weight: bold;
   position: absolute;
   left: -20px;
@@ -1312,20 +1319,20 @@ body {
 .message-html blockquote {
   margin: 8px 0;
   padding: 8px 12px;
-  background: rgba(102, 126, 234, 0.1);
-  border-left: 4px solid #667eea;
+  background: rgba(168, 178, 165, 0.1);
+  border-left: 4px solid var(--morandi-accent-primary);
   border-radius: 4px;
-  color: #555;
+  color: var(--morandi-text-secondary);
   font-style: italic;
 }
 
 .message-html code {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--morandi-gray-300);
   padding: 2px 4px;
   border-radius: 3px;
   font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
   font-size: 12px;
-  color: #d63384;
+  color: var(--morandi-accent-tertiary);
 }
 
 /* DeepSeek风格Markdown增强样式（scoped穿透） */
@@ -1546,9 +1553,9 @@ body {
 }
 
 .suggestion-chip {
-  background: rgba(102, 126, 234, 0.1);
-  border: 1px solid rgba(102, 126, 234, 0.2);
-  color: #667eea;
+  background: rgba(168, 178, 165, 0.1);
+  border: 1px solid var(--morandi-gray-300);
+  color: var(--morandi-accent-primary);
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 12px;
@@ -1565,21 +1572,21 @@ body {
 }
 
 .suggestion-chip:hover {
-  background: rgba(102, 126, 234, 0.15);
-  border-color: rgba(102, 126, 234, 0.3);
+  background: rgba(168, 178, 165, 0.15);
+  border-color: var(--morandi-gray-400);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+  box-shadow: 0 2px 8px var(--morandi-shadow-light);
 }
 
 .suggestion-chip:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(102, 126, 234, 0.2);
+  box-shadow: 0 1px 4px var(--morandi-shadow-medium);
 }
 
-/* 输入区域 */
+/* 输入区域 - 对话区域专用配色 */
 .chat-input-container {
   padding: 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--morandi-gray-400);
 }
 
 .input-wrapper {
@@ -1591,17 +1598,18 @@ body {
 .chat-input {
   flex: 1;
   padding: 12px 16px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
+  border: 2px solid var(--morandi-gray-400);
   border-radius: 20px;
   font-size: 14px;
   outline: none;
   transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-bg-tertiary);
+  color: var(--morandi-text-chat);
 }
 
 .chat-input:focus {
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: var(--morandi-accent-primary);
+  box-shadow: 0 0 0 3px rgba(168, 178, 165, 0.1);
 }
 
 .send-btn {
@@ -1609,7 +1617,7 @@ body {
   height: 44px;
   border: none;
   border-radius: 22px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   color: white;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -1621,21 +1629,22 @@ body {
 
 .send-btn:hover:not(:disabled) {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .send-btn:disabled {
-  background: #e0e0e0;
+  background: var(--morandi-gray-300);
   cursor: not-allowed;
 }
 
-/* 右侧面板 */
+/* 右侧面板 - 记录和摘要区域 */
 .right-panel {
   width: 380px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-record);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1648,8 +1657,8 @@ body {
 
 .panel-tabs {
   display: flex;
-  background: rgba(0, 0, 0, 0.02);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(148, 158, 155, 0.08);
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .tab-btn {
@@ -1664,13 +1673,13 @@ body {
   cursor: pointer;
   transition: all 0.3s ease;
   font-size: 14px;
-  color: #666;
+  color: var(--morandi-text-secondary);
   position: relative;
 }
 
 .tab-btn.active {
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  color: var(--morandi-accent-primary);
+  background: rgba(168, 178, 165, 0.1);
 }
 
 .tab-btn.active::after {
@@ -1680,11 +1689,11 @@ body {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
 }
 
 .tab-btn:hover:not(.active) {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(148, 158, 155, 0.05);
 }
 
 .panel-content {
@@ -1698,17 +1707,29 @@ body {
   overflow-y: auto;
 }
 
+/* 会议记录面板 - 淡雅蓝灰背景 */
+.record-panel {
+  background: var(--morandi-record-bg);
+  color: var(--morandi-text-record);
+}
+
+/* 摘要面板 - 轻柔玫瑰白背景 */
+.summary-panel {
+  background: var(--morandi-summary-bg);
+  color: var(--morandi-text-summary);
+}
+
 .tab-panel::-webkit-scrollbar {
   width: 6px;
 }
 
 .tab-panel::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-gray-400);
   border-radius: 3px;
 }
 
 .tab-panel::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--morandi-gray-500);
   border-radius: 3px;
 }
 
@@ -1724,13 +1745,13 @@ body {
   justify-content: center;
   height: 100%;
   text-align: center;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 .empty-icon {
   font-size: 48px;
   margin-bottom: 16px;
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 .timeline {
@@ -1744,7 +1765,7 @@ body {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: linear-gradient(to bottom, #667eea, #764ba2);
+  background: linear-gradient(to bottom, var(--morandi-gray-100), var(--morandi-accent-primary));
 }
 
 .timeline-item {
@@ -1760,16 +1781,16 @@ body {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  box-shadow: 0 2px 8px var(--morandi-shadow-medium);
 }
 
 .timeline-content {
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-bg-tertiary);
   padding: 16px;
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 2px 8px var(--morandi-shadow-light);
 }
 
 .timeline-header {
@@ -1781,19 +1802,19 @@ body {
 
 .speaker {
   font-weight: 600;
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-size: 14px;
 }
 
 .timestamp {
   font-size: 11px;
-  color: #999;
+  color: var(--morandi-text-tertiary);
 }
 
 .timeline-text {
   font-size: 13px;
   line-height: 1.5;
-  color: #333;
+  color: var(--morandi-text-record);
 }
 
 /* 摘要容器 */
@@ -1809,12 +1830,12 @@ body {
   justify-content: space-between;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .summary-header h4 {
   font-size: 18px;
-  color: #333;
+  color: var(--morandi-text-summary);
   margin: 0;
 }
 
