@@ -33,12 +33,19 @@
         <div class="control-panel">
           <div class="panel-header">
             <div class="app-branding">
-              <div class="logo-container">
-                <img src="./assets/xjtu.png" alt="Logo" class="logo" />
-              </div>
-              <div class="title-section">
-                <h1 class="app-title">PromptMeet</h1>
-                <p class="app-subtitle">智能会议助手</p>
+              <div class="hero-title-section">
+                <div class="main-title-container">
+                  <h1 class="hero-title">
+                    <span class="title-prompt">Prompt</span><span class="title-meet">Meet</span>
+                  </h1>
+                  <div class="title-accent-line"></div>
+                </div>
+                <p class="hero-subtitle">智能会议助手</p>
+                <div class="title-particles">
+                  <div class="particle particle-1"></div>
+                  <div class="particle particle-2"></div>
+                  <div class="particle particle-3"></div>
+                </div>
               </div>
               <div class="status-section">
                 <div class="status-indicator" :class="{ active: isRunning }">
@@ -100,10 +107,8 @@
           
           <div class="chat-messages" ref="chatDisplay">
             <div v-if="qa.length === 0" class="chat-welcome">
-              <div class="welcome-avatar">🤖</div>
-              <div class="welcome-text">
-                <h4>欢迎使用PromptMeet智能会议助手</h4>
-                <p>我可以帮助您记录会议内容、生成摘要、回答问题等</p>
+              <div class="welcome-container">
+                <div class="welcome-question">{{ randomWelcomeQuestion }}</div>
               </div>
             </div>
             
@@ -176,7 +181,7 @@
         
         <div class="panel-content">
           <!-- 会议记录 -->
-          <div v-if="activeTab === 'tab1'" class="tab-panel">
+          <div v-if="activeTab === 'tab1'" class="tab-panel record-panel">
             <div class="timeline-container">
               <div v-if="chatHistory.length === 0" class="empty-state">
                 <div class="empty-icon">📝</div>
@@ -198,7 +203,7 @@
           </div>
           
           <!-- 会议摘要 -->
-          <div v-if="activeTab === 'tab2'" class="tab-panel">
+          <div v-if="activeTab === 'tab2'" class="tab-panel summary-panel">
             <div class="summary-container">
               <div class="summary-header">
                 <h4>会议摘要</h4>
@@ -282,6 +287,17 @@ export default {
       showWindowSelection: false,
       historySession: [],
       sidebarCollapsed: false,
+      welcomeQuestions: [
+        '您在忙什么？',
+        '有什么安排？',
+        '准备好开始了吗？',
+        '今天有什么计划？',
+        '需要我帮您记录什么吗？',
+        '您想聊些什么？',
+        '有什么想法要分享吗？',
+        '准备好开启智能会议了吗？'
+      ],
+      randomWelcomeQuestion: '',
     };
   },
   computed: {
@@ -290,6 +306,10 @@ export default {
     },
   },
   methods: {
+    selectRandomWelcomeQuestion() {
+      const randomIndex = Math.floor(Math.random() * this.welcomeQuestions.length);
+      this.randomWelcomeQuestion = this.welcomeQuestions[randomIndex];
+    },
     formatDate(dateString) {
       if (!dateString) return '';
       const date = new Date(dateString);
@@ -669,28 +689,123 @@ export default {
     this.openTab('tab1');
     this.gainSessionId();
     this.enhanceCodeBlocks();
+    this.selectRandomWelcomeQuestion();
   },
 };
 </script>
 
 
 <style scoped>
-/* 全局样式重置 */
+/* CSS变量定义 - 莫兰迪配色系统 */
+:root {
+  /* 莫兰迪主色调 */
+  --morandi-sage: #a8b89a;          /* 灰绿色 */
+  --morandi-rose: #d4b5b0;          /* 玫瑰灰 */
+  --morandi-sky: #7ba3b8;           /* 天空蓝 */
+  --morandi-lavender: #b8a0c4;      /* 薰衣草 */
+  --morandi-coral: #c4a8a8;         /* 珊瑚色 */
+  --morandi-mint: #9cb3a0;          /* 薄荷绿 */
+  --morandi-golden: #d4a574;        /* 金色 */
+  --morandi-gray-100: #74779f;      /* 深蓝灰 */
+  --morandi-gray-200: #a69e9e;      /* 中性灰 */
+  --morandi-gray-300: #e8e6e1;      /* 浅灰 */
+  --morandi-gray-400: rgba(160, 168, 165, 0.3);  /* 边框灰 */
+  --morandi-gray-500: rgba(120, 130, 127, 0.5);  /* 深边框灰 */
+  
+  /* 强调色系 */
+  --morandi-accent-primary: #6b7ba8;     /* 主强调色 */
+  --morandi-accent-secondary: #a67b6b;   /* 次强调色 */
+  --morandi-accent-tertiary: #8a6b9a;    /* 第三强调色 */
+  --morandi-accent-cool: #7ba3b8;        /* 冷色调强调 */
+  --morandi-accent-warm: #d4a574;        /* 暖色调强调 */
+  --morandi-accent-sage: #a8b89a;        /* 智慧绿强调 */
+  --morandi-accent-rose: #d4b5b0;        /* 玫瑰强调 */
+  --morandi-accent-peach: #e8c4a0;       /* 桃色强调 */
+  --morandi-accent-lavender: #b8a0c4;    /* 薰衣草强调 */
+  
+  /* 标题渐变色 */
+  --morandi-title-cool-dark: #4a6b78;
+  --morandi-title-sky-dark: #5a7d91;
+  --morandi-title-lavender-dark: #7d6b8a;
+  --morandi-title-warm-dark: #a67b4a;
+  --morandi-title-peach-dark: #c49574;
+  --morandi-title-golden-dark: #b8914a;
+  
+  /* 背景色系 */
+  --morandi-bg-primary: rgba(248, 248, 248, 0.95);
+  --morandi-bg-secondary: rgba(244, 244, 242, 0.9);
+  --morandi-bg-tertiary: rgba(255, 255, 255, 0.85);
+  
+  /* 玻璃效果背景 */
+  --morandi-glass-sidebar: rgba(168, 184, 154, 0.08);
+  --morandi-glass-control: rgba(212, 181, 176, 0.08);
+  --morandi-glass-chat: rgba(123, 163, 184, 0.06);
+  --morandi-glass-record: rgba(184, 168, 196, 0.08);
+  
+  /* 专区背景色 */
+  --morandi-sidebar-bg: rgba(255, 255, 255, 0.6);
+  --morandi-chat-bg: rgba(255, 255, 255, 0.8);
+  --morandi-record-bg: rgba(243, 248, 251, 0.4);
+  --morandi-summary-bg: rgba(251, 248, 248, 0.4);
+  
+  /* 文字颜色 */
+  --morandi-text-primary: #2d3748;
+  --morandi-text-secondary: #4a5568;
+  --morandi-text-tertiary: #718096;
+  --morandi-text-sidebar: #4a5568;
+  --morandi-text-chat: #2d3748;
+  --morandi-text-record: #2d3748;
+  --morandi-text-summary: #2d3748;
+  
+  /* 阴影系统 */
+  --morandi-shadow-light: rgba(74, 107, 120, 0.08);
+  --morandi-shadow-medium: rgba(74, 107, 120, 0.15);
+  --morandi-shadow-heavy: rgba(74, 107, 120, 0.25);
+}
+
+/* 全局样式重置 - 确保无滚动无白边 */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-/* 主容器 */
-.app-container {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  position: relative;
+html {
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
 }
 
-/* 背景装饰 */
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+/* 主容器 */
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* 背景装饰 - 多彩莫兰迪风格 */
 .bg-decoration {
   position: absolute;
   top: 0;
@@ -698,8 +813,10 @@ export default {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    radial-gradient(circle at 20% 80%, rgba(168, 184, 154, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(184, 168, 196, 0.12) 0%, transparent 50%),
+    radial-gradient(circle at 60% 40%, rgba(212, 165, 116, 0.08) 0%, transparent 60%),
+    radial-gradient(circle at 30% 60%, rgba(123, 163, 184, 0.1) 0%, transparent 55%);
   pointer-events: none;
 }
 
@@ -709,17 +826,20 @@ export default {
   height: 100vh;
   position: relative;
   z-index: 1;
-  gap: 20px;
-  padding: 20px;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-/* 侧边栏 */
+/* 侧边栏 - 历史会议区域专用配色 */
 .sidebar {
   width: 280px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-sidebar);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -728,7 +848,7 @@ export default {
 
 .sidebar.collapsed {
   width: 60px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 16px var(--morandi-shadow-medium);
 }
 
 .sidebar.collapsed .sidebar-header {
@@ -737,8 +857,8 @@ export default {
 
 .sidebar-header {
   padding: 24px 20px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-bottom: 1px solid var(--morandi-gray-400);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   color: white;
   display: flex;
   align-items: center;
@@ -773,7 +893,7 @@ export default {
 }
 
 .toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .history-list {
@@ -788,17 +908,18 @@ export default {
   align-items: center;
   padding: 16px;
   margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-sidebar-bg);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--morandi-gray-400);
 }
 
 .history-session-item:hover {
-  background: rgba(102, 126, 234, 0.1);
+  background: var(--morandi-gray-50);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
+  border-color: var(--morandi-gray-500);
 }
 
 .session-icon {
@@ -813,14 +934,14 @@ export default {
 .session-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--morandi-text-sidebar);
   margin-bottom: 4px;
   line-height: 1.4;
 }
 
 .session-date {
   font-size: 12px;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 /* 主内容区 */
@@ -837,12 +958,13 @@ export default {
   /* 当侧边栏折叠时，主内容区可以获得更多空间 */
 }
 
-/* 控制面板 */
+/* 控制面板 - 专用配色 */
 .control-panel {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-control);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   padding: 24px;
 }
 
@@ -856,42 +978,168 @@ export default {
   gap: 20px;
 }
 
-.logo-container {
-  width: 60px;
-  height: 60px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-}
-
-.logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-}
-
-.title-section {
+/* 英雄级主标题样式 */
+.hero-title-section {
   flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 0;
 }
 
-.app-title {
-  font-size: 28px;
-  font-weight: 700;
-  color: #333;
-  margin: 0 0 4px 0;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+.main-title-container {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.hero-title {
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  margin: 0;
+  line-height: 1;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  text-shadow: 
+    0 2px 8px rgba(0,0,0,0.2),
+    0 8px 32px rgba(74, 107, 120, 0.4),
+    0 16px 48px rgba(166, 123, 74, 0.2);
+  animation: titleGlow 3s ease-in-out infinite alternate;
+}
+
+.title-prompt {
+  background: linear-gradient(135deg, 
+    var(--morandi-title-cool-dark) 0%, 
+    var(--morandi-title-sky-dark) 30%,
+    var(--morandi-title-lavender-dark) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  position: relative;
 }
 
-.app-subtitle {
-  font-size: 14px;
-  color: #666;
+.title-meet {
+  background: linear-gradient(135deg, 
+    var(--morandi-title-warm-dark) 0%, 
+    var(--morandi-title-peach-dark) 50%,
+    var(--morandi-title-golden-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-left: 2px;
+  position: relative;
+}
+
+.title-accent-line {
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, 
+    var(--morandi-accent-cool), 
+    var(--morandi-accent-warm), 
+    var(--morandi-accent-sage));
+  border-radius: 2px;
+  animation: lineFlow 2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(123, 163, 184, 0.4);
+}
+
+.hero-subtitle {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--morandi-text-secondary);
   margin: 0;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  position: relative;
+  opacity: 0.9;
+  animation: subtitleFade 2s ease-in-out infinite alternate;
+}
+
+/* 动态粒子效果 */
+.title-particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  opacity: 0.6;
+}
+
+.particle-1 {
+  background: var(--morandi-accent-cool);
+  top: 20%;
+  left: 80%;
+  animation: float1 4s ease-in-out infinite;
+}
+
+.particle-2 {
+  background: var(--morandi-accent-warm);
+  top: 60%;
+  left: 10%;
+  animation: float2 3s ease-in-out infinite;
+}
+
+.particle-3 {
+  background: var(--morandi-accent-sage);
+  top: 30%;
+  left: 60%;
+  animation: float3 5s ease-in-out infinite;
+}
+
+/* 动画效果 */
+@keyframes titleGlow {
+  0% { 
+    text-shadow: 
+      0 2px 8px rgba(0,0,0,0.2),
+      0 8px 32px rgba(74, 107, 120, 0.4),
+      0 16px 48px rgba(166, 123, 74, 0.2);
+  }
+  100% { 
+    text-shadow: 
+      0 2px 8px rgba(0,0,0,0.3),
+      0 8px 32px rgba(74, 107, 120, 0.6),
+      0 16px 64px rgba(166, 123, 74, 0.4),
+      0 24px 80px rgba(107, 74, 120, 0.3);
+  }
+}
+
+@keyframes lineFlow {
+  0% { transform: scaleX(0.8); opacity: 0.8; }
+  50% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(0.8); opacity: 0.8; }
+}
+
+@keyframes subtitleFade {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+@keyframes float1 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(10px, -15px) scale(1.2); opacity: 0.8; }
+}
+
+@keyframes float2 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(-8px, -12px) scale(1.1); opacity: 0.9; }
+}
+
+@keyframes float3 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(12px, -10px) scale(1.3); opacity: 0.7; }
 }
 
 .status-section {
@@ -904,31 +1152,31 @@ export default {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(244, 67, 54, 0.1);
+  background: rgba(212, 181, 176, 0.2);
   border-radius: 20px;
   transition: all 0.3s ease;
 }
 
 .status-indicator.active {
-  background: rgba(76, 175, 80, 0.1);
+  background: rgba(156, 175, 158, 0.2);
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #f44336;
+  background: var(--morandi-rose);
   animation: pulse 2s infinite;
 }
 
 .status-indicator.active .status-dot {
-  background: #4caf50;
+  background: var(--morandi-sage);
 }
 
 .status-text {
   font-size: 12px;
   font-weight: 500;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 @keyframes pulse {
@@ -977,55 +1225,55 @@ export default {
 }
 
 .control-btn.primary {
-  background: linear-gradient(135deg, #4caf50, #45a049);
+  background: linear-gradient(135deg, var(--morandi-accent-cool), var(--morandi-sky));
   color: white;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.primary.active {
-  background: linear-gradient(135deg, #f44336, #d32f2f);
-  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+  background: linear-gradient(135deg, var(--morandi-coral), var(--morandi-accent-rose));
+  box-shadow: 0 4px 12px var(--morandi-shadow-heavy);
 }
 
 .control-btn.secondary {
-  background: linear-gradient(135deg, #ff9800, #f57c00);
+  background: linear-gradient(135deg, var(--morandi-accent-warm), var(--morandi-accent-peach));
   color: white;
-  box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.secondary.recording {
-  background: linear-gradient(135deg, #f44336, #d32f2f);
+  background: linear-gradient(135deg, var(--morandi-coral), var(--morandi-accent-rose));
   animation: recording-pulse 1.5s infinite;
 }
 
 .control-btn.info {
-  background: linear-gradient(135deg, #2196f3, #1976d2);
+  background: linear-gradient(135deg, var(--morandi-lavender), var(--morandi-accent-lavender));
   color: white;
-  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.warning {
-  background: linear-gradient(135deg, #ff5722, #d84315);
+  background: linear-gradient(135deg, var(--morandi-golden), var(--morandi-accent-warm));
   color: white;
-  box-shadow: 0 4px 12px rgba(255, 87, 34, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.success {
-  background: linear-gradient(135deg, #4caf50, #388e3c);
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-mint));
   color: white;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn:disabled {
-  background: #e0e0e0;
-  color: #9e9e9e;
+  background: var(--morandi-gray-300);
+  color: var(--morandi-text-tertiary);
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .control-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 16px var(--morandi-shadow-heavy);
 }
 
 .btn-icon {
@@ -1033,18 +1281,19 @@ export default {
 }
 
 @keyframes recording-pulse {
-  0% { box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3); }
-  50% { box-shadow: 0 4px 20px rgba(244, 67, 54, 0.6); }
-  100% { box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3); }
+  0% { box-shadow: 0 4px 12px var(--morandi-shadow-medium); }
+  50% { box-shadow: 0 4px 20px var(--morandi-shadow-heavy); }
+  100% { box-shadow: 0 4px 12px var(--morandi-shadow-medium); }
 }
 
-/* 聊天容器 */
+/* 聊天容器 - 对话区域专用配色 */
 .chat-container {
   flex: 1;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-chat);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1055,14 +1304,14 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: linear-gradient(135deg, rgba(148, 167, 155, 0.15), rgba(184, 160, 130, 0.15));
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .chat-header h3 {
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--morandi-text-chat);
   margin: 0;
 }
 
@@ -1071,14 +1320,14 @@ export default {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #4caf50;
+  color: var(--morandi-sage);
 }
 
 .online-indicator {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4caf50;
+  background: var(--morandi-sage);
   animation: pulse 2s infinite;
 }
 
@@ -1095,46 +1344,66 @@ export default {
 }
 
 .chat-messages::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-gray-400);
   border-radius: 3px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--morandi-gray-500);
   border-radius: 3px;
 }
 
+/* 简约随机问题欢迎界面 */
 .chat-welcome {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 40px 20px;
-  text-align: left;
-}
-
-.welcome-avatar {
-  font-size: 48px;
-  width: 80px;
-  height: 80px;
-  display: flex;
-  align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  border-radius: 20px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  min-height: 60vh;
+  padding: 60px 40px;
 }
 
-.welcome-text h4 {
-  font-size: 20px;
-  color: #333;
-  margin: 0 0 8px 0;
+.welcome-container {
+  text-align: center;
+  max-width: 600px;
+  animation: welcomeFadeIn 1.5s ease-out;
 }
 
-.welcome-text p {
-  font-size: 14px;
-  color: #666;
-  margin: 0;
-  line-height: 1.5;
+.welcome-question {
+  font-size: 36px;
+  font-weight: 300;
+  line-height: 1.3;
+  color: var(--morandi-text-chat);
+  background: linear-gradient(135deg, 
+    var(--morandi-title-cool-dark) 0%, 
+    var(--morandi-title-warm-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: questionFloat 4s ease-in-out infinite;
+  text-shadow: 0 4px 12px rgba(74, 107, 120, 0.2);
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: -0.5px;
+}
+
+/* 问题浮动动画 */
+@keyframes welcomeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes questionFloat {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.02);
+  }
 }
 
 .message-wrapper {
@@ -1167,7 +1436,7 @@ export default {
   width: 36px;
   height: 36px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1176,7 +1445,7 @@ export default {
 }
 
 .user-message .message-avatar {
-  background: linear-gradient(135deg, #4caf50, #45a049);
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
 }
 
 .message-content {
@@ -1184,23 +1453,25 @@ export default {
 }
 
 .message-bubble {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-chat-bg);
   padding: 12px 16px;
   border-radius: 16px;
+  border: 1px solid var(--morandi-gray-400);
   font-size: 14px;
   line-height: 1.5;
-  color: #333;
+  color: var(--morandi-text-chat);
   word-wrap: break-word;
 }
 
 .user-message .message-bubble {
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  border: 1px solid var(--morandi-gray-500);
   color: white;
 }
 
 .message-time {
   font-size: 11px;
-  color: #999;
+  color: var(--morandi-text-tertiary);
   margin-top: 4px;
   text-align: right;
 }
@@ -1218,10 +1489,10 @@ export default {
   line-height: 1.5;
 }
 
-/* AI消息中的Markdown样式 */
+/* AI消息中的Markdown样式 - 莫兰迪风格 */
 .message-html h1, .message-html h2, .message-html h3, .message-html h4, .message-html h5, .message-html h6 {
   margin: 8px 0 4px 0;
-  color: #333;
+  color: var(--morandi-text-primary);
   font-weight: 600;
 }
 
@@ -1254,7 +1525,7 @@ export default {
 
 .message-html ul li::before {
   content: "•";
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-weight: bold;
   position: absolute;
   left: -16px;
@@ -1272,7 +1543,7 @@ export default {
 
 .message-html ol li::before {
   content: counter(item) ".";
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-weight: bold;
   position: absolute;
   left: -20px;
@@ -1283,20 +1554,20 @@ export default {
 .message-html blockquote {
   margin: 8px 0;
   padding: 8px 12px;
-  background: rgba(102, 126, 234, 0.1);
-  border-left: 4px solid #667eea;
+  background: rgba(168, 178, 165, 0.1);
+  border-left: 4px solid var(--morandi-accent-primary);
   border-radius: 4px;
-  color: #555;
+  color: var(--morandi-text-secondary);
   font-style: italic;
 }
 
 .message-html code {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--morandi-gray-300);
   padding: 2px 4px;
   border-radius: 3px;
   font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
   font-size: 12px;
-  color: #d63384;
+  color: var(--morandi-accent-tertiary);
 }
 
 /* DeepSeek风格Markdown增强样式（scoped穿透） */
@@ -1497,7 +1768,7 @@ export default {
 
 .suggestions-title {
   font-size: 13px;
-  color: #667eea;
+  color: #1b5e20;
   margin-bottom: 12px;
   font-weight: 500;
   display: flex;
@@ -1517,9 +1788,9 @@ export default {
 }
 
 .suggestion-chip {
-  background: rgba(102, 126, 234, 0.1);
-  border: 1px solid rgba(102, 126, 234, 0.2);
-  color: #667eea;
+  background: rgba(27, 94, 32, 0.08);
+  border: 1px solid rgba(27, 94, 32, 0.2);
+  color: #1b5e20;
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 12px;
@@ -1536,21 +1807,21 @@ export default {
 }
 
 .suggestion-chip:hover {
-  background: rgba(102, 126, 234, 0.15);
-  border-color: rgba(102, 126, 234, 0.3);
+  background: rgba(27, 94, 32, 0.15);
+  border-color: rgba(27, 94, 32, 0.3);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+  box-shadow: 0 2px 8px rgba(27, 94, 32, 0.2);
 }
 
 .suggestion-chip:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(102, 126, 234, 0.2);
+  box-shadow: 0 1px 4px rgba(27, 94, 32, 0.3);
 }
 
-/* 输入区域 */
+/* 输入区域 - 对话区域专用配色 */
 .chat-input-container {
   padding: 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid var(--morandi-gray-400);
 }
 
 .input-wrapper {
@@ -1562,17 +1833,18 @@ export default {
 .chat-input {
   flex: 1;
   padding: 12px 16px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
+  border: 2px solid var(--morandi-gray-400);
   border-radius: 20px;
   font-size: 14px;
   outline: none;
   transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-bg-tertiary);
+  color: var(--morandi-text-chat);
 }
 
 .chat-input:focus {
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: var(--morandi-accent-sage);
+  box-shadow: 0 0 0 3px rgba(168, 184, 154, 0.15);
 }
 
 .send-btn {
@@ -1580,7 +1852,7 @@ export default {
   height: 44px;
   border: none;
   border-radius: 22px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-accent-sage), var(--morandi-mint));
   color: white;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -1592,21 +1864,22 @@ export default {
 
 .send-btn:hover:not(:disabled) {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .send-btn:disabled {
-  background: #e0e0e0;
+  background: var(--morandi-gray-300);
   cursor: not-allowed;
 }
 
-/* 右侧面板 */
+/* 右侧面板 - 记录和摘要区域 */
 .right-panel {
   width: 380px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  background: var(--morandi-glass-record);
+  backdrop-filter: blur(15px);
   border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 8px 32px var(--morandi-shadow-light);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1619,8 +1892,8 @@ export default {
 
 .panel-tabs {
   display: flex;
-  background: rgba(0, 0, 0, 0.02);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(148, 158, 155, 0.08);
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .tab-btn {
@@ -1635,13 +1908,13 @@ export default {
   cursor: pointer;
   transition: all 0.3s ease;
   font-size: 14px;
-  color: #666;
+  color: var(--morandi-text-secondary);
   position: relative;
 }
 
 .tab-btn.active {
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  color: var(--morandi-accent-cool);
+  background: rgba(123, 163, 184, 0.15);
 }
 
 .tab-btn.active::after {
@@ -1651,11 +1924,11 @@ export default {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--morandi-accent-cool), var(--morandi-sky));
 }
 
 .tab-btn:hover:not(.active) {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(148, 158, 155, 0.05);
 }
 
 .panel-content {
@@ -1669,17 +1942,29 @@ export default {
   overflow-y: auto;
 }
 
+/* 会议记录面板 - 淡雅蓝灰背景 */
+.record-panel {
+  background: var(--morandi-record-bg);
+  color: var(--morandi-text-record);
+}
+
+/* 摘要面板 - 轻柔玫瑰白背景 */
+.summary-panel {
+  background: var(--morandi-summary-bg);
+  color: var(--morandi-text-summary);
+}
+
 .tab-panel::-webkit-scrollbar {
   width: 6px;
 }
 
 .tab-panel::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--morandi-gray-400);
   border-radius: 3px;
 }
 
 .tab-panel::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--morandi-gray-500);
   border-radius: 3px;
 }
 
@@ -1695,13 +1980,13 @@ export default {
   justify-content: center;
   height: 100%;
   text-align: center;
-  color: #666;
+  color: var(--morandi-text-secondary);
 }
 
 .empty-icon {
   font-size: 48px;
   margin-bottom: 16px;
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 .timeline {
@@ -1715,7 +2000,7 @@ export default {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: linear-gradient(to bottom, #667eea, #764ba2);
+  background: linear-gradient(to bottom, var(--morandi-gray-100), var(--morandi-accent-primary));
 }
 
 .timeline-item {
@@ -1731,16 +2016,16 @@ export default {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  box-shadow: 0 2px 8px var(--morandi-shadow-medium);
 }
 
 .timeline-content {
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--morandi-bg-tertiary);
   padding: 16px;
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--morandi-gray-400);
+  box-shadow: 0 2px 8px var(--morandi-shadow-light);
 }
 
 .timeline-header {
@@ -1752,19 +2037,19 @@ export default {
 
 .speaker {
   font-weight: 600;
-  color: #667eea;
+  color: var(--morandi-accent-primary);
   font-size: 14px;
 }
 
 .timestamp {
   font-size: 11px;
-  color: #999;
+  color: var(--morandi-text-tertiary);
 }
 
 .timeline-text {
   font-size: 13px;
   line-height: 1.5;
-  color: #333;
+  color: var(--morandi-text-record);
 }
 
 /* 摘要容器 */
@@ -1780,12 +2065,12 @@ export default {
   justify-content: space-between;
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--morandi-gray-400);
 }
 
 .summary-header h4 {
   font-size: 18px;
-  color: #333;
+  color: var(--morandi-text-summary);
   margin: 0;
 }
 
@@ -1814,6 +2099,7 @@ export default {
   line-height: 1.6;
   color: #333;
   overflow-y: auto;
+  padding: 0;
 }
 
 .summary-content::-webkit-scrollbar {
@@ -1828,6 +2114,315 @@ export default {
 .summary-content::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 3px;
+}
+
+/* 会议摘要专用 Markdown 结构化样式 */
+:deep(.summary-content) h1,
+:deep(.summary-content) h2,
+:deep(.summary-content) h3,
+:deep(.summary-content) h4,
+:deep(.summary-content) h5,
+:deep(.summary-content) h6 {
+  margin: 24px 0 12px 0;
+  padding: 8px 0;
+  font-weight: 700;
+  line-height: 1.3;
+  position: relative;
+  color: #1a1a1a;
+}
+
+:deep(.summary-content) h1 {
+  font-size: 24px;
+  color: #1a1a1a;
+  border-bottom: 2px solid #333;
+  padding-bottom: 8px;
+  margin-top: 0;
+}
+
+:deep(.summary-content) h1::before {
+  content: "📋";
+  margin-right: 8px;
+  font-size: 22px;
+}
+
+:deep(.summary-content) h2 {
+  font-size: 20px;
+  color: #2d2d2d;
+  border-left: 4px solid #666;
+  padding-left: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 0 8px 8px 0;
+  margin-left: -8px;
+  padding-right: 8px;
+}
+
+:deep(.summary-content) h2::before {
+  content: "📌";
+  margin-right: 8px;
+  font-size: 18px;
+}
+
+:deep(.summary-content) h3 {
+  font-size: 18px;
+  color: #333;
+  padding-left: 20px;
+  position: relative;
+}
+
+:deep(.summary-content) h3::before {
+  content: "▶";
+  position: absolute;
+  left: 0;
+  color: #666;
+  font-size: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+:deep(.summary-content) h4 {
+  font-size: 16px;
+  color: #404040;
+  padding-left: 28px;
+  position: relative;
+}
+
+:deep(.summary-content) h4::before {
+  content: "•";
+  position: absolute;
+  left: 8px;
+  color: #666;
+  font-size: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+:deep(.summary-content) h5,
+:deep(.summary-content) h6 {
+  font-size: 15px;
+  color: #4a4a4a;
+  font-weight: 600;
+  margin: 16px 0 8px 0;
+}
+
+:deep(.summary-content) p {
+  margin: 12px 0;
+  line-height: 1.7;
+  color: #333;
+  text-align: justify;
+}
+
+:deep(.summary-content) ul,
+:deep(.summary-content) ol {
+  margin: 16px 0;
+  padding-left: 24px;
+  color: #333;
+}
+
+:deep(.summary-content) ul {
+  list-style: none;
+}
+
+:deep(.summary-content) ul li {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+:deep(.summary-content) ul li::before {
+  content: "●";
+  position: absolute;
+  left: 0;
+  color: #666;
+  font-size: 12px;
+  top: 0.3em;
+}
+
+:deep(.summary-content) ul ul li::before {
+  content: "○";
+  color: #666;
+}
+
+:deep(.summary-content) ul ul ul li::before {
+  content: "▪";
+  color: #666;
+}
+
+:deep(.summary-content) ol {
+  counter-reset: item;
+}
+
+:deep(.summary-content) ol li {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 8px;
+  line-height: 1.6;
+  counter-increment: item;
+}
+
+:deep(.summary-content) ol li::before {
+  content: counter(item) ".";
+  position: absolute;
+  left: -20px;
+  color: #666;
+  font-weight: 600;
+  width: 16px;
+  text-align: right;
+}
+
+:deep(.summary-content) blockquote {
+  margin: 16px 0;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.03);
+  border-left: 4px solid #666;
+  border-radius: 0 12px 12px 0;
+  color: #555;
+  font-style: normal;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+:deep(.summary-content) blockquote::before {
+  content: "💡";
+  position: absolute;
+  top: 12px;
+  left: -14px;
+  background: white;
+  padding: 4px;
+  border-radius: 50%;
+  font-size: 12px;
+  box-shadow: 0 2px 4px var(--morandi-shadow-medium);
+}
+
+:deep(.summary-content) code {
+  background: #f5f5f5;
+  color: #333;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:deep(.summary-content) pre {
+  background: #f8f9fa;
+  border: 1px solid var(--morandi-gray-400);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+:deep(.summary-content) pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: #333;
+}
+
+:deep(.summary-content) table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px var(--morandi-shadow-light);
+}
+
+:deep(.summary-content) th,
+:deep(.summary-content) td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--morandi-gray-400);
+}
+
+:deep(.summary-content) th {
+  background: linear-gradient(135deg, 
+    var(--morandi-gray-100), 
+    var(--morandi-accent-primary));
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+:deep(.summary-content) td {
+  color: #333;
+  font-size: 14px;
+}
+
+:deep(.summary-content) tr:nth-child(even) td {
+  background: rgba(168, 184, 154, 0.03);
+}
+
+:deep(.summary-content) tr:hover td {
+  background: rgba(168, 184, 154, 0.08);
+}
+
+:deep(.summary-content) hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--morandi-gray-400), 
+    transparent);
+  margin: 24px 0;
+}
+
+:deep(.summary-content) strong {
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+:deep(.summary-content) em {
+  color: #444;
+  font-style: italic;
+  font-weight: 500;
+}
+
+:deep(.summary-content) a {
+  color: #333;
+  text-decoration: none;
+  border-bottom: 1px dotted #666;
+  transition: all 0.3s ease;
+}
+
+:deep(.summary-content) a:hover {
+  color: #1a1a1a;
+  border-bottom-style: solid;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+/* 特殊内容块样式 */
+:deep(.summary-content) .highlight-box {
+  background: linear-gradient(135deg, 
+    rgba(168, 184, 154, 0.1), 
+    rgba(212, 181, 176, 0.1));
+  border: 1px solid var(--morandi-gray-400);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  position: relative;
+}
+
+:deep(.summary-content) .highlight-box::before {
+  content: "⭐";
+  position: absolute;
+  top: -8px;
+  left: 16px;
+  background: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 14px;
+  box-shadow: 0 2px 4px var(--morandi-shadow-medium);
 }
 
 /* 模态框 */

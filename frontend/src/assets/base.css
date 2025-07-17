@@ -1,70 +1,180 @@
-/* color palette from <https://github.com/vuejs/theme> */
+/* 莫兰迪配色方案 - 多彩版本 */
 :root {
-  --vt-c-white: #ffffff;
-  --vt-c-white-soft: #f8f8f8;
-  --vt-c-white-mute: #f2f2f2;
+  /* 莫兰迪主背景色 - 更温暖多彩 */
+  --morandi-bg-primary: #F2F0E8;      /* 温暖米黄 - 主背景 */
+  --morandi-bg-secondary: #F5F3F0;    /* 柔和象牙白 - 卡片背景 */
+  --morandi-bg-tertiary: #FEFCFA;     /* 纯净白 - 输入框背景 */
+  
+  /* 功能区域专用背景色 - 多彩莫兰迪 */
+  --morandi-sidebar-bg: #F0E6D6;      /* 历史会议区域 - 温暖杏色 */
+  --morandi-chat-bg: #E8F2E6;         /* 对话区域 - 清新薄荷绿 */
+  --morandi-record-bg: #E6EDF5;       /* 会议记录区域 - 优雅天蓝 */
+  --morandi-summary-bg: #F2E6F0;      /* 摘要区域 - 柔和粉紫 */
+  --morandi-control-bg: #EDE8E0;      /* 控制面板 - 雅致米灰 */
+  
+  /* 多彩莫兰迪灰色系统 */
+  --morandi-gray-50: #FAF8F5;         /* 极浅米白 */
+  --morandi-gray-100: #A8B5A8;        /* 鼠尾草绿灰 */
+  --morandi-gray-200: #D4C4B8;        /* 暖驼色灰 */
+  --morandi-gray-300: #E0D8D0;        /* 淡玫瑰灰 */
+  --morandi-gray-400: #C5B8A8;        /* 中性驼灰 */
+  --morandi-gray-500: #B0A090;        /* 深驼灰色 */
+  
+  /* 多彩强调色系统 - 莫兰迪风格 */
+  --morandi-accent-warm: #D4A574;     /* 温暖杏橙 */
+  --morandi-accent-cool: #7BA3B8;     /* 清冷蓝灰 */
+  --morandi-accent-sage: #A8B89A;     /* 鼠尾草绿 */
+  --morandi-accent-rose: #C4A8B8;     /* 玫瑰粉灰 */
+  --morandi-accent-lavender: #B8A8C4; /* 薰衣草紫 */
+  --morandi-accent-peach: #D4B8A8;    /* 蜜桃色 */
+  
+  /* 主标题专用深色系统 */
+  --morandi-title-cool-dark: #4A6B78;    /* 深蓝灰 - 主标题蓝色系 */
+  --morandi-title-sky-dark: #5A7B88;     /* 深天空蓝 - 主标题蓝色中段 */
+  --morandi-title-lavender-dark: #6B4A78; /* 深薰衣草 - 主标题蓝色系末端 */
+  --morandi-title-warm-dark: #A67B4A;    /* 深杏橙 - 主标题暖色系 */
+  --morandi-title-peach-dark: #A6785A;   /* 深蜜桃 - 主标题暖色中段 */
+  --morandi-title-golden-dark: #8A6B4A;  /* 深金沙 - 主标题暖色系末端 */
+  
+  /* 兼容性映射 - 旧变量名映射到新系统 */
+  --morandi-accent-primary: var(--morandi-accent-warm);    /* 主强调色 */
+  --morandi-accent-secondary: var(--morandi-accent-cool);  /* 次强调色 */
+  --morandi-accent-tertiary: var(--morandi-accent-sage);   /* 第三强调色 */
+  
+  /* 增强的文字颜色 - 加深版本 */
+  --morandi-text-primary: #2D2D2D;     /* 深灰 - 主要文字 (加深) */
+  --morandi-text-secondary: #3A3A3A;   /* 中深灰 - 次要文字 (加深) */
+  --morandi-text-tertiary: #5A5A5A;    /* 中灰 - 辅助文字 (加深) */
+  --morandi-text-muted: #8A8A8A;       /* 浅灰 - 禁用文字 (加深) */
+  
+  /* 区域专用文字颜色 - 加深版本 */
+  --morandi-text-sidebar: #4A3B28;     /* 侧边栏文字 - 平衡杏色 */
+  --morandi-text-chat: #2A4A25;        /* 对话区域文字 - 平衡绿色 */
+  --morandi-text-record: #253B4A;      /* 记录区域文字 - 平衡蓝色 */
+  --morandi-text-summary: #4A254A;     /* 摘要区域文字 - 平衡紫色 */
+  
+  /* 多彩莫兰迪特殊色调 */
+  --morandi-sage: #9AB89A;             /* 鼠尾草绿 - 成功色 */
+  --morandi-coral: #D4A8A8;            /* 珊瑚色 - 警告色 */
+  --morandi-lavender: #B8A8D4;         /* 薰衣草色 - 信息色 */
+  --morandi-golden: #D4C4A8;           /* 金沙色 - 录音状态 */
+  --morandi-sky: #A8C4D4;              /* 天空蓝 - 链接色 */
+  --morandi-mint: #A8D4C4;             /* 薄荷绿 - 活跃状态 */
+  --morandi-rose: var(--morandi-coral); /* 玫瑰色 - 兼容性映射 */
+  --morandi-sand: var(--morandi-golden); /* 沙土色 - 兼容性映射 */
+  
+  /* 阴影和透明度 */
+  --morandi-shadow-light: rgba(148, 138, 128, 0.15);
+  --morandi-shadow-medium: rgba(148, 138, 128, 0.25);
+  --morandi-shadow-heavy: rgba(148, 138, 128, 0.35);
+  
+  /* 玻璃效果背景色 - 多彩版 */
+  --morandi-glass-sidebar: rgba(240, 230, 214, 0.85);    /* 侧边栏玻璃效果 - 杏色 */
+  --morandi-glass-chat: rgba(232, 242, 230, 0.85);       /* 对话区域玻璃效果 - 绿色 */
+  --morandi-glass-record: rgba(230, 237, 245, 0.85);     /* 记录区域玻璃效果 - 蓝色 */
+  --morandi-glass-summary: rgba(242, 230, 240, 0.85);    /* 摘要区域玻璃效果 - 粉色 */
+  --morandi-glass-control: rgba(237, 232, 224, 0.85);    /* 控制面板玻璃效果 - 米色 */
+  
+  --morandi-overlay: rgba(242, 240, 232, 0.9);
 
-  --vt-c-black: #181818;
-  --vt-c-black-soft: #222222;
-  --vt-c-black-mute: #282828;
+  --vt-c-white: var(--morandi-bg-tertiary);
+  --vt-c-white-soft: var(--morandi-bg-secondary);
+  --vt-c-white-mute: var(--morandi-bg-primary);
 
-  --vt-c-indigo: #2c3e50;
+  --vt-c-black: var(--morandi-text-primary);
+  --vt-c-black-soft: var(--morandi-text-secondary);
+  --vt-c-black-mute: var(--morandi-text-tertiary);
 
-  --vt-c-divider-light-1: rgba(60, 60, 60, 0.29);
-  --vt-c-divider-light-2: rgba(60, 60, 60, 0.12);
-  --vt-c-divider-dark-1: rgba(84, 84, 84, 0.65);
-  --vt-c-divider-dark-2: rgba(84, 84, 84, 0.48);
+  --vt-c-indigo: var(--morandi-accent-lavender);
 
-  --vt-c-text-light-1: var(--vt-c-indigo);
-  --vt-c-text-light-2: rgba(60, 60, 60, 0.66);
-  --vt-c-text-dark-1: var(--vt-c-white);
-  --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
-}
+  --vt-c-divider-light-1: var(--morandi-gray-300);
+  --vt-c-divider-light-2: var(--morandi-gray-400);
+  --vt-c-divider-dark-1: var(--morandi-gray-400);
+  --vt-c-divider-dark-2: var(--morandi-gray-500);
 
-/* semantic color variables for this project */
-:root {
-  --color-background: var(--vt-c-white);
-  --color-background-soft: var(--vt-c-white-soft);
-  --color-background-mute: var(--vt-c-white-mute);
+  --vt-c-text-light-1: var(--morandi-text-primary);
+  --vt-c-text-light-2: var(--morandi-text-secondary);
+  --vt-c-text-light-3: var(--morandi-text-tertiary);
+  --vt-c-text-light-4: var(--morandi-text-muted);
 
-  --color-border: var(--vt-c-divider-light-2);
-  --color-border-hover: var(--vt-c-divider-light-1);
+  --color-background: var(--morandi-bg-primary);
+  --color-background-soft: var(--morandi-bg-secondary);
+  --color-background-mute: var(--morandi-gray-50);
 
-  --color-heading: var(--vt-c-text-light-1);
-  --color-text: var(--vt-c-text-light-1);
+  --color-border: var(--morandi-gray-300);
+  --color-border-hover: var(--morandi-gray-400);
+
+  --color-heading: var(--morandi-text-primary);
+  --color-text: var(--morandi-text-primary);
 
   --section-gap: 160px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: var(--vt-c-black);
-    --color-background-soft: var(--vt-c-black-soft);
-    --color-background-mute: var(--vt-c-black-mute);
+/* 兼容性映射 - 将旧的变量映射到新的莫兰迪配色 */
+:root {
+  --vt-c-white: var(--morandi-bg-tertiary);
+  --vt-c-white-soft: var(--morandi-bg-secondary);
+  --vt-c-white-mute: var(--morandi-bg-primary);
 
-    --color-border: var(--vt-c-divider-dark-2);
-    --color-border-hover: var(--vt-c-divider-dark-1);
+  --vt-c-black: var(--morandi-text-primary);
+  --vt-c-black-soft: var(--morandi-text-secondary);
+  --vt-c-black-mute: var(--morandi-text-tertiary);
 
-    --color-heading: var(--vt-c-text-dark-1);
-    --color-text: var(--vt-c-text-dark-2);
-  }
+  --vt-c-indigo: var(--morandi-accent-lavender);
+
+  --vt-c-divider-light-1: var(--morandi-gray-300);
+  --vt-c-divider-light-2: var(--morandi-gray-400);
+  --vt-c-divider-dark-1: var(--morandi-gray-400);
+  --vt-c-divider-dark-2: var(--morandi-gray-500);
+
+  --vt-c-text-light-1: var(--morandi-text-primary);
+  --vt-c-text-light-2: var(--morandi-text-secondary);
+  --vt-c-text-light-3: var(--morandi-text-tertiary);
+  --vt-c-text-light-4: var(--morandi-text-muted);
+
+  --color-background: var(--morandi-bg-primary);
+  --color-background-soft: var(--morandi-bg-secondary);
+  --color-background-mute: var(--morandi-gray-50);
+
+  --color-border: var(--morandi-gray-300);
+  --color-border-hover: var(--morandi-gray-400);
+
+  --color-heading: var(--morandi-text-primary);
+  --color-text: var(--morandi-text-primary);
+
+  --section-gap: 160px;
 }
 
+/* 移除深色模式，保持莫兰迪风格的统一性 */
+
+/* 彻底重置所有元素的边距和滚动 */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
   margin: 0;
+  padding: 0;
   font-weight: normal;
 }
 
+html {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
 body {
-  min-height: 100vh;
-  color: var(--color-text);
-  background: var(--color-background);
-  transition:
-    color 0.5s,
-    background-color 0.5s;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  left: 0;
+  color: var(--morandi-text-primary);
+  background: linear-gradient(135deg, var(--morandi-bg-primary) 0%, var(--morandi-bg-secondary) 100%);
   line-height: 1.6;
   font-family:
     Inter,
