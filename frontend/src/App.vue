@@ -33,12 +33,19 @@
         <div class="control-panel">
           <div class="panel-header">
             <div class="app-branding">
-              <div class="logo-container">
-                <img src="./assets/xjtu.png" alt="Logo" class="logo" />
-              </div>
-              <div class="title-section">
-                <h1 class="app-title">PromptMeet</h1>
-                <p class="app-subtitle">智能会议助手</p>
+              <div class="hero-title-section">
+                <div class="main-title-container">
+                  <h1 class="hero-title">
+                    <span class="title-prompt">Prompt</span><span class="title-meet">Meet</span>
+                  </h1>
+                  <div class="title-accent-line"></div>
+                </div>
+                <p class="hero-subtitle">智能会议助手</p>
+                <div class="title-particles">
+                  <div class="particle particle-1"></div>
+                  <div class="particle particle-2"></div>
+                  <div class="particle particle-3"></div>
+                </div>
               </div>
               <div class="status-section">
                 <div class="status-indicator" :class="{ active: isRunning }">
@@ -100,10 +107,8 @@
           
           <div class="chat-messages" ref="chatDisplay">
             <div v-if="qa.length === 0" class="chat-welcome">
-              <div class="welcome-avatar">🤖</div>
-              <div class="welcome-text">
-                <h4>欢迎使用PromptMeet智能会议助手</h4>
-                <p>我可以帮助您记录会议内容、生成摘要、回答问题等</p>
+              <div class="welcome-container">
+                <div class="welcome-question">{{ randomWelcomeQuestion }}</div>
               </div>
             </div>
             
@@ -282,6 +287,17 @@ export default {
       showWindowSelection: false,
       historySession: [],
       sidebarCollapsed: false,
+      welcomeQuestions: [
+        '您在忙什么？',
+        '有什么安排？',
+        '准备好开始了吗？',
+        '今天有什么计划？',
+        '需要我帮您记录什么吗？',
+        '您想聊些什么？',
+        '有什么想法要分享吗？',
+        '准备好开启智能会议了吗？'
+      ],
+      randomWelcomeQuestion: '',
     };
   },
   computed: {
@@ -290,6 +306,10 @@ export default {
     },
   },
   methods: {
+    selectRandomWelcomeQuestion() {
+      const randomIndex = Math.floor(Math.random() * this.welcomeQuestions.length);
+      this.randomWelcomeQuestion = this.welcomeQuestions[randomIndex];
+    },
     formatDate(dateString) {
       if (!dateString) return '';
       const date = new Date(dateString);
@@ -669,6 +689,7 @@ export default {
     this.openTab('tab1');
     this.gainSessionId();
     this.enhanceCodeBlocks();
+    this.selectRandomWelcomeQuestion();
   },
 };
 </script>
@@ -890,42 +911,168 @@ body {
   gap: 20px;
 }
 
-.logo-container {
-  width: 60px;
-  height: 60px;
-  background: linear-gradient(135deg, var(--morandi-accent-warm), var(--morandi-accent-peach));
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
-}
-
-.logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-}
-
-.title-section {
+/* 英雄级主标题样式 */
+.hero-title-section {
   flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 0;
 }
 
-.app-title {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--morandi-text-primary);
-  margin: 0 0 4px 0;
-  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+.main-title-container {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.hero-title {
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  margin: 0;
+  line-height: 1;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  text-shadow: 
+    0 2px 8px rgba(0,0,0,0.2),
+    0 8px 32px rgba(74, 107, 120, 0.4),
+    0 16px 48px rgba(166, 123, 74, 0.2);
+  animation: titleGlow 3s ease-in-out infinite alternate;
+}
+
+.title-prompt {
+  background: linear-gradient(135deg, 
+    var(--morandi-title-cool-dark) 0%, 
+    var(--morandi-title-sky-dark) 30%,
+    var(--morandi-title-lavender-dark) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  position: relative;
 }
 
-.app-subtitle {
-  font-size: 14px;
+.title-meet {
+  background: linear-gradient(135deg, 
+    var(--morandi-title-warm-dark) 0%, 
+    var(--morandi-title-peach-dark) 50%,
+    var(--morandi-title-golden-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-left: 2px;
+  position: relative;
+}
+
+.title-accent-line {
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, 
+    var(--morandi-accent-cool), 
+    var(--morandi-accent-warm), 
+    var(--morandi-accent-sage));
+  border-radius: 2px;
+  animation: lineFlow 2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(123, 163, 184, 0.4);
+}
+
+.hero-subtitle {
+  font-size: 16px;
+  font-weight: 500;
   color: var(--morandi-text-secondary);
   margin: 0;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  position: relative;
+  opacity: 0.9;
+  animation: subtitleFade 2s ease-in-out infinite alternate;
+}
+
+/* 动态粒子效果 */
+.title-particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  opacity: 0.6;
+}
+
+.particle-1 {
+  background: var(--morandi-accent-cool);
+  top: 20%;
+  left: 80%;
+  animation: float1 4s ease-in-out infinite;
+}
+
+.particle-2 {
+  background: var(--morandi-accent-warm);
+  top: 60%;
+  left: 10%;
+  animation: float2 3s ease-in-out infinite;
+}
+
+.particle-3 {
+  background: var(--morandi-accent-sage);
+  top: 30%;
+  left: 60%;
+  animation: float3 5s ease-in-out infinite;
+}
+
+/* 动画效果 */
+@keyframes titleGlow {
+  0% { 
+    text-shadow: 
+      0 2px 8px rgba(0,0,0,0.2),
+      0 8px 32px rgba(74, 107, 120, 0.4),
+      0 16px 48px rgba(166, 123, 74, 0.2);
+  }
+  100% { 
+    text-shadow: 
+      0 2px 8px rgba(0,0,0,0.3),
+      0 8px 32px rgba(74, 107, 120, 0.6),
+      0 16px 64px rgba(166, 123, 74, 0.4),
+      0 24px 80px rgba(107, 74, 120, 0.3);
+  }
+}
+
+@keyframes lineFlow {
+  0% { transform: scaleX(0.8); opacity: 0.8; }
+  50% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(0.8); opacity: 0.8; }
+}
+
+@keyframes subtitleFade {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+@keyframes float1 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(10px, -15px) scale(1.2); opacity: 0.8; }
+}
+
+@keyframes float2 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(-8px, -12px) scale(1.1); opacity: 0.9; }
+}
+
+@keyframes float3 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(12px, -10px) scale(1.3); opacity: 0.7; }
 }
 
 .status-section {
@@ -1139,37 +1286,57 @@ body {
   border-radius: 3px;
 }
 
+/* 简约随机问题欢迎界面 */
 .chat-welcome {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 40px 20px;
-  text-align: left;
-}
-
-.welcome-avatar {
-  font-size: 48px;
-  width: 80px;
-  height: 80px;
-  display: flex;
-  align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--morandi-accent-lavender), var(--morandi-lavender));
-  border-radius: 20px;
-  box-shadow: 0 4px 12px var(--morandi-shadow-medium);
+  min-height: 60vh;
+  padding: 60px 40px;
 }
 
-.welcome-text h4 {
-  font-size: 20px;
-  color: var(--morandi-text-primary);
-  margin: 0 0 8px 0;
+.welcome-container {
+  text-align: center;
+  max-width: 600px;
+  animation: welcomeFadeIn 1.5s ease-out;
 }
 
-.welcome-text p {
-  font-size: 14px;
-  color: var(--morandi-text-secondary);
-  margin: 0;
-  line-height: 1.5;
+.welcome-question {
+  font-size: 36px;
+  font-weight: 300;
+  line-height: 1.3;
+  color: var(--morandi-text-chat);
+  background: linear-gradient(135deg, 
+    var(--morandi-title-cool-dark) 0%, 
+    var(--morandi-title-warm-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: questionFloat 4s ease-in-out infinite;
+  text-shadow: 0 4px 12px rgba(74, 107, 120, 0.2);
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: -0.5px;
+}
+
+/* 问题浮动动画 */
+@keyframes welcomeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes questionFloat {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.02);
+  }
 }
 
 .message-wrapper {

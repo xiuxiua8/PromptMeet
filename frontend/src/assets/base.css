@@ -28,6 +28,14 @@
   --morandi-accent-lavender: #B8A8C4; /* 薰衣草紫 */
   --morandi-accent-peach: #D4B8A8;    /* 蜜桃色 */
   
+  /* 主标题专用深色系统 */
+  --morandi-title-cool-dark: #4A6B78;    /* 深蓝灰 - 主标题蓝色系 */
+  --morandi-title-sky-dark: #5A7B88;     /* 深天空蓝 - 主标题蓝色中段 */
+  --morandi-title-lavender-dark: #6B4A78; /* 深薰衣草 - 主标题蓝色系末端 */
+  --morandi-title-warm-dark: #A67B4A;    /* 深杏橙 - 主标题暖色系 */
+  --morandi-title-peach-dark: #A6785A;   /* 深蜜桃 - 主标题暖色中段 */
+  --morandi-title-golden-dark: #8A6B4A;  /* 深金沙 - 主标题暖色系末端 */
+  
   /* 兼容性映射 - 旧变量名映射到新系统 */
   --morandi-accent-primary: var(--morandi-accent-warm);    /* 主强调色 */
   --morandi-accent-secondary: var(--morandi-accent-cool);  /* 次强调色 */
