@@ -677,6 +677,29 @@ class AgentProcessor:
         
         # 如果包含邮件关键词，或者包含邮箱地址且有邮件历史，则触发邮件检测
         logger.info(f"邮件检测: 关键词={has_email_keywords}, 邮箱地址={has_email_address}, 邮件历史={has_email_history}")
+        
+        # 检查对话历史中是否已经有成功的邮件发送记录
+        has_successful_email = False
+        if self.memory.chat_memory.messages:
+            recent_messages = self.memory.chat_memory.messages[-3:]  # 检查最近3条消息
+            for msg in recent_messages:
+                if isinstance(msg, AIMessage):
+                    msg_content = msg.content.lower()
+                    if ("邮件发送成功" in msg_content) or ("✅ 邮件发送成功" in msg_content):
+                        has_successful_email = True
+                        break
+        
+        if has_successful_email:
+            tools_used.append({
+                "tool": "email",
+                "parameters": {},
+                "result": {
+                    "status": "success",
+                    "message": "邮件已成功发送（历史记录检测）"
+                }
+            })
+            return tools_used
+
         if has_email_keywords or (has_email_address and has_email_history):
             try:
                 # 从.env文件读取邮件配置
