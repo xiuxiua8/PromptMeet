@@ -986,7 +986,7 @@ class AgentProcessor:
 重要说明：
 1. 会议内容背景：在"=== 会议内容背景 ==="部分包含了相关的会议内容，请基于这些内容回答用户的问题
 2. 如果用户询问会议相关的问题，请优先参考会议内容背景中的信息
-3. 如果会议内容背景中没有相关信息，可以根据自己的知识和理解自由生成答案，不必只说“没有相关信息”
+3. 如果会议内容背景中没有相关信息，可以根据自己的知识和理解自由生成答案，不必只说"没有相关信息"
 
 工具使用规则：
 - 当用户询问需要工具支持的问题时，请基于工具执行结果来回答
@@ -1035,32 +1035,45 @@ class AgentProcessor:
                 content = command.params.get("content", "")
                 try:
                     # ====== 流式AI回复实现 ======
-                    messages = [
-                        ("system", "你是一个智能会议助手，可以帮助用户回答关于会议内容的问题，也可以使用各种工具来帮助用户。"),
-                        ("human", content)
-                    ]
-                    full_response = ""
-                    async for chunk in self.chat_model.astream(messages):
-                        text = getattr(chunk, "content", str(chunk))  # 取出内容
-                        response_message = {
-                            "type": "response",
-                            "data": {"delta": text},
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        if self.ipc_output_file:
-                            with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
-                                out_f.flush()
-                        full_response += text
+                    # 获取对话历史
+                    history = self.memory.chat_memory.messages
                     
+                    # 构建完整的对话上下文
+                    context = ""
+                    
+                    # 添加会议内容作为背景知识
+                    logger.info(f"当前会议内容片段数: {len(self.meeting_content)}")
+                    if self.meeting_content:
+                        context += "=== 会议内容背景 ===\n"
+                        if self.vector_db is not None:
+                            try:
+                                relevant_docs = self.vector_db.similarity_search(content, k=2)
+                                if relevant_docs:
+                                    context += "相关会议内容:\n"
+                                    for i, doc in enumerate(relevant_docs, 1):
+                                        context += f"相关内容{i}: {doc.page_content}\n"
+                                else:
+                                    for i, c in enumerate(self.meeting_content[-2:], 1):
+                                        context += f"会议片段{i}: {c}\n"
+                            except Exception as e:
+                                logger.warning(f"向量检索失败，使用最近会议片段: {e}")
+                                for i, c in enumerate(self.meeting_content[-2:], 1):
+                                    context += f"会议片段{i}: {c}\n"
+                        else:
+                            for i, c in enumerate(self.meeting_content[-2:], 1):
+                                context += f"会议片段{i}: {c}\n"
+                        context += "=== 会议内容背景结束 ===\n\n"
+                    # 添加对话历史
+                    for msg in history:
+                        if isinstance(msg, HumanMessage):
+                            context += f"用户: {msg.content}\n"
+                        elif isinstance(msg, AIMessage):
+                            context += f"助手: {msg.content}\n"
                     # 检测并执行工具调用
-                    tools_used = await self._detect_and_execute_tools(content, full_response)
-                    
-                    # 如果有工具执行结果，需要重新生成回复
+                    tools_used = await self._detect_and_execute_tools(content, context)
+                    # 如果有工具执行结果，添加到上下文
                     if tools_used:
-                        logger.info(f"检测到工具执行: {tools_used}")
-                        # 构建包含工具结果的上下文
-                        context = f"用户消息: {content}\n\n工具执行结果:\n"
+                        context += "\n=== 工具执行结果 ===\n"
                         for tool in tools_used:
                             if tool['tool'] == 'email':
                                 result = tool['result']
@@ -1078,69 +1091,48 @@ class AgentProcessor:
                                     context += f"邮件工具结果: {result}\n"
                             else:
                                 context += f"- {tool['tool']}: {tool['result']}\n"
-                        
-                        # 重新生成包含工具结果的回复
-                        tool_messages = [
-                            ("system", "你是一个智能会议助手。请根据工具执行结果回答用户。如果邮件发送成功，请确认成功；如果失败，请说明原因；如果信息不完整，请提示用户补充信息。"),
-                            ("human", f"{content}\n\n=== 工具执行结果 ===\n{context}\n=== 工具执行结果结束 ===")
-                        ]
-                        
-                        tool_response = ""
-                        async for chunk in self.chat_model.astream(tool_messages):
-                            text = getattr(chunk, "content", str(chunk))
-                            response_message = {
-                                "type": "response",
-                                "data": {"delta": text},
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            if self.ipc_output_file:
-                                with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                    out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
-                                    out_f.flush()
-                            tool_response += text
-                        
-                        # 写入最终完整内容
-                        final_message = {
+                        context += "=== 工具执行结果结束 ===\n\n"
+                    # 添加当前用户消息
+                    context += f"用户: {content}\n助手:"
+                    # 构建系统提示词
+                    system_prompt = "你是一个智能会议助手，可以帮助用户回答关于会议内容的问题，也可以使用各种工具来帮助用户。\n\n重要说明：\n1. 会议内容背景：在\"=== 会议内容背景 ===\"部分包含了相关的会议内容，请基于这些内容回答用户的问题\n2. 如果用户询问会议相关的问题，请优先参考会议内容背景中的信息\n3. 如果会议内容背景中没有相关信息，可以根据自己的知识和理解自由生成答案，不必只说\"没有相关信息\"\n4. 请记住对话历史，理解用户的上下文和意图\n\n工具使用规则：\n- 当用户询问需要工具支持的问题时，请基于工具执行结果来回答\n- 请仔细查看工具执行结果部分，并根据结果提供准确的回答\n\n邮件处理规则：\n1. 如果看到\"✅ 邮件发送成功！\"，请告知用户邮件已成功发送，并重复发送详情\n2. 如果看到\"❌ 邮件信息不完整\"，请告知用户缺少哪些信息，并请求补充\n3. 如果看到\"❌ 邮件发送失败\"，请告知用户发送失败的原因\n4. 不要在没有工具执行结果的情况下假设邮件发送状态\n\n请用友好、自然的语气回答，确保回答准确且有用。"
+                    messages = [
+                        ("system", system_prompt),
+                        ("human", context)
+                    ]
+                    full_response = ""
+                    async for chunk in self.chat_model.astream(messages):
+                        text = getattr(chunk, "content", str(chunk))  # 取出内容
+                        response_message = {
                             "type": "response",
-                            "data": {"content": tool_response},
+                            "data": {"delta": text},
                             "timestamp": datetime.now().isoformat()
                         }
                         if self.ipc_output_file:
                             with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
+                                out_f.write(json.dumps(response_message, ensure_ascii=False, default=str) + '\n')
                                 out_f.flush()
-                            
-                        # 保存到记忆
-                        self.memory.chat_memory.add_user_message(content)
-                        self.memory.chat_memory.add_ai_message(tool_response)
-                        logger.info(f"Agent响应成功（含工具执行）: {tool_response[:50]}...")
-                        return IPCResponse(
-                            success=True,
-                            data={"response": tool_response},
-                            error=None,
-                            timestamp=datetime.now()
-                        )
-                    else:
-                        # 没有工具执行，使用原始回复
-                        final_message = {
-                            "type": "response",
-                            "data": {"content": full_response},
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        if self.ipc_output_file:
-                            with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
-                                out_f.flush()
-                        # 保存到记忆
-                        self.memory.chat_memory.add_user_message(content)
-                        self.memory.chat_memory.add_ai_message(full_response)
-                        logger.info(f"Agent响应成功: {full_response[:50]}...")
-                        return IPCResponse(
-                            success=True,
-                            data={"response": full_response},
-                            error=None,
-                            timestamp=datetime.now()
-                        )
+                        full_response += text
+                    # 写入最终完整内容
+                    final_message = {
+                        "type": "response",
+                        "data": {"content": full_response},
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    if self.ipc_output_file:
+                        with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
+                            out_f.write(json.dumps(final_message, ensure_ascii=False, default=str) + '\n')
+                            out_f.flush()
+                    # 保存到记忆
+                    self.memory.chat_memory.add_user_message(content)
+                    self.memory.chat_memory.add_ai_message(full_response)
+                    logger.info(f"Agent响应成功: {full_response[:50]}...")
+                    return IPCResponse(
+                        success=True,
+                        data={"response": full_response},
+                        error=None,
+                        timestamp=datetime.now()
+                    )
                 except Exception as e:
                     logger.error(f"Agent处理消息失败: {e}")
                     return IPCResponse(
