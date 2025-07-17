@@ -696,6 +696,73 @@ export default {
 
 
 <style scoped>
+/* CSS变量定义 - 莫兰迪配色系统 */
+:root {
+  /* 莫兰迪主色调 */
+  --morandi-sage: #a8b89a;          /* 灰绿色 */
+  --morandi-rose: #d4b5b0;          /* 玫瑰灰 */
+  --morandi-sky: #7ba3b8;           /* 天空蓝 */
+  --morandi-lavender: #b8a0c4;      /* 薰衣草 */
+  --morandi-coral: #c4a8a8;         /* 珊瑚色 */
+  --morandi-mint: #9cb3a0;          /* 薄荷绿 */
+  --morandi-golden: #d4a574;        /* 金色 */
+  --morandi-gray-100: #74779f;      /* 深蓝灰 */
+  --morandi-gray-200: #a69e9e;      /* 中性灰 */
+  --morandi-gray-300: #e8e6e1;      /* 浅灰 */
+  --morandi-gray-400: rgba(160, 168, 165, 0.3);  /* 边框灰 */
+  --morandi-gray-500: rgba(120, 130, 127, 0.5);  /* 深边框灰 */
+  
+  /* 强调色系 */
+  --morandi-accent-primary: #6b7ba8;     /* 主强调色 */
+  --morandi-accent-secondary: #a67b6b;   /* 次强调色 */
+  --morandi-accent-tertiary: #8a6b9a;    /* 第三强调色 */
+  --morandi-accent-cool: #7ba3b8;        /* 冷色调强调 */
+  --morandi-accent-warm: #d4a574;        /* 暖色调强调 */
+  --morandi-accent-sage: #a8b89a;        /* 智慧绿强调 */
+  --morandi-accent-rose: #d4b5b0;        /* 玫瑰强调 */
+  --morandi-accent-peach: #e8c4a0;       /* 桃色强调 */
+  --morandi-accent-lavender: #b8a0c4;    /* 薰衣草强调 */
+  
+  /* 标题渐变色 */
+  --morandi-title-cool-dark: #4a6b78;
+  --morandi-title-sky-dark: #5a7d91;
+  --morandi-title-lavender-dark: #7d6b8a;
+  --morandi-title-warm-dark: #a67b4a;
+  --morandi-title-peach-dark: #c49574;
+  --morandi-title-golden-dark: #b8914a;
+  
+  /* 背景色系 */
+  --morandi-bg-primary: rgba(248, 248, 248, 0.95);
+  --morandi-bg-secondary: rgba(244, 244, 242, 0.9);
+  --morandi-bg-tertiary: rgba(255, 255, 255, 0.85);
+  
+  /* 玻璃效果背景 */
+  --morandi-glass-sidebar: rgba(168, 184, 154, 0.08);
+  --morandi-glass-control: rgba(212, 181, 176, 0.08);
+  --morandi-glass-chat: rgba(123, 163, 184, 0.06);
+  --morandi-glass-record: rgba(184, 168, 196, 0.08);
+  
+  /* 专区背景色 */
+  --morandi-sidebar-bg: rgba(255, 255, 255, 0.6);
+  --morandi-chat-bg: rgba(255, 255, 255, 0.8);
+  --morandi-record-bg: rgba(243, 248, 251, 0.4);
+  --morandi-summary-bg: rgba(251, 248, 248, 0.4);
+  
+  /* 文字颜色 */
+  --morandi-text-primary: #2d3748;
+  --morandi-text-secondary: #4a5568;
+  --morandi-text-tertiary: #718096;
+  --morandi-text-sidebar: #4a5568;
+  --morandi-text-chat: #2d3748;
+  --morandi-text-record: #2d3748;
+  --morandi-text-summary: #2d3748;
+  
+  /* 阴影系统 */
+  --morandi-shadow-light: rgba(74, 107, 120, 0.08);
+  --morandi-shadow-medium: rgba(74, 107, 120, 0.15);
+  --morandi-shadow-heavy: rgba(74, 107, 120, 0.25);
+}
+
 /* 全局样式重置 - 确保无滚动无白边 */
 * {
   margin: 0;
@@ -2032,6 +2099,7 @@ body {
   line-height: 1.6;
   color: #333;
   overflow-y: auto;
+  padding: 0;
 }
 
 .summary-content::-webkit-scrollbar {
@@ -2046,6 +2114,315 @@ body {
 .summary-content::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 3px;
+}
+
+/* 会议摘要专用 Markdown 结构化样式 */
+:deep(.summary-content) h1,
+:deep(.summary-content) h2,
+:deep(.summary-content) h3,
+:deep(.summary-content) h4,
+:deep(.summary-content) h5,
+:deep(.summary-content) h6 {
+  margin: 24px 0 12px 0;
+  padding: 8px 0;
+  font-weight: 700;
+  line-height: 1.3;
+  position: relative;
+  color: #1a1a1a;
+}
+
+:deep(.summary-content) h1 {
+  font-size: 24px;
+  color: #1a1a1a;
+  border-bottom: 2px solid #333;
+  padding-bottom: 8px;
+  margin-top: 0;
+}
+
+:deep(.summary-content) h1::before {
+  content: "📋";
+  margin-right: 8px;
+  font-size: 22px;
+}
+
+:deep(.summary-content) h2 {
+  font-size: 20px;
+  color: #2d2d2d;
+  border-left: 4px solid #666;
+  padding-left: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 0 8px 8px 0;
+  margin-left: -8px;
+  padding-right: 8px;
+}
+
+:deep(.summary-content) h2::before {
+  content: "📌";
+  margin-right: 8px;
+  font-size: 18px;
+}
+
+:deep(.summary-content) h3 {
+  font-size: 18px;
+  color: #333;
+  padding-left: 20px;
+  position: relative;
+}
+
+:deep(.summary-content) h3::before {
+  content: "▶";
+  position: absolute;
+  left: 0;
+  color: #666;
+  font-size: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+:deep(.summary-content) h4 {
+  font-size: 16px;
+  color: #404040;
+  padding-left: 28px;
+  position: relative;
+}
+
+:deep(.summary-content) h4::before {
+  content: "•";
+  position: absolute;
+  left: 8px;
+  color: #666;
+  font-size: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+:deep(.summary-content) h5,
+:deep(.summary-content) h6 {
+  font-size: 15px;
+  color: #4a4a4a;
+  font-weight: 600;
+  margin: 16px 0 8px 0;
+}
+
+:deep(.summary-content) p {
+  margin: 12px 0;
+  line-height: 1.7;
+  color: #333;
+  text-align: justify;
+}
+
+:deep(.summary-content) ul,
+:deep(.summary-content) ol {
+  margin: 16px 0;
+  padding-left: 24px;
+  color: #333;
+}
+
+:deep(.summary-content) ul {
+  list-style: none;
+}
+
+:deep(.summary-content) ul li {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+:deep(.summary-content) ul li::before {
+  content: "●";
+  position: absolute;
+  left: 0;
+  color: #666;
+  font-size: 12px;
+  top: 0.3em;
+}
+
+:deep(.summary-content) ul ul li::before {
+  content: "○";
+  color: #666;
+}
+
+:deep(.summary-content) ul ul ul li::before {
+  content: "▪";
+  color: #666;
+}
+
+:deep(.summary-content) ol {
+  counter-reset: item;
+}
+
+:deep(.summary-content) ol li {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 8px;
+  line-height: 1.6;
+  counter-increment: item;
+}
+
+:deep(.summary-content) ol li::before {
+  content: counter(item) ".";
+  position: absolute;
+  left: -20px;
+  color: #666;
+  font-weight: 600;
+  width: 16px;
+  text-align: right;
+}
+
+:deep(.summary-content) blockquote {
+  margin: 16px 0;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.03);
+  border-left: 4px solid #666;
+  border-radius: 0 12px 12px 0;
+  color: #555;
+  font-style: normal;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+:deep(.summary-content) blockquote::before {
+  content: "💡";
+  position: absolute;
+  top: 12px;
+  left: -14px;
+  background: white;
+  padding: 4px;
+  border-radius: 50%;
+  font-size: 12px;
+  box-shadow: 0 2px 4px var(--morandi-shadow-medium);
+}
+
+:deep(.summary-content) code {
+  background: #f5f5f5;
+  color: #333;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:deep(.summary-content) pre {
+  background: #f8f9fa;
+  border: 1px solid var(--morandi-gray-400);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+:deep(.summary-content) pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: #333;
+}
+
+:deep(.summary-content) table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px var(--morandi-shadow-light);
+}
+
+:deep(.summary-content) th,
+:deep(.summary-content) td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--morandi-gray-400);
+}
+
+:deep(.summary-content) th {
+  background: linear-gradient(135deg, 
+    var(--morandi-gray-100), 
+    var(--morandi-accent-primary));
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+:deep(.summary-content) td {
+  color: #333;
+  font-size: 14px;
+}
+
+:deep(.summary-content) tr:nth-child(even) td {
+  background: rgba(168, 184, 154, 0.03);
+}
+
+:deep(.summary-content) tr:hover td {
+  background: rgba(168, 184, 154, 0.08);
+}
+
+:deep(.summary-content) hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--morandi-gray-400), 
+    transparent);
+  margin: 24px 0;
+}
+
+:deep(.summary-content) strong {
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+:deep(.summary-content) em {
+  color: #444;
+  font-style: italic;
+  font-weight: 500;
+}
+
+:deep(.summary-content) a {
+  color: #333;
+  text-decoration: none;
+  border-bottom: 1px dotted #666;
+  transition: all 0.3s ease;
+}
+
+:deep(.summary-content) a:hover {
+  color: #1a1a1a;
+  border-bottom-style: solid;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+/* 特殊内容块样式 */
+:deep(.summary-content) .highlight-box {
+  background: linear-gradient(135deg, 
+    rgba(168, 184, 154, 0.1), 
+    rgba(212, 181, 176, 0.1));
+  border: 1px solid var(--morandi-gray-400);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  position: relative;
+}
+
+:deep(.summary-content) .highlight-box::before {
+  content: "⭐";
+  position: absolute;
+  top: -8px;
+  left: 16px;
+  background: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 14px;
+  box-shadow: 0 2px 4px var(--morandi-shadow-medium);
 }
 
 /* 模态框 */
