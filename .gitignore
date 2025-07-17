@@ -109,3 +109,6 @@ __pycache__/
 temp_sessions/
 
 *.pyc
+
+*源码/
+*.zip

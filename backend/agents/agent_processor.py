@@ -862,8 +862,359 @@ class AgentProcessor:
                     }
                 })
         
+        # 检测Notion写入需求
+        notion_keywords = ['notion', '写入notion', '保存到notion', '创建notion页面', '记录到notion', 
+                          '添加到notion', 'notion文档', '写入文档', '保存文档', '创建文档页面']
+        
+        # 检查是否包含Notion关键词
+        has_notion_keywords = any(keyword in user_message.lower() for keyword in notion_keywords)
+        
+        # 检查是否有"写入"、"保存"、"记录"等动作词汇 + 内容指示
+        import re
+        action_patterns = [
+            r'(写入|保存|记录|添加|创建).*?(notion|文档)',
+            r'把.*?(写入|保存到|记录到|添加到).*?(notion|文档)',
+            r'将.*?(内容|信息|纪要|摘要).*?(写入|保存|记录|添加).*?(notion|文档)',
+            r'(notion|文档).*?(写入|保存|记录|添加)',
+        ]
+        has_action_pattern = any(re.search(pattern, user_message.lower()) for pattern in action_patterns)
+        
+        logger.info(f"Notion检测: 关键词={has_notion_keywords}, 动作模式={has_action_pattern}")
+        
+        if has_notion_keywords or has_action_pattern:
+            try:
+                # 提取页面标题
+                title_patterns = [
+                    r'标题[：:]\s*["""]([^"""]+)["""]',
+                    r'标题[：:]\s*([^\s，。！？\n]+)',
+                    r'页面标题[：:]\s*["""]([^"""]+)["""]',
+                    r'页面标题[：:]\s*([^\s，。！？\n]+)',
+                    r'名称[：:]\s*["""]([^"""]+)["""]',
+                    r'名称[：:]\s*([^\s，。！？\n]+)',
+                ]
+                title = ""
+                for pattern in title_patterns:
+                    title_match = re.search(pattern, user_message)
+                    if title_match:
+                        title = title_match.group(1).strip()
+                        break
+                
+                # 如果没有明确标题，尝试从会议内容或用户消息中智能提取
+                if not title:
+                    # 尝试提取时间作为标题
+                    import datetime
+                    now = datetime.datetime.now()
+                    
+                    # 检查是否有会议相关内容
+                    if self.meeting_content:
+                        title = f"会议纪要 - {now.strftime('%Y年%m月%d日')}"
+                    else:
+                        # 尝试从用户消息中提取主要内容作为标题
+                        content_keywords = ['内容', '信息', '纪要', '摘要', '讨论', '总结']
+                        for keyword in content_keywords:
+                            if keyword in user_message:
+                                title = f"{keyword} - {now.strftime('%Y年%m月%d日')}"
+                                break
+                        
+                        if not title:
+                            title = f"文档 - {now.strftime('%Y年%m月%d日')}"
+                
+                # 提取要写入的内容
+                content_patterns = [
+                    r'内容[：:]\s*["""]([^"""]+)["""]',
+                    r'内容[：:]\s*(.+?)(?=\s*$)',
+                    r'正文[：:]\s*["""]([^"""]+)["""]', 
+                    r'正文[：:]\s*(.+?)(?=\s*$)',
+                    r'写入[：:]?\s*["""]([^"""]+)["""]',
+                    r'保存[：:]?\s*["""]([^"""]+)["""]',
+                ]
+                content = ""
+                for pattern in content_patterns:
+                    content_match = re.search(pattern, user_message, re.DOTALL)
+                    if content_match:
+                        content = content_match.group(1).strip()
+                        break
+                
+                # 如果没有明确指定内容，尝试使用不同来源
+                if not content:
+                    # 优先使用会议内容
+                    if self.meeting_content:
+                        content = "\n".join(self.meeting_content[-10:])  # 最近10个片段
+                        logger.info("使用会议内容作为Notion页面内容")
+                    else:
+                        # 检查是否要求写入当前对话
+                        conversation_keywords = ['对话', '聊天记录', '当前对话', '这次对话']
+                        if any(keyword in user_message for keyword in conversation_keywords):
+                            # 获取最近的对话记录
+                            recent_messages = []
+                            if hasattr(self.memory, 'chat_memory') and self.memory.chat_memory.messages:
+                                for msg in self.memory.chat_memory.messages[-6:]:  # 最近6条消息
+                                    if hasattr(msg, 'content'):
+                                        msg_type = "用户" if msg.__class__.__name__ == "HumanMessage" else "AI助手"
+                                        recent_messages.append(f"**{msg_type}**: {msg.content}")
+                                content = "\n\n".join(recent_messages)
+                                logger.info("使用对话记录作为Notion页面内容")
+                        
+                        # 如果还是没有内容，使用用户消息本身
+                        if not content:
+                            # 移除Notion相关的指令词汇，保留实际内容
+                            clean_content = user_message
+                            for keyword in notion_keywords:
+                                clean_content = re.sub(rf'\b{re.escape(keyword)}\b', '', clean_content, flags=re.IGNORECASE)
+                            
+                            # 移除常见的指令词汇
+                            instruction_words = ['请', '帮我', '帮忙', '麻烦', '标题:', '内容:', '写入:', '保存:', '记录:']
+                            for word in instruction_words:
+                                clean_content = clean_content.replace(word, '')
+                            
+                            content = clean_content.strip()
+                            if len(content) < 10:  # 内容太短，使用默认内容
+                                content = f"用户请求: {user_message}\n\n创建时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                
+                # 将内容转换为Markdown格式
+                markdown_content = self._format_content_as_markdown(content, title)
+                
+                # 检查是否需要指定父页面ID
+                parent_id = None
+                parent_patterns = [
+                    r'父页面[：:]\s*([a-f0-9\-]{32,})',
+                    r'parent[：:]\s*([a-f0-9\-]{32,})',
+                    r'页面ID[：:]\s*([a-f0-9\-]{32,})',
+                ]
+                for pattern in parent_patterns:
+                    parent_match = re.search(pattern, user_message)
+                    if parent_match:
+                        parent_id = parent_match.group(1)
+                        break
+                
+                # 如果没有指定父页面，尝试智能搜索合适的页面作为父页面
+                if not parent_id:
+                    # 获取智能推断的搜索查询
+                    search_queries = await self._infer_parent_page_queries(user_message)
+                    
+                    parent_page_found = False
+                    selected_parent = None
+                    
+                    # 按优先级尝试不同的搜索查询
+                    for query in search_queries:
+                        logger.info(f"🔍 搜索父页面: '{query}'")
+                        
+                        search_result = await self.execute_tool("notion", {
+                            "action": "search", 
+                            "query": query,
+                            "filter_type": "page"
+                        })
+                        
+                        if search_result.get("success") and search_result.get("result", {}).get("results"):
+                            results = search_result["result"]["results"]
+                            logger.info(f"✅ 找到 {len(results)} 个匹配页面，使用查询: '{query}'")
+                            
+                            # 选择第一个匹配的页面
+                            selected_parent = results[0]
+                            parent_id = selected_parent["id"]
+                            parent_page_found = True
+                            break
+                        else:
+                            logger.info(f"❌ 未找到匹配页面，查询: '{query}'")
+                    
+                    # 如果智能搜索都没找到，尝试获取任意可用页面
+                    if not parent_page_found:
+                        logger.info("🔍 尝试获取任意可用页面作为父页面...")
+                        fallback_result = await self.execute_tool("notion", {
+                            "action": "search",
+                            "query": "",
+                            "filter_type": "page"
+                        })
+                        
+                        if fallback_result.get("success") and fallback_result.get("result", {}).get("results"):
+                            selected_parent = fallback_result["result"]["results"][0]
+                            parent_id = selected_parent["id"]
+                            parent_page_found = True
+                            logger.info(f"✅ 使用默认页面作为父页面")
+                    
+                    if parent_page_found and selected_parent:
+                        parent_title = selected_parent.get("title", "无标题")
+                        logger.info(f"📄 选择的父页面: {parent_title} (ID: {parent_id[:8]}...)")
+                
+                if parent_id:
+                    # 创建Notion页面
+                    result = await self.execute_tool("notion", {
+                        "action": "create_page",
+                        "parent_id": parent_id,
+                        "title": title,
+                        "content": markdown_content
+                    })
+                    
+                    if result.get("success"):
+                        page_info = result.get("result", {})
+                        tools_used.append({
+                            "tool": "notion",
+                            "parameters": {
+                                "action": "create_page",
+                                "parent_id": parent_id,
+                                "title": title,
+                                "content": markdown_content
+                            },
+                            "result": {
+                                "status": "success",
+                                "message": f"✅ 已成功创建Notion页面: {title}",
+                                "details": {
+                                    "page_id": page_info.get("page_id"),
+                                    "title": title,
+                                    "url": page_info.get("url"),
+                                    "created_time": page_info.get("created_time"),
+                                    "content_length": len(markdown_content)
+                                }
+                            }
+                        })
+                        logger.info(f"Notion页面创建成功: {page_info}")
+                    else:
+                        error_msg = result.get("error", "未知错误")
+                        tools_used.append({
+                            "tool": "notion",
+                            "parameters": {},
+                            "result": {
+                                "status": "error",
+                                "message": f"❌ Notion页面创建失败: {error_msg}",
+                                "error": error_msg
+                            }
+                        })
+                        logger.error(f"Notion页面创建失败: {error_msg}")
+                else:
+                    # 没有找到合适的父页面
+                    tools_used.append({
+                        "tool": "notion",
+                        "parameters": {},
+                        "result": {
+                            "status": "missing_parent",
+                            "message": "❌ 无法创建Notion页面: 未找到合适的父页面。请确保您的Notion集成已被邀请到至少一个页面，或者在消息中指定父页面ID。",
+                            "suggestion": "请先在Notion中邀请您的集成到一个页面，或者提供父页面ID，格式如: 父页面: your-page-id"
+                        }
+                    })
+                    logger.warning("Notion页面创建失败: 未找到父页面")
+                    
+            except Exception as e:
+                logger.error(f"Notion工具执行错误: {e}")
+                tools_used.append({
+                    "tool": "notion",
+                    "parameters": {},
+                    "result": {
+                        "status": "error",
+                        "error": f"Notion处理异常: {str(e)}"
+                    }
+                })
+        
         return tools_used
 
+    async def _infer_parent_page_queries(self, user_message: str) -> list:
+        """智能推断父页面搜索查询列表，按优先级排序"""
+        queries = []
+        
+        try:
+            import datetime
+            import re
+            now = datetime.datetime.now()
+            
+            # 1. 从用户消息中提取时间相关信息
+            time_patterns = [
+                r'(\d+)/(\d+)',  # 如 "7/13"
+                r'(\d+)月(\d+)日',  # 如 "7月13日"
+                r'今天',
+                r'昨天',
+                r'本周',
+                r'这周'
+            ]
+            
+            for pattern in time_patterns:
+                matches = re.findall(pattern, user_message)
+                if matches:
+                    if pattern == r'(\d+)/(\d+)':
+                        for month, day in matches:
+                            queries.append(f"{month}/{day}")
+                            queries.append(f"{int(month)}/{int(day)}")
+                    elif pattern == r'(\d+)月(\d+)日':
+                        for month, day in matches:
+                            queries.append(f"{month}/{day}")
+                            queries.append(f"{month}月{day}日")
+            
+            # 2. 基于当前时间推断
+            queries.extend([
+                f"{now.month}/{now.day}",  # 今天，如 "1/13"
+                f"{now.strftime('%m/%d')}",  # 带前导零，如 "01/13"
+                f"{now.month}月{now.day}日",  # 中文格式
+                f"{now.strftime('%Y-%m-%d')}",  # 标准日期格式
+                f"{now.strftime('%Y年%m月%d日')}"  # 中文日期格式
+            ])
+            
+            # 3. 基于会议内容推断相关主题
+            if self.meeting_content:
+                # 分析会议内容中的关键词
+                content_text = " ".join(self.meeting_content[-5:])  # 最近5个片段
+                
+                # 提取可能的项目名称、会议主题等
+                topic_patterns = [
+                    r'项目[：:]?\s*([^\s，。！？\n]{2,10})',
+                    r'关于\s*([^\s，。！？\n]{2,10})',
+                    r'讨论\s*([^\s，。！？\n]{2,10})',
+                    r'会议主题[：:]?\s*([^\s，。！？\n]{2,10})',
+                ]
+                
+                for pattern in topic_patterns:
+                    matches = re.findall(pattern, content_text)
+                    for match in matches:
+                        if len(match.strip()) >= 2:
+                            queries.append(match.strip())
+            
+            # 4. 从用户消息中提取可能的页面名称
+            page_indicators = [
+                r'页面[：:]?\s*([^\s，。！？\n]{2,15})',
+                r'文档[：:]?\s*([^\s，。！？\n]{2,15})',
+                r'记录到\s*([^\s，。！？\n]{2,15})',
+                r'保存到\s*([^\s，。！？\n]{2,15})',
+            ]
+            
+            for pattern in page_indicators:
+                matches = re.findall(pattern, user_message)
+                for match in matches:
+                    clean_match = match.strip()
+                    if len(clean_match) >= 2 and not any(keyword in clean_match.lower() for keyword in ['notion', '文档']):
+                        queries.append(clean_match)
+            
+            # 5. 基于星期推断
+            weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+            today_weekday = weekdays[now.weekday()]
+            queries.extend([
+                today_weekday,
+                f"本{today_weekday}",
+                f"这个{today_weekday}"
+            ])
+            
+            # 6. 通用的会议相关搜索词
+            general_queries = [
+                "会议",
+                "今日会议", 
+                "会议纪要",
+                "工作日志",
+                "日报",
+                "周报"
+            ]
+            queries.extend(general_queries)
+            
+            # 去重并保持顺序
+            unique_queries = []
+            seen = set()
+            for query in queries:
+                if query and query not in seen:
+                    unique_queries.append(query)
+                    seen.add(query)
+            
+            logger.info(f"智能推断的父页面搜索查询: {unique_queries[:5]}...")  # 只显示前5个
+            return unique_queries[:10]  # 限制最多10个查询，避免过多API调用
+            
+        except Exception as e:
+            logger.error(f"推断父页面查询失败: {e}")
+            return ["会议", "文档"]  # 返回默认查询
+    
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _handle_chat_message(self, content: str) -> str:
         """处理聊天消息（带重试机制）"""
@@ -992,6 +1343,84 @@ class AgentProcessor:
     def clear_memory(self):
         """清空记忆"""
         self.memory.clear()
+    
+    def _format_content_as_markdown(self, content: str, title: str) -> str:
+        """将内容格式化为Markdown格式"""
+        try:
+            import datetime
+            now = datetime.datetime.now()
+            
+            # 检查内容是否已经是Markdown格式
+            if any(marker in content for marker in ['#', '**', '*', '`', '---', '[]', '##']):
+                # 已经是Markdown格式，只需要添加元数据
+                markdown_content = f"""# {title}
+
+> 创建时间: {now.strftime('%Y-%m-%d %H:%M:%S')}
+> 来源: PromptMeet 会议助手
+
+---
+
+{content}
+
+---
+
+*自动生成于 PromptMeet*"""
+            else:
+                # 纯文本内容，需要格式化
+                lines = content.split('\n')
+                formatted_lines = []
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        formatted_lines.append('')
+                        continue
+                    
+                    # 检测是否是对话格式
+                    if line.startswith('**用户**:') or line.startswith('**AI助手**:'):
+                        formatted_lines.append(line)
+                    elif line.startswith('用户:') or line.startswith('AI助手:'):
+                        # 转换为Markdown格式
+                        if line.startswith('用户:'):
+                            formatted_lines.append(f"**用户**: {line[3:].strip()}")
+                        else:
+                            formatted_lines.append(f"**AI助手**: {line[6:].strip()}")
+                    elif ':' in line and not line.startswith('http'):
+                        # 可能是标题或时间戳
+                        parts = line.split(':', 1)
+                        if len(parts) == 2:
+                            formatted_lines.append(f"**{parts[0].strip()}**: {parts[1].strip()}")
+                        else:
+                            formatted_lines.append(line)
+                    else:
+                        # 普通文本行
+                        formatted_lines.append(line)
+                
+                formatted_content = '\n'.join(formatted_lines)
+                
+                markdown_content = f"""# {title}
+
+> 创建时间: {now.strftime('%Y-%m-%d %H:%M:%S')}
+> 来源: PromptMeet 会议助手
+
+---
+
+{formatted_content}
+
+---
+
+*自动生成于 PromptMeet*"""
+            
+            return markdown_content
+            
+        except Exception as e:
+            logger.error(f"格式化Markdown内容失败: {e}")
+            # 返回简单格式
+            return f"""# {title}
+
+{content}
+
+*创建时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"""
     
     def get_conversation_history(self) -> List[Dict[str, str]]:
         """获取对话历史"""

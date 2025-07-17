@@ -11,6 +11,7 @@ from .web_search import WebSearchTool
 from .summary_tool import SummaryTool
 from .feishu_calendar import FeishuCalendarTool
 from .email_tool import EmailTool
+from .notion_tool import NotionTool
 
 
 class ToolManager:
@@ -30,6 +31,7 @@ class ToolManager:
         self.register_tool(SummaryTool())
         self.register_tool(FeishuCalendarTool())
         self.register_tool(EmailTool())
+        self.register_tool(NotionTool())
     
     def register_tool(self, tool: BaseTool):
         """注册工具"""

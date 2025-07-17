@@ -15,6 +15,7 @@ from .web_search import WebSearchTool
 from .summary_tool import SummaryTool
 from .feishu_calendar import FeishuCalendarTool
 from .email_tool import EmailTool
+from .notion_tool import NotionTool
 from .manager import ToolManager
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     'SummaryTool',
     'FeishuCalendarTool',
     'EmailTool',
+    'NotionTool',
     'ToolManager'
 ]
