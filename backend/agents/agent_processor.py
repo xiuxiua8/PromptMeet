@@ -599,13 +599,37 @@ class AgentProcessor:
             return tools_used
         # 只有明确“发送日程”等指令且没有具体日程输入时才读Result.txt
         if any(keyword in user_message.lower() for keyword in calendar_keywords):
-            result_file_path = os.path.join("backend", "agents", "temp", "Result.txt")
+            import os
             import re
+            # 优先尝试读取Result.txt中的结构化日程
+            result_file_path = os.path.join("backend", "agents", "temp", "Result.txt")
             file_pattern = r'文件[：:]\s*([^\s]+)'
             file_match = re.search(file_pattern, user_message)
             if file_match:
                 result_file_path = file_match.group(1)
-            result = await self.execute_tool("feishu_calendar", {"result_file_path": result_file_path})
+            # 读取Result.txt内容
+            content = ""
+            if os.path.exists(result_file_path):
+                try:
+                    with open(result_file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                except Exception as e:
+                    logger.error(f"读取Result.txt文件失败: {e}")
+            # 检查是否有结构化待办事项
+            tasks = []
+            if content:
+                # 复用feishu_calendar的提取方法
+                try:
+                    from tools.feishu_calendar import FeishuCalendarTool
+                    tasks = FeishuCalendarTool()._extract_tasks_from_content(content)
+                except Exception as e:
+                    logger.error(f"结构化日程提取失败: {e}")
+            if tasks:
+                # 有结构化日程，直接传递给feishu_calendar
+                result = await self.execute_tool("feishu_calendar", {"result_file_path": result_file_path})
+            else:
+                # 没有结构化日程，走原有逻辑
+                result = await self.execute_tool("feishu_calendar", {"result_file_path": result_file_path})
             if result["success"] and result["result"].get("total_tasks", 0) > 0:
                 tools_used.append({
                     "tool": "feishu_calendar",
