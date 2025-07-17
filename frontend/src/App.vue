@@ -1768,7 +1768,7 @@ body {
 
 .suggestions-title {
   font-size: 13px;
-  color: #667eea;
+  color: #1b5e20;
   margin-bottom: 12px;
   font-weight: 500;
   display: flex;
@@ -1788,9 +1788,9 @@ body {
 }
 
 .suggestion-chip {
-  background: rgba(168, 178, 165, 0.1);
-  border: 1px solid var(--morandi-gray-300);
-  color: var(--morandi-accent-primary);
+  background: rgba(27, 94, 32, 0.08);
+  border: 1px solid rgba(27, 94, 32, 0.2);
+  color: #1b5e20;
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 12px;
@@ -1807,15 +1807,15 @@ body {
 }
 
 .suggestion-chip:hover {
-  background: rgba(168, 178, 165, 0.15);
-  border-color: var(--morandi-gray-400);
+  background: rgba(27, 94, 32, 0.15);
+  border-color: rgba(27, 94, 32, 0.3);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px var(--morandi-shadow-light);
+  box-shadow: 0 2px 8px rgba(27, 94, 32, 0.2);
 }
 
 .suggestion-chip:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px var(--morandi-shadow-medium);
+  box-shadow: 0 1px 4px rgba(27, 94, 32, 0.3);
 }
 
 /* 输入区域 - 对话区域专用配色 */
