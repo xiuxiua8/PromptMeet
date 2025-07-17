@@ -717,7 +717,7 @@ body {
   padding: 0;
 }
 
-/* 背景装饰 - 优化莫兰迪风格 */
+/* 背景装饰 - 多彩莫兰迪风格 */
 .bg-decoration {
   position: absolute;
   top: 0;
@@ -725,9 +725,10 @@ body {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(circle at 20% 80%, var(--morandi-shadow-light) 0%, transparent 50%),
-    radial-gradient(circle at 80% 20%, var(--morandi-glass-control) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, rgba(148, 158, 155, 0.08) 0%, transparent 70%);
+    radial-gradient(circle at 20% 80%, rgba(168, 184, 154, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(184, 168, 196, 0.12) 0%, transparent 50%),
+    radial-gradient(circle at 60% 40%, rgba(212, 165, 116, 0.08) 0%, transparent 60%),
+    radial-gradient(circle at 30% 60%, rgba(123, 163, 184, 0.1) 0%, transparent 55%);
   pointer-events: none;
 }
 
@@ -892,7 +893,7 @@ body {
 .logo-container {
   width: 60px;
   height: 60px;
-  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  background: linear-gradient(135deg, var(--morandi-accent-warm), var(--morandi-accent-peach));
   border-radius: 16px;
   display: flex;
   align-items: center;
@@ -1010,41 +1011,41 @@ body {
 }
 
 .control-btn.primary {
-  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
+  background: linear-gradient(135deg, var(--morandi-accent-cool), var(--morandi-sky));
   color: white;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.primary.active {
-  background: linear-gradient(135deg, var(--morandi-rose), var(--morandi-accent-secondary));
+  background: linear-gradient(135deg, var(--morandi-coral), var(--morandi-accent-rose));
   box-shadow: 0 4px 12px var(--morandi-shadow-heavy);
 }
 
 .control-btn.secondary {
-  background: linear-gradient(135deg, var(--morandi-sand), var(--morandi-accent-primary));
+  background: linear-gradient(135deg, var(--morandi-accent-warm), var(--morandi-accent-peach));
   color: white;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.secondary.recording {
-  background: linear-gradient(135deg, var(--morandi-rose), var(--morandi-accent-secondary));
+  background: linear-gradient(135deg, var(--morandi-coral), var(--morandi-accent-rose));
   animation: recording-pulse 1.5s infinite;
 }
 
 .control-btn.info {
-  background: linear-gradient(135deg, var(--morandi-lavender), var(--morandi-gray-100));
+  background: linear-gradient(135deg, var(--morandi-lavender), var(--morandi-accent-lavender));
   color: white;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.warning {
-  background: linear-gradient(135deg, var(--morandi-accent-primary), var(--morandi-accent-secondary));
+  background: linear-gradient(135deg, var(--morandi-golden), var(--morandi-accent-warm));
   color: white;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
 
 .control-btn.success {
-  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-gray-100));
+  background: linear-gradient(135deg, var(--morandi-sage), var(--morandi-mint));
   color: white;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
@@ -1153,7 +1154,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  background: linear-gradient(135deg, var(--morandi-accent-lavender), var(--morandi-lavender));
   border-radius: 20px;
   box-shadow: 0 4px 12px var(--morandi-shadow-medium);
 }
@@ -1608,8 +1609,8 @@ body {
 }
 
 .chat-input:focus {
-  border-color: var(--morandi-accent-primary);
-  box-shadow: 0 0 0 3px rgba(168, 178, 165, 0.1);
+  border-color: var(--morandi-accent-sage);
+  box-shadow: 0 0 0 3px rgba(168, 184, 154, 0.15);
 }
 
 .send-btn {
@@ -1617,7 +1618,7 @@ body {
   height: 44px;
   border: none;
   border-radius: 22px;
-  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  background: linear-gradient(135deg, var(--morandi-accent-sage), var(--morandi-mint));
   color: white;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -1678,8 +1679,8 @@ body {
 }
 
 .tab-btn.active {
-  color: var(--morandi-accent-primary);
-  background: rgba(168, 178, 165, 0.1);
+  color: var(--morandi-accent-cool);
+  background: rgba(123, 163, 184, 0.15);
 }
 
 .tab-btn.active::after {
@@ -1689,7 +1690,7 @@ body {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(135deg, var(--morandi-gray-100), var(--morandi-accent-primary));
+  background: linear-gradient(135deg, var(--morandi-accent-cool), var(--morandi-sky));
 }
 
 .tab-btn:hover:not(.active) {
