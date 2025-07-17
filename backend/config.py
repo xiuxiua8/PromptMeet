@@ -27,6 +27,9 @@ class Settings:
     FEISHU_USER_ACCESS_TOKEN: str = os.getenv("FEISHU_USER_ACCESS_TOKEN", "")
     FEISHU_CALENDAR_ID: str = os.getenv("FEISHU_CALENDAR_ID", "")
     
+    # Notion API配置
+    NOTION_API_KEY: str = os.getenv("NOTION_API_KEY", "")
+    
     # CORS配置
     ALLOWED_ORIGINS: list = [
         "http://localhost:5173",
