@@ -1,8 +1,14 @@
 import SwiftUI
 
+enum QuickAskAppearance {
+    case standard
+    case aura
+}
+
 struct QuickAskField: View {
     @ObservedObject var store: MeetingStore
     var showsBackground = true
+    var appearance: QuickAskAppearance = .standard
     @FocusState private var isFocused: Bool
 
     private var draft: Binding<String> {
@@ -19,18 +25,22 @@ struct QuickAskField: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(VisualTokens.sky)
 
-                TextField(
-                    "",
-                    text: draft,
-                    prompt: Text("问问这场会议…")
-                        .foregroundStyle(Color.white.opacity(0.64))
-                )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.92))
-                    .focused($isFocused)
-                    .onSubmit(store.submitQuickPrompt)
-                    .disabled(store.state.aiRequest.isBusy)
+                ZStack(alignment: .leading) {
+                    if draft.wrappedValue.isEmpty {
+                        Text("问问这场会议…")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(Color.white.opacity(appearance == .aura ? 0.72 : 0.64))
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField("", text: draft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .focused($isFocused)
+                        .onSubmit(store.submitQuickPrompt)
+                        .disabled(store.state.aiRequest.isBusy)
+                }
 
                 if store.state.aiRequest.isBusy {
                     ProgressView()
@@ -40,10 +50,15 @@ struct QuickAskField: View {
                     Button(action: store.submitQuickPrompt) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 10, weight: .bold))
-                            .frame(width: 22, height: 22)
+                            .frame(width: 24, height: 24)
                             .background(VisualTokens.sky)
-                            .foregroundStyle(Color.white)
-                            .clipShape(Circle())
+                            .foregroundStyle(Color.black.opacity(0.82))
+                            .clipShape(
+                                RoundedRectangle(
+                                    cornerRadius: appearance == .aura ? 9 : 12,
+                                    style: .continuous
+                                )
+                            )
                     }
                     .buttonStyle(.plain)
                     .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -51,11 +66,20 @@ struct QuickAskField: View {
             }
             .padding(.horizontal, 11)
             .frame(height: 36)
-            .background(showsBackground ? Color.white.opacity(0.14) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(
+                showsBackground
+                    ? Color.white.opacity(appearance == .aura ? 0.080 : 0.14)
+                    : Color.clear
+            )
+            .clipShape(RoundedRectangle(cornerRadius: appearance == .aura ? 14 : 12, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(showsBackground ? 0.16 : 0), lineWidth: 1)
+                RoundedRectangle(cornerRadius: appearance == .aura ? 14 : 12, style: .continuous)
+                    .stroke(
+                        Color.white.opacity(
+                            showsBackground ? (appearance == .aura ? 0.10 : 0.16) : 0
+                        ),
+                        lineWidth: appearance == .aura ? 0.5 : 1
+                    )
             }
 
             if let error = store.state.aiRequest.errorMessage,

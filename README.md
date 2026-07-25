@@ -34,9 +34,11 @@
 
 ## 🍎 macOS 原生端
 
-原生端位于 `desktop-macos`，使用 SwiftUI、AppKit、ScreenCaptureKit 与 AVAudioEngine。系统音频和麦克风直接进入现有 Python/FastAPI companion，不需要 BlackHole，也不会改变腾讯会议、Zoom 等应用的音频设备。
+原生端位于 `desktop-macos`，使用 SwiftUI、AppKit、ScreenCaptureKit 与 AVAudioEngine。系统音频和麦克风直接进入本机 Python/FastAPI companion，不需要 BlackHole，也不会改变腾讯会议、Zoom 等应用的音频设备。
 
 语音转写默认使用本机 `whisper.cpp`：用户可在“设置 → 采集”中下载并选择 Tiny、Base、Small 或 Large V3 Turbo 模型。模型保存在 `~/Library/Application Support/PromptMeet/whisper-models`，会议音频不会为转写上传到云端。
+
+每场会议使用独立的版本 2 时间线持久化转写、截图、截图分析、问题、回答、摘要、来源和生命周期。结束后可在工作台重新打开历史会议并继续提问。截图原图保存在本机资产目录中，支持视觉的 OpenAI 模型会接收所选原图；DeepSeek 当前按文字能力透明降级，不会把分析文字伪装成模型看过的图片。
 
 ```bash
 ./scripts/build-whisper-runtime.sh
@@ -44,7 +46,7 @@ cd desktop-macos
 swift run PromptMeet
 ```
 
-首次开始会议时按系统提示授权屏幕录制与麦克风；AI 密钥在“设置 → AI 服务”中保存到 macOS Keychain。生成应用包：
+首次开始会议时按系统提示授权屏幕录制与麦克风。AI 提供方、模型和连接状态在“设置 → AI 服务”中管理，密钥只保存到 macOS Keychain。生成应用包：
 
 ```bash
 ./scripts/build-macos-app.sh
@@ -54,6 +56,8 @@ open dist/PromptMeet.app
 运行时固定到 OpenSuperWhisper 0.1.0 所使用的 whisper.cpp commit。若开发机已构建运行时，可用 `PROMPTMEET_SKIP_WHISPER_BUILD=1 ./scripts/build-macos-app.sh` 跳过重复编译。
 
 网页版继续使用原有 Vue 前端和 API；原生录音使用独立的 `start-native-recording` 与 `native-audio` 路由，不会改变 Web 录音行为。
+
+版本 2 数据结构、迁移策略、上下文预算、截图流程、历史问答和验证命令见 [`docs/macos-meeting-agent.md`](docs/macos-meeting-agent.md)。
 
 ---
 

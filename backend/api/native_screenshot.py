@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Body, Header, HTTPException
 
@@ -11,11 +12,10 @@ JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 def build_native_screenshot_router(
     session_lookup: Callable[[str], object],
-    root: Path,
-    process_image: Callable[[str, Path], Awaitable[None]],
+    root: Path | Callable[[], Path],
+    process_image: Callable[[str, Path], Awaitable[dict[str, Any] | None]],
 ) -> APIRouter:
     router = APIRouter()
-    root = Path(root)
 
     @router.post("/api/sessions/{session_id}/native-screenshot")
     async def upload_native_screenshot(
@@ -35,11 +35,12 @@ def build_native_screenshot_router(
         else:
             raise HTTPException(status_code=422, detail="只接受 PNG 或 JPEG 截图")
 
-        session_dir = root / session_id
+        storage_root = Path(root() if callable(root) else root)
+        session_dir = storage_root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
         path = session_dir / f"{uuid.uuid4().hex}.{extension}"
         path.write_bytes(payload)
-        await process_image(session_id, path)
-        return {"success": True, "status": "analyzing"}
+        result = await process_image(session_id, path) or {}
+        return {"success": True, "status": "analyzing", **result}
 
     return router

@@ -1,7 +1,8 @@
 import Foundation
 
-enum BackendEvent: Equatable {
+enum BackendEvent: Equatable, Sendable {
     case connectionEstablished
+    case meetingEvent(MeetingTimelineEvent)
     case transcript(TranscriptLine)
     case translation(id: UUID, text: String)
     case answerDelta(requestID: UUID?, delta: String)
@@ -35,6 +36,11 @@ enum BackendEvent: Equatable {
         switch type {
         case "connection_established":
             return .connectionEstablished
+        case "meeting_event":
+            let eventData = try JSONSerialization.data(withJSONObject: payload)
+            return .meetingEvent(
+                try JSONDecoder.meetingTimeline.decode(MeetingTimelineEvent.self, from: eventData)
+            )
         case "audio_transcript", "transcript":
             guard let text = payload["text"] as? String else { return .ignored }
             let identifier = (payload["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
@@ -68,7 +74,7 @@ enum BackendEvent: Equatable {
             let questions = (payload["questions"] as? [[String: Any]] ?? []).compactMap {
                 ($0["question"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             }.filter { !$0.isEmpty }
-            return questions.isEmpty ? .ignored : .questions(questions)
+            return .questions(questions)
         case "summary_generated", "summary":
             guard let summary = (payload["summary_text"] ?? payload["content"]) as? String else {
                 return .ignored

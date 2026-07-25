@@ -12,7 +12,8 @@ struct IslandShape: InsettableShape {
         guard bounds.width > 0, bounds.height > 0 else { return Path() }
 
         let curl = min(Self.topCurl, bounds.width / 4, bounds.height / 2)
-        let radius = min(14, bounds.width / 2 - curl, bounds.height - curl)
+        let preferredRadius = max(14, bounds.height * 0.12)
+        let radius = min(26, preferredRadius, bounds.width / 2 - curl, bounds.height - curl)
         var path = Path()
 
         path.move(to: CGPoint(x: bounds.minX, y: bounds.minY))

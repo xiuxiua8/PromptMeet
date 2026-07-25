@@ -1,7 +1,6 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct PromptMeetSettingsView: View {
     var onAIConfigurationChanged: () -> Void = {}
@@ -26,8 +25,11 @@ struct PromptMeetSettingsView: View {
     }
 
     @State private var selectedPane = Pane.general
-    @State private var openAIKey = ""
-    @State private var deepSeekKey = ""
+    @State private var secretDraft = ""
+    @State private var credentialStatus = AIProviderCredentialStatus.notConfigured
+    @State private var aiFeedback = ""
+    @State private var aiFeedbackIsSuccess = false
+    @State private var isValidatingAI = false
     @State private var saveStatus = ""
     @StateObject private var modelLibrary = WhisperModelLibrary()
     @AppStorage("launchAtLogin") private var launchAtLogin = false
@@ -36,7 +38,8 @@ struct PromptMeetSettingsView: View {
     @AppStorage("aiProvider") private var aiProvider = "deepseek"
     @AppStorage("deepSeekAnswerModel") private var deepSeekAnswerModel = "deepseek-v4-pro"
     @AppStorage("openAIAnswerModel") private var openAIAnswerModel = "gpt-4o"
-    private let keychain = KeychainStore()
+    private let secretManager = AIProviderSecretManager()
+    private let providerValidator = AIProviderConnectionValidator()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -62,22 +65,32 @@ struct PromptMeetSettingsView: View {
 
             Divider().overlay(VisualTokens.line)
 
-            Group {
-                switch selectedPane {
-                case .general: generalPane
-                case .capture: capturePane
-                case .ai: aiPane
-                case .data: dataPane
-                case .shortcuts: shortcutsPane
+            ScrollView {
+                Group {
+                    switch selectedPane {
+                    case .general: generalPane
+                    case .capture: capturePane
+                    case .ai: aiPane
+                    case .data: dataPane
+                    case .shortcuts: shortcutsPane
+                    }
                 }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .scrollIndicators(.automatic)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 650, height: 540)
         .background(Color(red: 0.035, green: 0.038, blue: 0.045))
         .foregroundStyle(VisualTokens.primaryText)
         .task { loadKeyStatus() }
+        .onChange(of: aiProvider) { _, _ in
+            secretDraft = ""
+            aiFeedback = ""
+            loadKeyStatus()
+            normalizeSelectedModel()
+        }
     }
 
     private var generalPane: some View {
@@ -217,33 +230,121 @@ struct PromptMeetSettingsView: View {
 
     private var aiPane: some View {
         settingsGroup("AI 服务") {
-            Picker("服务提供方", selection: $aiProvider) {
-                Text("DeepSeek").tag("deepseek")
-                Text("OpenAI").tag("openai")
-            }
-            Picker("回答模型", selection: aiProvider == "deepseek" ? $deepSeekAnswerModel : $openAIAnswerModel) {
-                if aiProvider == "deepseek" {
-                    Text("DeepSeek V4 Pro").tag("deepseek-v4-pro")
-                    Text("DeepSeek V4 Flash").tag("deepseek-v4-flash")
-                } else {
-                    Text("GPT-4o").tag("gpt-4o")
-                    Text("GPT-4o mini").tag("gpt-4o-mini")
+            HStack(spacing: 10) {
+                ForEach(AIProviderCatalog.providers) { provider in
+                    Button {
+                        aiProvider = provider.id
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(provider.displayName)
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                Spacer()
+                                if aiProvider == provider.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(VisualTokens.live)
+                                }
+                            }
+                            Text(provider.models.contains(where: \.supportsVision) ? "支持原始截图" : "文字上下文")
+                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                                .foregroundStyle(VisualTokens.secondaryText)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            aiProvider == provider.id
+                                ? VisualTokens.cobalt.opacity(0.16)
+                                : VisualTokens.raised
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(
+                                    aiProvider == provider.id
+                                        ? VisualTokens.cobalt.opacity(0.50)
+                                        : VisualTokens.line,
+                                    lineWidth: 0.7
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("选择 \(provider.displayName)")
                 }
             }
-            LabeledContent("猜你想问") {
-                Text(aiProvider == "deepseek" ? "DeepSeek V4 Flash" : "GPT-4o mini")
-                    .foregroundStyle(VisualTokens.secondaryText)
-            }
-            SecureField("OpenAI API Key", text: $openAIKey)
-                .textFieldStyle(.roundedBorder)
-            SecureField("DeepSeek API Key", text: $deepSeekKey)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Text(saveStatus).font(.system(size: 10)).foregroundStyle(VisualTokens.secondaryText)
-                Spacer()
-                Button("保存并应用", action: saveKeys)
-                    .buttonStyle(.borderedProminent)
-                    .tint(VisualTokens.cobalt)
+
+            if let provider = selectedProvider {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("回答模型")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(VisualTokens.secondaryText)
+                    Picker("回答模型", selection: selectedModelBinding) {
+                        ForEach(provider.models) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+
+                    if let model = selectedModel {
+                        Label(
+                            model.detail,
+                            systemImage: model.supportsVision ? "eye" : "text.alignleft"
+                        )
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(model.supportsVision ? VisualTokens.live : VisualTokens.amber)
+                    }
+
+                    Text(provider.capabilitySummary)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(VisualTokens.secondaryText)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("API Key")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        Spacer()
+                        Label(
+                            credentialStatus == .configured ? "已存储 ••••••••" : "尚未配置",
+                            systemImage: credentialStatus == .configured ? "lock.fill" : "lock.open"
+                        )
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(
+                            credentialStatus == .configured ? VisualTokens.live : VisualTokens.secondaryText
+                        )
+                    }
+
+                    SecureField("输入新的 \(provider.displayName) API Key", text: $secretDraft)
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack(spacing: 10) {
+                        if isValidatingAI {
+                            ProgressView().controlSize(.small)
+                        }
+                        if !aiFeedback.isEmpty {
+                            Text(aiFeedback)
+                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                                .foregroundStyle(aiFeedbackIsSuccess ? VisualTokens.live : VisualTokens.danger)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        if credentialStatus == .configured {
+                            Button("移除", action: removeSelectedKey)
+                                .foregroundStyle(VisualTokens.danger)
+                        }
+                        Button("验证连接", action: validateSelectedKey)
+                            .disabled(secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidatingAI)
+                        Button("保存并应用", action: saveSelectedKey)
+                            .buttonStyle(.borderedProminent)
+                            .tint(VisualTokens.cobalt)
+                            .disabled(secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .padding(14)
+                .background(VisualTokens.raised)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
     }
@@ -252,7 +353,7 @@ struct PromptMeetSettingsView: View {
         settingsGroup("本地数据") {
             Text("默认存储位置")
                 .font(.system(size: 11, weight: .semibold))
-            Text("~/Library/Application Support/PromptMeet/desktop-sessions.json")
+            Text("~/Library/Application Support/PromptMeet/meetings/v2 + assets")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(VisualTokens.secondaryText)
             HStack {
@@ -317,29 +418,95 @@ struct PromptMeetSettingsView: View {
         }
     }
 
-    private func saveKeys() {
+    private var selectedProvider: AIProviderDescriptor? {
+        AIProviderCatalog.provider(id: aiProvider)
+    }
+
+    private var selectedModelID: String {
+        aiProvider == "openai" ? openAIAnswerModel : deepSeekAnswerModel
+    }
+
+    private var selectedModel: AIModelDescriptor? {
+        selectedProvider?.models.first { $0.id == selectedModelID }
+    }
+
+    private var selectedModelBinding: Binding<String> {
+        Binding(
+            get: { selectedModelID },
+            set: { value in
+                if aiProvider == "openai" {
+                    openAIAnswerModel = value
+                } else {
+                    deepSeekAnswerModel = value
+                }
+                aiFeedback = ""
+            }
+        )
+    }
+
+    private func normalizeSelectedModel() {
+        guard let provider = selectedProvider,
+              !provider.models.contains(where: { $0.id == selectedModelID }),
+              let fallback = provider.models.first
+        else { return }
+        selectedModelBinding.wrappedValue = fallback.id
+    }
+
+    private func saveSelectedKey() {
         do {
-            if !openAIKey.isEmpty {
-                try keychain.write(openAIKey, service: "com.promptmeet.desktop", account: "OPENAI_API_KEY")
-            }
-            if !deepSeekKey.isEmpty {
-                try keychain.write(deepSeekKey, service: "com.promptmeet.desktop", account: "DEEPSEEK_API_KEY")
-            }
-            openAIKey = ""
-            deepSeekKey = ""
-            saveStatus = "正在重新连接 AI 服务…"
+            _ = try AIProviderCatalog.validated(providerID: aiProvider, modelID: selectedModelID)
+            try secretManager.save(providerID: aiProvider, secret: secretDraft)
+            secretDraft = ""
+            credentialStatus = .configured
+            aiFeedback = "已安全保存到 macOS Keychain，正在应用配置"
+            aiFeedbackIsSuccess = true
             onAIConfigurationChanged()
         } catch {
-            saveStatus = error.localizedDescription
+            aiFeedback = error.localizedDescription
+            aiFeedbackIsSuccess = false
         }
     }
 
     private func loadKeyStatus() {
-        let hasOpenAI = (try? keychain.read(service: "com.promptmeet.desktop", account: "OPENAI_API_KEY")) != nil
-        let hasDeepSeek = (try? keychain.read(service: "com.promptmeet.desktop", account: "DEEPSEEK_API_KEY")) != nil
-        saveStatus = [hasOpenAI ? "OpenAI 已配置" : nil, hasDeepSeek ? "DeepSeek 已配置" : nil]
-            .compactMap { $0 }
-            .joined(separator: " · ")
+        do {
+            credentialStatus = try secretManager.status(providerID: aiProvider)
+        } catch {
+            credentialStatus = .notConfigured
+            aiFeedback = error.localizedDescription
+            aiFeedbackIsSuccess = false
+        }
+    }
+
+    private func validateSelectedKey() {
+        let draft = secretDraft
+        isValidatingAI = true
+        aiFeedback = "正在验证连接"
+        Task {
+            let result = await providerValidator.validate(
+                providerID: aiProvider,
+                modelID: selectedModelID,
+                secret: draft
+            )
+            await MainActor.run {
+                isValidatingAI = false
+                aiFeedback = result.message
+                aiFeedbackIsSuccess = result.isValid
+            }
+        }
+    }
+
+    private func removeSelectedKey() {
+        do {
+            try secretManager.remove(providerID: aiProvider)
+            credentialStatus = .notConfigured
+            secretDraft = ""
+            aiFeedback = "密钥已从 macOS Keychain 移除"
+            aiFeedbackIsSuccess = true
+            onAIConfigurationChanged()
+        } catch {
+            aiFeedback = error.localizedDescription
+            aiFeedbackIsSuccess = false
+        }
     }
 
     private func openSystemSettings(_ value: String) {
@@ -347,9 +514,9 @@ struct PromptMeetSettingsView: View {
         NSWorkspace.shared.open(url)
     }
 
-    private var localHistoryURL: URL {
+    private var localDataURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PromptMeet/desktop-sessions.json")
+            .appendingPathComponent("PromptMeet", isDirectory: true)
     }
 
     private func updateLaunchAtLogin(_ enabled: Bool) {
@@ -366,19 +533,33 @@ struct PromptMeetSettingsView: View {
     }
 
     private func exportHistory() {
-        guard FileManager.default.fileExists(atPath: localHistoryURL.path) else {
+        guard FileManager.default.fileExists(atPath: localDataURL.appendingPathComponent("meetings").path) else {
             saveStatus = "还没有可导出的本地会议"
             return
         }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "PromptMeet-会议历史.json"
-        panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "导出到这里"
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let destination = directory.appendingPathComponent(
+            "PromptMeet-MeetingData-\(formatter.string(from: Date()))",
+            isDirectory: true
+        )
         do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            for name in ["meetings", "assets", "desktop-sessions.json"] {
+                let source = localDataURL.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: source.path) {
+                    try FileManager.default.copyItem(
+                        at: source,
+                        to: destination.appendingPathComponent(name)
+                    )
+                }
             }
-            try FileManager.default.copyItem(at: localHistoryURL, to: destination)
             saveStatus = "会议历史已导出"
         } catch {
             saveStatus = error.localizedDescription
@@ -388,14 +569,17 @@ struct PromptMeetSettingsView: View {
     private func deleteHistory() {
         let alert = NSAlert()
         alert.messageText = "删除全部本地会议历史？"
-        alert.informativeText = "此操作无法撤销，当前正在进行的会议不会被终止。"
+        alert.informativeText = "此操作无法撤销。请先结束正在进行的会议，旧版记录也会一并删除。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "删除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            if FileManager.default.fileExists(atPath: localHistoryURL.path) {
-                try FileManager.default.removeItem(at: localHistoryURL)
+            for name in ["meetings", "assets", "desktop-sessions.json"] {
+                let url = localDataURL.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
             }
             saveStatus = "本地会议历史已删除"
         } catch {

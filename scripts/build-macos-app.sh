@@ -7,6 +7,8 @@ MACOS_ROOT="$ROOT/desktop-macos"
 APP="$ROOT/dist/PromptMeet.app"
 CONTENTS="$APP/Contents"
 
+"$ROOT/scripts/check-macos-package-inputs.sh"
+
 if [ "${PROMPTMEET_SKIP_WHISPER_BUILD:-0}" != "1" ]; then
   "$ROOT/scripts/build-whisper-runtime.sh"
 fi

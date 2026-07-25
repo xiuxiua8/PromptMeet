@@ -34,6 +34,13 @@ protocol BackendClientProtocol: AnyObject, Sendable {
     func sendPrompt(_ prompt: String, requestID: UUID) async throws
     func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws
     func fetchMeetingHistory() async throws -> [StoredMeeting]
+    func fetchMeeting(id: String) async throws -> StoredMeeting
+    func askMeeting(
+        meetingID: String,
+        question: String,
+        requestID: UUID,
+        threadID: String
+    ) async throws -> HistoricalMeetingAnswer
     func disconnect()
 }
 
@@ -137,9 +144,43 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
     }
 
     func fetchMeetingHistory() async throws -> [StoredMeeting] {
-        let (data, response) = try await session.data(for: environment.request(path: "/db/sessions"))
+        let (data, response) = try await session.data(for: environment.request(path: "/api/meetings"))
         try validate(response)
         return try StoredMeeting.parseList(data)
+    }
+
+    func fetchMeeting(id: String) async throws -> StoredMeeting {
+        let (data, response) = try await session.data(
+            for: environment.request(path: "/api/meetings/\(id)")
+        )
+        try validate(response)
+        let wrapped = Data("[".utf8) + data + Data("]".utf8)
+        guard let meeting = try StoredMeeting.parseList(wrapped).first else {
+            throw BackendClientError.invalidResponse
+        }
+        return meeting
+    }
+
+    func askMeeting(
+        meetingID: String,
+        question: String,
+        requestID: UUID,
+        threadID: String = "main"
+    ) async throws -> HistoricalMeetingAnswer {
+        var request = environment.request(
+            path: "/api/meetings/\(meetingID)/questions",
+            method: "POST"
+        )
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "request_id": requestID.uuidString,
+                "thread_id": threadID,
+                "question": question,
+            ]
+        )
+        let (data, response) = try await session.data(for: request)
+        try validate(response)
+        return try JSONDecoder().decode(HistoricalMeetingAnswer.self, from: data)
     }
 
     func disconnect() {

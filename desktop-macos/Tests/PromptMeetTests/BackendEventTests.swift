@@ -51,6 +51,13 @@ final class BackendEventTests: XCTestCase {
         )
     }
 
+    func testEmptyQuestionBatchDecodesSoStaleSuggestionsCanBeCleared() throws {
+        XCTAssertEqual(
+            try BackendEvent.decode(#"{"type":"questions","data":{"questions":[]}}"#),
+            .questions([])
+        )
+    }
+
     func testStructuredSummaryKeepsTasksKeyPointsAndDecisions() throws {
         let event = try BackendEvent.decode(
             #"{"type":"summary_generated","data":{"summary_text":"已确认上线范围","tasks":[{"task":"准备发布","deadline":"明天","assignee":"林晨","priority":"high","status":"pending"}],"key_points":["范围冻结"],"decisions":["周五上线"]}}"#
@@ -88,5 +95,17 @@ final class BackendEventTests: XCTestCase {
             try BackendEvent.decode(#"{"type":"future_event","data":{}}"#),
             .ignored
         )
+    }
+
+    func testTypedMeetingEventDecodesForTimelineProjection() throws {
+        let event = try BackendEvent.decode(
+            #"{"type":"meeting_event","data":{"event_id":"event-1","meeting_id":"meeting-1","sequence":1,"occurred_at":"2026-07-25T10:01:00Z","kind":"screenshot","provenance":{"source":"native_screenshot"},"payload":{"type":"screenshot","asset_id":"asset-1","relative_path":"assets/meeting-1/slide.png","mime_type":"image/png","sha256":"abc","capture_status":"available"}}}"#
+        )
+
+        guard case let .meetingEvent(timelineEvent) = event else {
+            return XCTFail("Expected typed meeting event")
+        }
+        XCTAssertEqual(timelineEvent.sequence, 1)
+        XCTAssertEqual(timelineEvent.screenshot?.id, "asset-1")
     }
 }

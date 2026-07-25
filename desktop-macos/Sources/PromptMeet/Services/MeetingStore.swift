@@ -9,12 +9,13 @@ final class MeetingStore: ObservableObject {
     @Published private(set) var topChromeWidth: CGFloat = 200
     @Published private(set) var topChromeHeight: CGFloat = 34
     private var backendSessionID: String?
+    private var uiPreviewMode: String?
 
     private let backend: BackendClientProtocol
     private let capture: NativeAudioCaptureCoordinating
     private let companion: CompanionLaunching
     private let screenshotPicker: ScreenshotSelecting
-    private let questionRefreshStride = 3
+    private let questionRefreshStride = 1
     private var lastQuestionGenerationTranscriptCount = 0
     private var isQuestionGenerationInFlight = false
 
@@ -35,7 +36,7 @@ final class MeetingStore: ObservableObject {
     }
 
     var hasMeetingContext: Bool {
-        backendSessionID != nil
+        backendSessionID != nil || uiPreviewMode != nil
     }
 
     func setHovered(_ hovered: Bool) {
@@ -47,6 +48,30 @@ final class MeetingStore: ObservableObject {
         topChromeHeight = max(24, notch.height)
     }
 
+    func configureUIPreview(_ mode: String) {
+        uiPreviewMode = mode
+        switch mode {
+        case "live":
+            state = .previewAura
+            isHovered = false
+        case "hover":
+            state = .previewAura
+            isHovered = true
+        case "workspace":
+            state = .previewWorkspace
+            isHovered = false
+        case "reader-short":
+            state = .previewReader
+            isHovered = false
+        case "reader-long":
+            state = .previewLongReader
+            isHovered = false
+        default:
+            state = MeetingState()
+            isHovered = false
+        }
+    }
+
     func startMeeting() {
         Task { await startMeetingNow() }
     }
@@ -56,7 +81,12 @@ final class MeetingStore: ObservableObject {
     }
 
     func prepareCompanionNow() async {
-        try? await companion.ensureRunning()
+        do {
+            try await companion.ensureRunning()
+            await loadMeetingHistoryNow()
+        } catch {
+            state.reduce(.suggestion("AI companion 暂未连接：\(error.localizedDescription)"))
+        }
     }
 
     func reloadCompanionConfiguration() {
@@ -77,6 +107,15 @@ final class MeetingStore: ObservableObject {
         Task { await endMeetingNow() }
     }
 
+    func replaceActiveMeeting() {
+        Task {
+            if state.phase == .live || state.phase == .connecting {
+                await endMeetingNow()
+            }
+            await startMeetingNow()
+        }
+    }
+
     func requestSummary() {
         Task { await requestSummaryNow() }
     }
@@ -94,6 +133,10 @@ final class MeetingStore: ObservableObject {
     }
 
     func submitPrompt(_ prompt: String) {
+        Task { await submitPromptNow(prompt) }
+    }
+
+    func retryPrompt(_ prompt: String) {
         Task { await submitPromptNow(prompt) }
     }
 
@@ -131,6 +174,7 @@ final class MeetingStore: ObservableObject {
     }
 
     func loadMeetingHistoryNow() async {
+        guard uiPreviewMode == nil else { return }
         do {
             state.reduce(.meetingHistoryLoaded(try await backend.fetchMeetingHistory()))
         } catch {
@@ -143,13 +187,32 @@ final class MeetingStore: ObservableObject {
     }
 
     func startMeetingNow() async {
-        guard state.phase != .live && state.phase != .connecting else { return }
+        guard state.phase != .live && state.phase != .connecting else {
+            state.reduce(.suggestion("当前会议仍在进行，请先结束后再开始新会议"))
+            return
+        }
         if backendSessionID != nil {
             backend.disconnect()
             backendSessionID = nil
         }
+        state.reduce(.prepareNewMeeting)
         state.reduce(.beginSession)
         let localSessionID = "local-\(UUID().uuidString)"
+        do {
+            try await companion.ensureRunning()
+            try await backend.healthCheck()
+            let remoteSessionID = try await backend.createSession()
+            try backend.connect(sessionID: remoteSessionID) { [weak self] event in
+                Task { @MainActor in self?.receive(event) }
+            }
+            backendSessionID = remoteSessionID
+            state.reduce(.companionConnected)
+        } catch {
+            backend.disconnect()
+            backendSessionID = nil
+            state.reduce(.companionDisconnected("本地转写可用 · AI 服务连接失败：\(error.localizedDescription)"))
+        }
+
         do {
             try await capture.start(
                 sessionID: localSessionID,
@@ -173,27 +236,22 @@ final class MeetingStore: ObservableObject {
             state.reduce(.connectionReady)
         } catch {
             await capture.stop()
-            backend.disconnect()
             sessionID = nil
+            if let backendSessionID {
+                try? await backend.perform(sessionID: backendSessionID, action: "mark-incomplete")
+            }
             state.reduce(.failure(error.localizedDescription))
             return
         }
 
-        do {
-            try await companion.ensureRunning()
-            try await backend.healthCheck()
-            let remoteSessionID = try await backend.createSession()
+        if let remoteSessionID = backendSessionID {
             await capture.bindBackendSession(remoteSessionID)
-            try backend.connect(sessionID: remoteSessionID) { [weak self] event in
-                Task { @MainActor in self?.receive(event) }
+            do {
+                try await backend.perform(sessionID: remoteSessionID, action: "start-native-recording")
+            } catch {
+                state.reduce(.companionDisconnected("本地转写可用 · 会议服务未开始记录：\(error.localizedDescription)"))
+                try? await backend.perform(sessionID: remoteSessionID, action: "mark-incomplete")
             }
-            try await backend.perform(sessionID: remoteSessionID, action: "start-native-recording")
-            backendSessionID = remoteSessionID
-            state.reduce(.companionConnected)
-        } catch {
-            backend.disconnect()
-            backendSessionID = nil
-            state.reduce(.companionDisconnected("本地转写可用 · AI 服务连接失败：\(error.localizedDescription)"))
         }
     }
 
@@ -212,6 +270,7 @@ final class MeetingStore: ObservableObject {
         sessionID = nil
         state.phase = .idle
         state.activeTranscript = ""
+        await loadMeetingHistoryNow()
     }
 
     func saveMeetingNow() async {
@@ -268,12 +327,28 @@ final class MeetingStore: ObservableObject {
     func submitPromptNow(_ prompt: String) async {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard backendSessionID != nil else {
+        let archivedMeetingID = state.phase == .live ? nil : state.selectedArchivedMeetingID
+        guard backendSessionID != nil || archivedMeetingID != nil else {
             state.reduce(.suggestion("AI companion 暂未连接"))
             return
         }
         let requestID = UUID()
         state.reduce(.userPromptSubmitted(id: requestID, prompt: trimmed))
+        if let archivedMeetingID {
+            do {
+                let answer = try await backend.askMeeting(
+                    meetingID: archivedMeetingID,
+                    question: trimmed,
+                    requestID: requestID,
+                    threadID: "main"
+                )
+                state.reduce(.answerFinal(requestID: requestID, answer: answer.answer))
+                state.reduce(.meetingHistoryUpdated(try await backend.fetchMeeting(id: archivedMeetingID)))
+            } catch {
+                state.reduce(.aiFailure(requestID: requestID, message: error.localizedDescription))
+            }
+            return
+        }
         do {
             try await backend.sendPrompt(trimmed, requestID: requestID)
         } catch {
@@ -285,6 +360,8 @@ final class MeetingStore: ObservableObject {
         switch event {
         case .connectionEstablished, .ignored:
             break
+        case let .meetingEvent(event):
+            state.reduce(.meetingEvent(event))
         case let .transcript(line):
             state.reduce(.transcriptFinal(line))
         case let .translation(id, text):

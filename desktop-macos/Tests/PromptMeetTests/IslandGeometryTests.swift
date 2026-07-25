@@ -18,7 +18,7 @@ final class IslandGeometryTests: XCTestCase {
         )
 
         XCTAssertEqual(live.width, 520)
-        XCTAssertEqual(live.height, 68)
+        XCTAssertEqual(live.height, 82)
     }
 
     func testIslandUsesDetectedTopChromeHeight() {
@@ -28,22 +28,22 @@ final class IslandGeometryTests: XCTestCase {
         )
     }
 
-    func testIdleIslandExtendsBeyondThePhysicalNotchLikeReferenceProject() {
+    func testAuraIdleIslandLeavesBalancedFlanksAroundThePhysicalNotch() {
         let size = IslandGeometry.size(
             for: .idle,
             topChromeWidth: 184,
             topChromeHeight: 32
         )
 
-        XCTAssertEqual(size.width, 272)
+        XCTAssertEqual(size.width, 300)
         XCTAssertEqual(size.height, 32)
     }
 
-    func testHoverCardUsesTranscriptDominantHeight() {
+    func testAuraHoverCardUsesTheApprovedBreathingRoom() {
         let size = IslandGeometry.size(for: .hoverLive)
-        XCTAssertEqual(size.width, 812)
-        XCTAssertEqual(size.height, 246)
-        XCTAssertGreaterThan(size.width / size.height, 3)
+        XCTAssertEqual(size.width, 760)
+        XCTAssertEqual(size.height, 300)
+        XCTAssertGreaterThan(size.width / size.height, 2.5)
     }
 
     func testIslandConnectsDirectlyToPhysicalScreenTopEdge() {

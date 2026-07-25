@@ -123,3 +123,14 @@ temp_sessions/
 *源码/
 *.zip
 *.mov
+
+# Required source inputs and durable project documentation.
+!backend/requirements-desktop.txt
+!desktop-macos/THIRD_PARTY_NOTICES.md
+!docs/
+!docs/superpowers/
+!docs/superpowers/plans/
+!docs/superpowers/plans/*.md
+!docs/macos-meeting-agent.md
+!AGENTS.md
+!CLAUDE.md

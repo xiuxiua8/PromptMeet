@@ -19,20 +19,23 @@ enum IslandGeometry {
         topChromeWidth: CGFloat = 200,
         topChromeHeight: CGFloat = 34
     ) -> CGSize {
-        let compactWidth = max(100, topChromeWidth) + compactTabWidth * 2 + IslandShape.topCurl * 2
+        let compactWidth = max(
+            300,
+            max(100, topChromeWidth) + compactTabWidth * 2 + IslandShape.topCurl * 2
+        )
         return switch presentation {
         case .idle:
             CGSize(width: compactWidth, height: topChromeHeight)
         case .connecting:
             CGSize(width: max(compactWidth, 300), height: max(topChromeHeight, 42))
         case .live:
-            CGSize(width: max(compactWidth, 520), height: max(topChromeHeight, 68))
+            CGSize(width: max(compactWidth, 520), height: max(topChromeHeight, 82))
         case .answering:
-            CGSize(width: max(compactWidth, 548), height: max(topChromeHeight, 68))
+            CGSize(width: max(compactWidth, 520), height: max(topChromeHeight, 82))
         case .hoverIdle:
-            CGSize(width: 812, height: topChromeHeight + 212)
+            CGSize(width: 760, height: 300)
         case .hoverLive:
-            CGSize(width: 812, height: topChromeHeight + 212)
+            CGSize(width: 760, height: 300)
         }
     }
 

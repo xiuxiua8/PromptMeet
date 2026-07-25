@@ -1,13 +1,61 @@
 import AppKit
 import SwiftUI
 
+final class AIReaderPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 enum AIReaderLayout {
-    static func targetSize(content: String, isStreaming: Bool) -> CGSize {
+    static let minimumSize = CGSize(width: 380, height: 240)
+    static let maximumSize = CGSize(width: 460, height: 620)
+
+    static func targetSize(
+        content: String,
+        title: String = "",
+        isStreaming: Bool
+    ) -> CGSize {
         let characterCount = content.count
-        let width: CGFloat = characterCount > 600 ? 460 : (characterCount > 180 ? 420 : 380)
-        let estimatedLines = max(1, Int(ceil(Double(characterCount) / 42.0)))
-        let estimatedHeight = CGFloat(190 + estimatedLines * 22 + (isStreaming ? 18 : 0))
-        return CGSize(width: width, height: min(620, max(240, estimatedHeight)))
+        let width: CGFloat = characterCount > 600 ? 460 : (characterCount > 220 ? 420 : 380)
+        let measuredContent = content.isEmpty ? "正在思考" : content
+        let bodyFont = NSFont.systemFont(ofSize: 14)
+        let textRect = (measuredContent as NSString).boundingRect(
+            with: CGSize(width: width - 44, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: bodyFont],
+            context: nil
+        )
+        let lineHeight = max(1, bodyFont.ascender - bodyFont.descender + bodyFont.leading)
+        let lineCount = max(1, ceil(textRect.height / lineHeight))
+        let bodyHeight = max(42, ceil(textRect.height) + max(0, lineCount - 1) * 6)
+        let titleRect = (title as NSString).boundingRect(
+            with: CGSize(width: width - 132, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 16, weight: .semibold)],
+            context: nil
+        )
+        let extraTitleHeight = max(0, ceil(titleRect.height) - 22)
+        let chromeHeight: CGFloat = 170 + extraTitleHeight + (isStreaming ? 18 : 0)
+        let height = min(maximumSize.height, max(minimumSize.height, bodyHeight + chromeHeight))
+        return CGSize(width: width, height: height)
+    }
+
+    static func resizedFrame(
+        currentFrame: CGRect,
+        targetSize: CGSize,
+        visibleFrame: CGRect
+    ) -> CGRect {
+        let proposedOrigin = CGPoint(
+            x: currentFrame.maxX - targetSize.width,
+            y: currentFrame.maxY - targetSize.height
+        )
+        let maximumX = visibleFrame.maxX - targetSize.width
+        let maximumY = visibleFrame.maxY - targetSize.height
+        let origin = CGPoint(
+            x: min(maximumX, max(visibleFrame.minX, proposedOrigin.x)),
+            y: min(maximumY, max(visibleFrame.minY, proposedOrigin.y))
+        )
+        return CGRect(origin: origin, size: targetSize)
     }
 }
 
@@ -17,8 +65,8 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
 
     init(store: MeetingStore) {
         self.store = store
-        let panel = NSPanel(
-            contentRect: CGRect(x: 0, y: 0, width: 380, height: 240),
+        let panel = AIReaderPanel(
+            contentRect: CGRect(origin: .zero, size: AIReaderLayout.minimumSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -28,9 +76,10 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
         panel.hasShadow = true
         panel.level = .floating
         panel.isMovableByWindowBackground = true
-        panel.minSize = CGSize(width: 380, height: 240)
-        panel.maxSize = CGSize(width: 460, height: 620)
+        panel.minSize = AIReaderLayout.minimumSize
+        panel.maxSize = AIReaderLayout.maximumSize
         panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: AIReaderView(store: store))
         super.init(window: panel)
@@ -41,10 +90,10 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
         nil
     }
 
-    func syncVisibility() {
+    func syncVisibility(state: MeetingState) {
         guard let window else { return }
-        if store.state.aiReader.isVisible {
-            resizeForCurrentAnswer()
+        if state.aiReader.isVisible {
+            resize(for: state)
             if !window.isVisible {
                 restorePositionOrPlaceAtRightEdge()
                 window.orderFrontRegardless()
@@ -52,6 +101,12 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
         } else {
             window.orderOut(nil)
         }
+    }
+
+    func showPreview(state: MeetingState) {
+        syncVisibility(state: state)
+        window?.center()
+        window?.makeKeyAndOrderFront(nil)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -84,17 +139,20 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
     }
 
 
-    private func resizeForCurrentAnswer() {
+    private func resize(for state: MeetingState) {
         guard let window else { return }
         let size = AIReaderLayout.targetSize(
-            content: store.state.aiReader.content,
-            isStreaming: store.state.aiReader.isStreaming
+            content: state.aiReader.content,
+            title: state.aiReader.title,
+            isStreaming: state.aiReader.isStreaming
         )
         guard window.frame.size != size else { return }
-        var frame = window.frame
-        let top = frame.maxY
-        frame.size = size
-        frame.origin.y = top - size.height
+        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? window.frame
+        let frame = AIReaderLayout.resizedFrame(
+            currentFrame: window.frame,
+            targetSize: size,
+            visibleFrame: visibleFrame
+        )
         window.setFrame(frame, display: true, animate: window.isVisible)
     }
 

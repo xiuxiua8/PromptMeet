@@ -27,15 +27,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         islandController = island
 
         store.$state
-            .sink { [weak reader] _ in reader?.syncVisibility() }
+            .sink { [weak reader] state in reader?.syncVisibility(state: state) }
             .store(in: &cancellables)
 
         configureStatusItem()
         configureShortcuts()
         island.show()
-        store.prepareCompanion()
-        if ProcessInfo.processInfo.environment["PROMPTMEET_UI_PREVIEW"] == "hover" {
-            store.setHovered(true)
+        if let previewMode = ProcessInfo.processInfo.environment["PROMPTMEET_UI_PREVIEW"] {
+            store.configureUIPreview(previewMode)
+            if previewMode == "workspace" {
+                workspace.show()
+            } else if previewMode == "reader-short" || previewMode == "reader-long" {
+                reader.showPreview(state: store.state)
+            }
+        } else {
+            store.prepareCompanion()
         }
     }
 

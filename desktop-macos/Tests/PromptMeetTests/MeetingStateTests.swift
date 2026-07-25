@@ -2,6 +2,14 @@ import XCTest
 @testable import PromptMeet
 
 final class MeetingStateTests: XCTestCase {
+    func testAuraPreviewIncludesInsightAndTwoSuggestedQuestions() {
+        let state = MeetingState.previewAura
+
+        XCTAssertNotNil(state.latestInsight)
+        XCTAssertEqual(state.generatedQuestions.count, 2)
+        XCTAssertEqual(state.transcript.count, 3)
+    }
+
     func testSuccessfulCompanionConnectionClearsStaleFailureMessage() {
         var state = MeetingState()
         state.reduce(.companionDisconnected("本地转写可用 · AI companion 暂未连接"))
@@ -68,6 +76,17 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(state.aiRequest.phase, .streaming)
     }
 
+    func testFollowUpKeepsVisibleReaderOpenWhileSubmitting() {
+        var state = MeetingState.previewReader
+
+        state.reduce(.userPromptSubmitted(id: UUID(), prompt: "继续解释风险"))
+
+        XCTAssertTrue(state.aiReader.isVisible)
+        XCTAssertEqual(state.aiReader.title, "继续解释风险")
+        XCTAssertTrue(state.aiReader.content.isEmpty)
+        XCTAssertEqual(state.aiRequest.phase, .submitting)
+    }
+
     func testAutomaticInsightNeverReplacesReaderContent() {
         var state = MeetingState.previewReader
 
@@ -103,6 +122,86 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(state.aiRequest.phase, .submitting)
     }
 
+    func testConcurrentAnswersRemainBoundToTheirOwnConversationTurns() {
+        var state = MeetingState()
+        let first = UUID()
+        let second = UUID()
+        state.reduce(.userPromptSubmitted(id: first, prompt: "风险？"))
+        state.reduce(.userPromptSubmitted(id: second, prompt: "负责人？"))
+
+        state.reduce(.answerDelta(requestID: first, delta: "范围"))
+        state.reduce(.answerFinal(requestID: second, answer: "林晨"))
+        state.reduce(.answerFinal(requestID: first, answer: "范围漂移"))
+
+        XCTAssertEqual(state.conversationTurn(requestID: first)?.answer, "范围漂移")
+        XCTAssertEqual(state.conversationTurn(requestID: second)?.answer, "林晨")
+        XCTAssertEqual(state.conversationTurn(requestID: first)?.phase, .completed)
+        XCTAssertEqual(state.conversationTurn(requestID: second)?.phase, .completed)
+    }
+
+    func testDurableAnswerEventRemainsVisibleInActiveMeetingConversation() {
+        var state = MeetingState(phase: .live)
+        let requestID = UUID()
+        let askedAt = Date()
+        state.reduce(.userPromptSubmitted(id: requestID, prompt: "谁负责发布？"))
+        state.reduce(
+            .meetingEvent(
+                MeetingTimelineEvent(
+                    eventID: "question-event",
+                    meetingID: "active-meeting",
+                    sequence: 1,
+                    occurredAt: askedAt,
+                    kind: .userQuestion,
+                    provenance: TimelineProvenance(
+                        source: "user",
+                        provider: nil,
+                        model: nil,
+                        requestID: requestID.uuidString
+                    ),
+                    payload: .userQuestion(
+                        TimelineQuestionPayload(
+                            requestID: requestID.uuidString,
+                            threadID: "main",
+                            question: "谁负责发布？"
+                        )
+                    )
+                )
+            )
+        )
+        state.reduce(
+            .meetingEvent(
+                MeetingTimelineEvent(
+                    eventID: "answer-event",
+                    meetingID: "active-meeting",
+                    sequence: 2,
+                    occurredAt: askedAt.addingTimeInterval(1),
+                    kind: .assistantAnswer,
+                    provenance: TimelineProvenance(
+                        source: "meeting_agent",
+                        provider: "fake",
+                        model: "fake-chat",
+                        requestID: requestID.uuidString
+                    ),
+                    payload: .assistantAnswer(
+                        TimelineAnswerPayload(
+                            requestID: requestID.uuidString,
+                            threadID: "main",
+                            answer: "林晨负责发布。",
+                            sources: [],
+                            degradedVision: false,
+                            status: "completed",
+                            errorMessage: nil
+                        )
+                    )
+                )
+            )
+        )
+
+        XCTAssertEqual(state.displayedConversation.count, 1)
+        XCTAssertEqual(state.displayedConversation.first?.meetingID, "active-meeting")
+        XCTAssertEqual(state.displayedConversation.first?.answer, "林晨负责发布。")
+    }
+
     func testAIErrorStaysInlineAndDoesNotFailMeeting() {
         var state = MeetingState.previewLive
         let requestID = UUID()
@@ -114,6 +213,17 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(state.aiRequest.phase, .failed)
         XCTAssertEqual(state.aiRequest.errorMessage, "模型暂时不可用")
         XCTAssertFalse(state.aiReader.isVisible)
+    }
+
+    func testFailedCaptureOffersRetryInsteadOfClaimingRecordingIsActive() {
+        let presentation = MeetingControlPresentation(
+            phase: .failed("没有可用的音频来源")
+        )
+
+        XCTAssertEqual(presentation.startTitle, "重试录音")
+        XCTAssertEqual(presentation.transcriptPlaceholder, "录音未开始，请检查权限或音频来源后重试。")
+        XCTAssertTrue(presentation.canStart)
+        XCTAssertFalse(presentation.canStop)
     }
 
     func testSubmittedPromptsRemainVisibleInWorkbenchHistory() {
@@ -154,6 +264,15 @@ final class MeetingStateTests: XCTestCase {
 
         XCTAssertEqual(state.generatedQuestions, ["新问题一", "新问题二", "新问题三"])
         XCTAssertEqual(state.latestInsight, "新问题一")
+    }
+
+    func testEmptyQuestionBatchClearsStaleSuggestions() {
+        var state = MeetingState.previewLive
+        state.reduce(.questionsGenerated(["已经过时的问题"]))
+
+        state.reduce(.questionsGenerated([]))
+
+        XCTAssertTrue(state.generatedQuestions.isEmpty)
     }
 
     func testQuickAskPresentationAndDraftAreSharedState() {

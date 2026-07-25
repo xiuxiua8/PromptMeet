@@ -2,6 +2,9 @@ import SwiftUI
 
 struct RollingCaptionView: View {
     let text: String
+    var font: Font = .system(size: 12, weight: .medium, design: .rounded)
+    var viewportHeight: CGFloat = 34
+    var topPadding: CGFloat = 3
 
     private let bottomAnchor = "rolling-caption-bottom"
 
@@ -10,7 +13,7 @@ struct RollingCaptionView: View {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(text)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(font)
                         .foregroundStyle(VisualTokens.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -19,7 +22,7 @@ struct RollingCaptionView: View {
                         .frame(height: 1)
                         .id(bottomAnchor)
                 }
-                .padding(.top, 3)
+                .padding(.top, topPadding)
             }
             .scrollIndicators(.hidden)
             .allowsHitTesting(false)
@@ -31,6 +34,6 @@ struct RollingCaptionView: View {
                 }
             }
         }
-        .frame(height: 34)
+        .frame(height: viewportHeight)
     }
 }

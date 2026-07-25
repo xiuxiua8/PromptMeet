@@ -5,16 +5,18 @@ PromptMeet FastAPI 主服务
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict, List, Optional
 import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, field_validator
 import uvicorn
 from dotenv import load_dotenv
 
@@ -36,6 +38,18 @@ from services.session_manager import SessionManager
 from services.websocket_manager import WebSocketManager
 from services.process_manager import ProcessManager
 from services.native_audio_ingress import NativeAudioIngress
+from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
+from services.meeting_repository import MeetingNotFoundError, MeetingRepository
+from models.meeting_context import (
+    EventKind,
+    MeetingEvent,
+    MeetingRecord,
+    MeetingStatus,
+    ScreenshotAnalysisPayload,
+    ScreenshotPayload,
+    SummaryPayload,
+    TranscriptPayload,
+)
 DESKTOP_MODE = os.getenv("PROMPTMEET_DESKTOP_MODE") == "1"
 if DESKTOP_MODE:
     from services.desktop_agent_service import DesktopAgentService
@@ -91,14 +105,58 @@ app.add_middleware(
 session_manager = SessionManager()
 websocket_manager = WebSocketManager()
 process_manager = ProcessManager()
+meeting_data_root = Path(os.getenv("PROMPTMEET_DATA_DIR") or process_manager.work_dir / "meeting_data")
+meeting_repository = MeetingRepository(meeting_data_root)
+meeting_ingestion = MeetingIngestionService(meeting_repository)
 db_storage = (
     HybridSessionStorage.from_environment(os.getenv("PROMPTMEET_DATA_DIR"))
     if DESKTOP_MODE
     else MeetingSessionStorage()
 )
-desktop_agent_service = DesktopAgentService() if DESKTOP_MODE else None
+desktop_agent_service = (
+    DesktopAgentService(assets_root=meeting_repository.root) if DESKTOP_MODE else None
+)
 desktop_summary_service = OriginalSummaryService() if DESKTOP_MODE else None
 native_audio_ingress = NativeAudioIngress(process_manager.work_dir / "native_audio")
+
+
+class MeetingQuestionRequest(BaseModel):
+    request_id: str
+    thread_id: str = "main"
+    question: str
+
+    @field_validator("request_id", "thread_id", "question")
+    @classmethod
+    def reject_blank(cls, value: str, info) -> str:
+        if not value.strip():
+            raise ValueError("字段不能为空")
+        return value if info.field_name == "question" else value.strip()
+
+
+meeting_question_tasks: set[asyncio.Task] = set()
+meeting_screenshot_tasks: set[asyncio.Task] = set()
+
+
+def finish_question_task(task: asyncio.Task) -> None:
+    meeting_question_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except HTTPException:
+        return
+    except Exception as error:
+        logger.warning("会议问题处理失败: %s", error)
+
+
+def finish_screenshot_task(task: asyncio.Task) -> None:
+    meeting_screenshot_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception as error:
+        logger.warning("截图分析任务失败: %s", error)
 
 
 async def start_native_recording(session_id: str) -> None:
@@ -127,7 +185,12 @@ async def stop_native_recording(session_id: str) -> None:
     if not DESKTOP_MODE:
         await process_manager.stop_question_process(session_id)
     session.is_recording = False
+    session.end_time = datetime.now()
     session_manager.update_session(session)
+    try:
+        meeting_ingestion.finish(session_id, MeetingStatus.COMPLETED)
+    except MeetingNotFoundError:
+        logger.warning("结束会议时未找到持久记录: session=%s", session_id)
     await websocket_manager.broadcast_to_session(
         session_id,
         {
@@ -139,18 +202,82 @@ async def stop_native_recording(session_id: str) -> None:
     )
 
 
-async def process_native_screenshot(session_id: str, image_path) -> None:
+async def broadcast_meeting_event(session_id: str, event: MeetingEvent) -> None:
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": "meeting_event",
+            "data": event.model_dump(mode="json"),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
+        },
+    )
+
+
+async def process_native_screenshot(session_id: str, image_path) -> dict:
+    mime_type = "image/jpeg" if Path(image_path).suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    try:
+        event = meeting_ingestion.screenshot(session_id, Path(image_path), mime_type)
+    except (FileNotFoundError, MeetingNotFoundError, ValueError):
+        if DESKTOP_MODE:
+            await process_manager.start_image_process(
+                session_id,
+                image_path=str(image_path),
+            )
+            return {"legacy_processing": True}
+        raise
+    await broadcast_meeting_event(session_id, event)
     if DESKTOP_MODE:
-        if session_id in process_manager.image_processes:
-            await process_manager.stop_image_process(session_id)
-        await process_manager.start_image_process(
-            session_id,
-            image_path=str(image_path),
+        task = asyncio.create_task(
+            analyze_native_screenshot(session_id, event),
+            name=f"screenshot-analysis-{session_id}-{event.event_id}",
         )
-        return
+        meeting_screenshot_tasks.add(task)
+        task.add_done_callback(finish_screenshot_task)
+        return {"event": event.model_dump(mode="json")}
     if session_id in process_manager.image_processes:
         await process_manager.stop_image_process(session_id)
     await process_manager.start_image_process(session_id, image_path=str(image_path))
+    return {"event": event.model_dump(mode="json")}
+
+
+async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> None:
+    payload = event.payload
+    if not isinstance(payload, ScreenshotPayload):
+        return
+    try:
+        if desktop_agent_service is None:
+            raise RuntimeError("AI 服务不可用")
+        record = meeting_repository.get(session_id)
+        if record is None:
+            raise MeetingNotFoundError(session_id)
+        result = await desktop_agent_service.analyze_screenshot(record, event)
+    except Exception as error:
+        result = ScreenshotAnalysisResult(
+            status="failed",
+            text=f"截图分析失败：{error}",
+            vision_used=False,
+        )
+    analysis_event = meeting_ingestion.screenshot_analysis(
+        session_id,
+        payload.asset_id,
+        result,
+    )
+    await broadcast_meeting_event(session_id, analysis_event)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": "image_ocr_result",
+            "data": {
+                "asset_id": payload.asset_id,
+                "content": result.text,
+                "status": result.status,
+                "vision_used": result.vision_used,
+            },
+            "timestamp": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
+        },
+    )
 
 
 async def process_native_transcript(session_id: str, transcript: dict) -> None:
@@ -194,7 +321,7 @@ app.include_router(
 app.include_router(
     build_native_screenshot_router(
         session_manager.get_session,
-        process_manager.work_dir / "native_screenshots",
+        lambda: meeting_repository.assets_directory,
         process_native_screenshot,
     )
 )
@@ -349,6 +476,7 @@ async def create_session():
     )
 
     session_manager.add_session(session)
+    meeting_ingestion.start(session_id, session.start_time)
     logger.info("收到创建会话请求")
     # 启动Agent进程
     if not DESKTOP_MODE:
@@ -365,7 +493,23 @@ async def get_session(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    return {"success": True, "session": session.dict()}
+    return {"success": True, "session": session.model_dump(mode="json")}
+
+
+@app.post("/api/sessions/{session_id}/mark-incomplete")
+async def mark_session_incomplete(session_id: str):
+    if meeting_repository.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    record = meeting_ingestion.finish(
+        session_id,
+        MeetingStatus.INCOMPLETE,
+        "会议采集未完整启动，已保留当前记录",
+    )
+    return {
+        "success": True,
+        "status": record.status.value,
+        "schema_version": record.schema_version,
+    }
 
 
 @app.delete("/api/sessions/{session_id}")
@@ -539,10 +683,27 @@ async def store_session(session_id: str):
         if not session.session_id:
             logger.error(f"会话数据无效: {session_id}")
             raise HTTPException(status_code=400, detail="会话数据无效")
+
+        if DESKTOP_MODE:
+            record = meeting_repository.get(session_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="会议持久记录不存在")
+            if record.status == MeetingStatus.ACTIVE:
+                record = meeting_ingestion.finish(
+                    session_id,
+                    MeetingStatus.INCOMPLETE,
+                    "会议已保存，但尚未收到正常结束事件",
+                )
+            return {
+                "success": True,
+                "message": "会话存储成功",
+                "session_id": session_id,
+                "stored_at": datetime.now(UTC).isoformat(),
+                "schema_version": record.schema_version,
+            }
         
         # 转换为字典格式
         session_dict = session.model_dump()
-        logger.info(f"会话数据: {session_dict}")
         
         # 执行存储操作
         logger.info(f"开始存储会话: {session_id}")
@@ -602,6 +763,129 @@ async def start_image_processing(session_id: str, window_id: Optional[str] = Non
     except Exception as e:
         logger.error(f"图像处理启动失败: {e}")
         return {"success": False, "message": f"图像处理失败: {str(e)}"}
+
+
+# ============= 会议上下文接口 =============
+
+
+@app.get("/api/meetings")
+async def list_meeting_records():
+    return [record.model_dump(mode="json") for record in meeting_repository.list()]
+
+
+@app.get("/api/meetings/{meeting_id}")
+async def get_meeting_record(meeting_id: str):
+    record = meeting_repository.get(meeting_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="会议不存在")
+    return record.model_dump(mode="json")
+
+
+@app.get("/api/meetings/{meeting_id}/assets/{asset_id}")
+async def get_meeting_asset(meeting_id: str, asset_id: str):
+    record = meeting_repository.get(meeting_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="会议不存在")
+    payload = next(
+        (
+            event.payload
+            for event in record.events
+            if event.kind == EventKind.SCREENSHOT
+            and isinstance(event.payload, ScreenshotPayload)
+            and event.payload.asset_id == asset_id
+        ),
+        None,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="截图记录不存在")
+    root = meeting_repository.root.resolve()
+    path = (root / payload.relative_path).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="截图文件已丢失，会议记录仍保留")
+    return FileResponse(path, media_type=payload.mime_type, filename=path.name)
+
+
+async def process_meeting_question(
+    meeting_id: str,
+    request_id: str,
+    thread_id: str,
+    question: str,
+):
+    question_event = None
+    try:
+        question_event, snapshot = meeting_ingestion.question(
+            meeting_id,
+            request_id,
+            thread_id,
+            question,
+        )
+        await broadcast_meeting_event(meeting_id, question_event)
+        if desktop_agent_service is None:
+            raise RuntimeError("AI 服务不可用")
+        result = await desktop_agent_service.answer_meeting(
+            snapshot,
+            question,
+            lambda response: on_agent_response(meeting_id, response, request_id),
+            thread_id=thread_id,
+            exclude_event_ids={question_event.event_id},
+        )
+        answer_event = meeting_ingestion.answer(
+            meeting_id,
+            request_id,
+            thread_id,
+            result.answer,
+            result.sources,
+            degraded_vision=result.degraded_vision,
+            provider=result.provider,
+            model=result.model,
+        )
+        await broadcast_meeting_event(meeting_id, answer_event)
+        return result, answer_event
+    except MeetingNotFoundError as error:
+        raise HTTPException(status_code=404, detail="会议不存在") from error
+    except Exception as error:
+        if question_event is not None:
+            failure_event = meeting_ingestion.answer_failure(
+                meeting_id,
+                request_id,
+                thread_id,
+                str(error),
+            )
+            await broadcast_meeting_event(meeting_id, failure_event)
+        await websocket_manager.broadcast_to_session(
+            meeting_id,
+            {
+                "type": "error",
+                "data": {
+                    "scope": "ai",
+                    "request_id": request_id,
+                    "message": str(error),
+                },
+            },
+        )
+        raise
+
+
+@app.post("/api/meetings/{meeting_id}/questions")
+async def ask_meeting_question(meeting_id: str, request: MeetingQuestionRequest):
+    try:
+        result, answer_event = await process_meeting_question(
+            meeting_id,
+            request.request_id,
+            request.thread_id,
+            request.question,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {
+        "request_id": request.request_id,
+        "answer": result.answer,
+        "sources": [source.model_dump(mode="json") for source in result.sources],
+        "degraded_vision": result.degraded_vision,
+        "event": answer_event.model_dump(mode="json"),
+    }
 
 
 # ============= WebSocket 接口 =============
@@ -665,6 +949,19 @@ async def handle_websocket_message(session_id: str, message: dict):
         if DESKTOP_MODE and desktop_agent_service is not None:
             session = session_manager.get_session(session_id)
             request_id = data.get("request_id")
+            if hasattr(desktop_agent_service, "answer_meeting"):
+                task = asyncio.create_task(
+                    process_meeting_question(
+                        session_id,
+                        str(request_id or uuid.uuid4()),
+                        str(data.get("thread_id") or "main"),
+                        str(data.get("content") or ""),
+                    ),
+                    name=f"meeting-question-{session_id}-{request_id}",
+                )
+                meeting_question_tasks.add(task)
+                task.add_done_callback(finish_question_task)
+                return
             try:
                 await desktop_agent_service.answer(
                     data.get("content", ""),
@@ -753,10 +1050,54 @@ process_manager.on_agent_response = on_agent_response
 
 # ============= Database 接口 =============
 
+
+def legacy_meeting_projection(record: MeetingRecord) -> dict:
+    transcripts = []
+    summaries = []
+    image_results = []
+    for event in record.events:
+        if isinstance(event.payload, TranscriptPayload):
+            transcripts.append(
+                {
+                    "id": event.payload.segment_id,
+                    "text": event.payload.text,
+                    "speaker": event.payload.speaker,
+                    "source": event.payload.source,
+                    "translated_text": event.payload.translated_text,
+                    "timestamp": event.occurred_at.isoformat(),
+                }
+            )
+        elif isinstance(event.payload, SummaryPayload):
+            summaries.append(event.payload.model_dump(mode="json", exclude={"type"}))
+        elif isinstance(event.payload, ScreenshotAnalysisPayload):
+            image_results.append(
+                {
+                    "asset_id": event.payload.asset_id,
+                    "content": event.payload.text,
+                    "status": event.payload.status,
+                    "vision_used": event.payload.vision_used,
+                }
+            )
+    return {
+        "schema_version": record.schema_version,
+        "session_id": record.meeting_id,
+        "start_time": record.started_at.isoformat(),
+        "end_time": record.ended_at.isoformat() if record.ended_at else None,
+        "status": record.status.value,
+        "transcript_segments": transcripts,
+        "current_summary": summaries[-1] if summaries else None,
+        "image_ocr_result": image_results,
+        "events": [event.model_dump(mode="json") for event in record.events],
+    }
+
 @app.get("/db/sessions", response_class=JSONResponse)
 async def get_all_sessions():
     """获取所有会话列表"""
     try:
+        if DESKTOP_MODE:
+            return JSONResponse(
+                content=[legacy_meeting_projection(record) for record in meeting_repository.list()]
+            )
         sessions_json = db_storage.get_all_sessions()
         return JSONResponse(content=json.loads(sessions_json))
     except Exception as e:
@@ -766,6 +1107,11 @@ async def get_all_sessions():
 async def get_session_details(session_id: str):
     """获取会话详情"""
     try:
+        if DESKTOP_MODE:
+            record = meeting_repository.get(session_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="会话不存在")
+            return JSONResponse(content=legacy_meeting_projection(record))
         session_json = db_storage.get_session_details(session_id)
         if not session_json or session_json == "null":
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -800,6 +1146,7 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             start_time=transcript_data.get("start_time"),  # 或者合适的默认值
             end_time=transcript_data.get("end_time")       # 或者合适的默认值
         )
+        timeline_event = meeting_ingestion.transcript(session_id, transcript_data)
 
         # 更新会话状态
         session = session_manager.get_session(session_id)
@@ -812,11 +1159,12 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             session_id,
             {
                 "type": MessageType.AUDIO_TRANSCRIPT,
-                "data": segment.dict(),
+                "data": segment.model_dump(mode="json"),
                 "timestamp": datetime.now(),
                 "session_id": session_id,
             },
         )
+        await broadcast_meeting_event(session_id, timeline_event)
 
         logger.info(
             f"转录片段已添加: session={session_id}, text={segment.text[:50]}..."
@@ -839,6 +1187,7 @@ async def on_summary_generated(session_id: str, summary_data: dict):
             decisions=summary_data.get("decisions", []),
             generated_at=datetime.now(),
         )
+        timeline_event = meeting_ingestion.summary(session_id, summary_data)
 
         # 更新会话状态
         session = session_manager.get_session(session_id)
@@ -851,11 +1200,12 @@ async def on_summary_generated(session_id: str, summary_data: dict):
             session_id,
             {
                 "type": MessageType.SUMMARY_GENERATED,
-                "data": summary.dict(),
+                "data": summary.model_dump(mode="json"),
                 "timestamp": datetime.now(),
                 "session_id": session_id,
             },
         )
+        await broadcast_meeting_event(session_id, timeline_event)
 
         logger.info(f"摘要已生成: session={session_id}")
         await persist_session(session_id)
@@ -865,6 +1215,8 @@ async def on_summary_generated(session_id: str, summary_data: dict):
 
 
 async def persist_session(session_id: str) -> bool:
+    if DESKTOP_MODE:
+        return meeting_repository.get(session_id) is not None
     session = session_manager.get_session(session_id)
     if not session:
         return False
@@ -916,7 +1268,7 @@ async def on_progress_update(session_id: str, progress_data: dict):
             session_id,
             {
                 "type": MessageType.PROGRESS_UPDATE,
-                "data": progress.dict(),
+                "data": progress.model_dump(mode="json"),
                 "timestamp": datetime.now(),
                 "session_id": session_id,
             },

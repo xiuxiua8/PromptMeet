@@ -1,6 +1,13 @@
 import Foundation
 import Security
 
+protocol KeychainStoring {
+    func read(service: String, account: String) throws -> String?
+    func contains(service: String, account: String) throws -> Bool
+    func write(_ value: String, service: String, account: String) throws
+    func delete(service: String, account: String) throws
+}
+
 enum KeychainStoreError: LocalizedError {
     case unexpectedStatus(OSStatus)
     case invalidData
@@ -15,7 +22,7 @@ enum KeychainStoreError: LocalizedError {
     }
 }
 
-struct KeychainStore {
+struct KeychainStore: KeychainStoring {
     func read(service: String, account: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -48,6 +55,23 @@ struct KeychainStore {
         guard status == errSecSuccess else {
             throw KeychainStoreError.unexpectedStatus(status)
         }
+    }
+
+    func contains(service: String, account: String) throws -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else {
+            throw KeychainStoreError.unexpectedStatus(status)
+        }
+        return true
     }
 
     func delete(service: String, account: String) throws {
