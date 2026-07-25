@@ -1088,25 +1088,3 @@ def load_sample_data(file_path):
         return None
 
 
-if __name__ == "__main__":
-    # 创建存储实例
-    storage = MeetingSessionStorage()  # , api_base_url='http://localhost:3000')
-
-    # 初始化数据库
-    if not storage.initialize_database():
-        print("数据库初始化失败，请检查数据库连接!")
-        exit(1)
-
-    # storage.store_from_api('cecc947e-0d28-4486-aaa1-d83ec925cd9a')
-    # storage.store_from_txt_file('D:\L\Vscode\Python\internship-ii\mysql\session_data.txt')
-
-    # === 测试代码 ===
-    print("\n=== 开始测试 ===")
-
-    # 1. 测试存储功能
-    print("\n[测试存储功能]")
-    if storage.store_session(test_data):
-        print("✅ 测试数据存储成功")
-    else:
-        print("❌ 测试数据存储失败")
-        exit(1)
