@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("PROMPTMEET_DESKTOP_MODE", "1")
 
-from main_service import app
+from main_service import app  # noqa: E402
 
 
 if __name__ == "__main__":

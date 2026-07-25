@@ -661,7 +661,7 @@ def test_answer_meeting_finalizes_immediately_on_empty_no_tool_response(monkeypa
     async def collect(message: dict) -> None:
         emitted.append(message)
 
-    result = asyncio.run(
+    asyncio.run(
         service.answer_meeting(record, "问题？", collect)
     )
 
@@ -743,7 +743,7 @@ def test_answer_meeting_emits_exhaustion_on_tool_budget_limit(monkeypatch) -> No
     async def collect(message: dict) -> None:
         emitted.append(message)
 
-    result = asyncio.run(
+    asyncio.run(
         service.answer_meeting(record, "exhaustive?", collect)
     )
 

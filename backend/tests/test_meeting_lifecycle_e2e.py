@@ -139,7 +139,11 @@ def test_rapid_questions_keep_request_scoped_snapshots_and_answers(monkeypatch, 
     class DelayedAgent:
         async def answer_meeting(self, record, question, emit, **kwargs):
             request_id = "request-1" if question == "问题一" else "request-2"
-            snapshots[request_id] = [event.payload.request_id for event in record.events if event.kind == EventKind.USER_QUESTION]
+            snapshots[request_id] = [
+                event.payload.request_id
+                for event in record.events
+                if event.kind == EventKind.USER_QUESTION
+            ]
             await releases[request_id].wait()
             answer = f"{question}的回答"
             await emit({"data": {"content": answer}})

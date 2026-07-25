@@ -6,7 +6,7 @@ PromptMeet FastAPI 主服务
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Dict, List, Optional
+from typing import Optional
 import json
 import logging
 import os
@@ -22,25 +22,22 @@ from dotenv import load_dotenv
 
 load_dotenv(os.getenv("PROMPTMEET_ENV_FILE") or None, override=False)
 
-from models.data_models import (
+from models.data_models import (  # noqa: E402
     SessionState,
     TranscriptSegment,
     MeetingSummary,
     TaskItem,
     ProgressUpdate,
     MessageType,
-    WebSocketMessage,
     IPCCommand,
 )
-from models.data_models import WebSocketMessage
-
-from services.session_manager import SessionManager
-from services.websocket_manager import WebSocketManager
-from services.process_manager import ProcessManager
-from services.native_audio_ingress import NativeAudioIngress
-from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
-from services.meeting_repository import MeetingNotFoundError, MeetingRepository
-from models.meeting_context import (
+from services.session_manager import SessionManager  # noqa: E402
+from services.websocket_manager import WebSocketManager  # noqa: E402
+from services.process_manager import ProcessManager  # noqa: E402
+from services.native_audio_ingress import NativeAudioIngress  # noqa: E402
+from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult  # noqa: E402
+from services.meeting_repository import MeetingNotFoundError, MeetingRepository  # noqa: E402
+from models.meeting_context import (  # noqa: E402
     EventKind,
     MeetingEvent,
     MeetingRecord,
@@ -52,15 +49,15 @@ from models.meeting_context import (
 )
 DESKTOP_MODE = os.getenv("PROMPTMEET_DESKTOP_MODE") == "1"
 if DESKTOP_MODE:
-    from services.desktop_agent_service import DesktopAgentService
-    from services.desktop_storage import HybridSessionStorage
-    from services.desktop_summary_service import OriginalSummaryService
+    from services.desktop_agent_service import DesktopAgentService  # noqa: E402
+    from services.desktop_storage import HybridSessionStorage  # noqa: E402
+    from services.desktop_summary_service import OriginalSummaryService  # noqa: E402
 else:
-    from processors.database import MeetingSessionStorage
-from api.native_audio import build_native_audio_router
-from api.native_recording import build_native_recording_router
-from api.native_screenshot import build_native_screenshot_router
-from api.native_transcript import build_native_transcript_router
+    from processors.database import MeetingSessionStorage  # noqa: E402
+from api.native_audio import build_native_audio_router  # noqa: E402
+from api.native_recording import build_native_recording_router  # noqa: E402
+from api.native_screenshot import build_native_screenshot_router  # noqa: E402
+from api.native_transcript import build_native_transcript_router  # noqa: E402
 
 # 配置日志
 logging.basicConfig(
@@ -77,9 +74,9 @@ async def lifespan(app: FastAPI):
     await process_manager.initialize()
     logger.info("PromptMeet 服务启动完成")
     if not db_storage.initialize_database():
-        logger.error("数据库初始化失败!") 
+        logger.error("数据库初始化失败!")
     yield  # 应用运行期间
-    
+
     # 关闭时清理资源
     logger.info("PromptMeet 服务正在关闭...")
     await process_manager.cleanup()
@@ -342,9 +339,6 @@ app.include_router(
         process_native_transcript,
     )
 )
-
-
-
 
 
 # ============= HTTP API 接口 =============
@@ -623,7 +617,8 @@ async def generate_questions(session_id: str):
     except Exception as e:
         logger.error(f"生成问题失败: {e}")
         return {"success": False, "message": f"生成问题失败: {str(e)}"}
-        
+
+
 @app.post("/api/sessions/{session_id}/store-session")
 async def store_session(session_id: str):
     """存储会话数据到数据库"""
@@ -633,7 +628,7 @@ async def store_session(session_id: str):
         if not session:
             logger.warning(f"尝试存储不存在的会话: {session_id}")
             raise HTTPException(status_code=404, detail="会话不存在")
-        
+
         # 简单验证会话数据
         if not session.session_id:
             logger.error(f"会话数据无效: {session_id}")
@@ -656,28 +651,28 @@ async def store_session(session_id: str):
                 "stored_at": datetime.now(UTC).isoformat(),
                 "schema_version": record.schema_version,
             }
-        
+
         # 转换为字典格式
         session_dict = session.model_dump()
-        
+
         # 执行存储操作
         logger.info(f"开始存储会话: {session_id}")
         success = await asyncio.get_event_loop().run_in_executor(
             None, db_storage.store_session, session_dict
         )
-        
+
         if not success:
             logger.error(f"会话存储失败: {session_id}")
             raise HTTPException(status_code=500, detail="会话存储失败")
-        
+
         logger.info(f"会话存储成功: {session_id}")
         return {
-            "success": True, 
+            "success": True,
             "message": "会话存储成功",
             "session_id": session_id,
-            "stored_at": datetime.now().isoformat()
+            "stored_at": datetime.now().isoformat(),
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -995,7 +990,7 @@ async def on_agent_response(session_id: str, response: dict, request_id: str | N
                 "type": "answer",
                 "data": {"content": content}
             })
-    except Exception as e:
+    except Exception:
         await websocket_manager.broadcast_to_session(session_id, {
             "type": "answer",
             "data": {"content": str(response)}
@@ -1045,6 +1040,7 @@ def legacy_meeting_projection(record: MeetingRecord) -> dict:
         "events": [event.model_dump(mode="json") for event in record.events],
     }
 
+
 @app.get("/db/sessions", response_class=JSONResponse)
 async def get_all_sessions():
     """获取所有会话列表"""
@@ -1057,6 +1053,7 @@ async def get_all_sessions():
         return JSONResponse(content=json.loads(sessions_json))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
+
 
 @app.get("/db/sessions/{session_id}", response_class=JSONResponse)
 async def get_session_details(session_id: str):
@@ -1073,6 +1070,7 @@ async def get_session_details(session_id: str):
         return JSONResponse(content=json.loads(session_json))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
+
 
 @app.post("/db/sessions/{session_id}/export")
 async def export_session(session_id: str):
@@ -1188,7 +1186,7 @@ async def on_image_result_received(session_id: str, image_result: dict):
         # 更新会话状态
         session = session_manager.get_session(session_id)
         if session:
-            
+
             session.image_ocr_result.append(image_result)
             logger.info(f"image_ocr_result: {image_result}")
             session_manager.update_session(session)
