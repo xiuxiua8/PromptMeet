@@ -138,8 +138,9 @@ class DesktopAgentService:
         web_sources: list[dict[str, str]] = []
         headers = {"Authorization": f"Bearer {configuration.api_key}"}
         async with httpx.AsyncClient(timeout=90) as client:
-            for round_index in range(self.MAX_TOOL_ROUNDS + 1):
-                tools_available = search_enabled and round_index < self.MAX_TOOL_ROUNDS
+            tool_rounds_used = 0
+            for _ in range(self.MAX_TOOL_ROUNDS + 1):
+                tools_available = search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
                 request_payload: dict[str, object] = {
                     "model": configuration.model,
                     "messages": messages,
@@ -158,6 +159,7 @@ class DesktopAgentService:
                 )
                 tool_calls = message.get("tool_calls") or []
                 if tools_available and tool_calls:
+                    tool_rounds_used += 1
                     messages.append(
                         {
                             "role": "assistant",
@@ -174,15 +176,14 @@ class DesktopAgentService:
                             }
                         )
                     continue
-                answer = message.get("content")
-                if answer:
-                    break
-                if not tools_available:
-                    answer = "抱歉，我暂时无法生成回答。"
+                if tool_calls:
+                    answer = "抱歉，本次回答超过了工具调用上限。"
                     await emit({"data": {"delta": answer}})
                     break
-            else:
-                answer = "抱歉，本次回答超过了工具调用上限。"
+                answer = message.get("content") or "抱歉，我暂时无法生成回答。"
+                if not message.get("content"):
+                    await emit({"data": {"delta": answer}})
+                break
 
         source_block = self._source_block(web_sources)
         answer += source_block
@@ -276,8 +277,9 @@ class DesktopAgentService:
         sources: list[dict[str, str]] = []
         headers = {"Authorization": f"Bearer {api_key}"}
         async with httpx.AsyncClient(timeout=90) as client:
-            for round_index in range(self.MAX_TOOL_ROUNDS + 1):
-                tools_available = search_enabled and round_index < self.MAX_TOOL_ROUNDS
+            tool_rounds_used = 0
+            for _ in range(self.MAX_TOOL_ROUNDS + 1):
+                tools_available = search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
                 request_payload: dict[str, object] = {
                     "model": model,
                     "messages": messages,
@@ -296,6 +298,7 @@ class DesktopAgentService:
                 )
                 tool_calls = message.get("tool_calls") or []
                 if tools_available and tool_calls:
+                    tool_rounds_used += 1
                     messages.append(
                         {
                             "role": "assistant",
@@ -314,15 +317,14 @@ class DesktopAgentService:
                         )
                     continue
 
-                answer = message.get("content")
-                if answer:
-                    break
-                if not tools_available:
-                    answer = "抱歉，我暂时无法生成回答。"
+                if tool_calls:
+                    answer = "抱歉，本次回答超过了工具调用上限。"
                     await emit({"data": {"delta": answer}})
                     break
-            else:
-                answer = "抱歉，本次回答超过了工具调用上限。"
+                answer = message.get("content") or "抱歉，我暂时无法生成回答。"
+                if not message.get("content"):
+                    await emit({"data": {"delta": answer}})
+                break
 
         source_block = self._source_block(sources)
         answer += source_block

@@ -541,3 +541,216 @@ def test_meeting_answer_uses_typed_budgeted_context_and_exact_question(monkeypat
     assert result.answer == "负责人是林晨 [M1]。"
     assert result.sources[0].source_id == "M1"
     assert emitted[-1]["data"]["content"] == result.answer
+
+
+def test_answer_finalizes_immediately_on_empty_no_tool_response(monkeypatch) -> None:
+    FakeAgentClient.responses = [{"role": "assistant", "content": None}]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    service = DesktopAgentService(
+        environment={"DEEPSEEK_API_KEY": "test-key"},
+    )
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    asyncio.run(service.answer("question?", [], collect))
+
+    assert len(FakeAgentClient.payloads) == 1
+    deltas = "".join(
+        event["data"]["delta"] for event in emitted if event.get("data", {}).get("delta")
+    )
+    assert deltas == "抱歉，我暂时无法生成回答。"
+
+
+def test_answer_emits_exhaustion_on_tool_budget_limit(monkeypatch) -> None:
+    searches = []
+
+    async def search(query: str, limit: int = 4) -> list[dict[str, str]]:
+        searches.append(query)
+        return [
+            {
+                "title": f"Result for {query}",
+                "url": f"https://example.com/{len(searches)}",
+                "snippet": f"Snippet from search {len(searches)}.",
+            }
+        ]
+
+    def tool_call_response(call_id: str, query: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "arguments": f'{{"query":"{query}"}}',
+                    },
+                }
+            ],
+        }
+
+    FakeAgentClient.responses = [
+        tool_call_response("call_1", "first query"),
+        tool_call_response("call_2", "second query"),
+        tool_call_response("call_3", "third query"),
+        tool_call_response("call_4", "fourth query"),
+    ]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    service = DesktopAgentService(
+        environment={"DEEPSEEK_API_KEY": "test-key"},
+        web_search=search,
+    )
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    asyncio.run(service.answer("exhaustive question", [], collect))
+
+    assert len(searches) == 3
+    assert len(FakeAgentClient.payloads) == 4
+    deltas = "".join(
+        event["data"]["delta"] for event in emitted if event.get("data", {}).get("delta")
+    )
+    assert "超过了工具调用上限" in deltas
+
+
+def test_answer_meeting_finalizes_immediately_on_empty_no_tool_response(monkeypatch) -> None:
+    FakeAgentClient.responses = [{"role": "assistant", "content": None}]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-b",
+        started_at=datetime(2026, 7, 25, tzinfo=UTC),
+        events=[
+            MeetingEvent(
+                event_id="event-1",
+                meeting_id="meeting-b",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 25, 10, tzinfo=UTC),
+                kind=EventKind.TRANSCRIPT,
+                provenance=EventProvenance(source="native_transcript"),
+                payload=TranscriptPayload(
+                    segment_id="segment-1",
+                    speaker="发言",
+                    text="简短上下文",
+                ),
+            )
+        ],
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "deepseek",
+            "DEEPSEEK_API_KEY": "test-key",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        }
+    )
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    result = asyncio.run(
+        service.answer_meeting(record, "问题？", collect)
+    )
+
+    assert len(FakeAgentClient.payloads) == 1
+    deltas = "".join(
+        event["data"]["delta"] for event in emitted[:-1]
+        if event.get("data", {}).get("delta")
+    )
+    assert deltas == "抱歉，我暂时无法生成回答。"
+
+
+def test_answer_meeting_emits_exhaustion_on_tool_budget_limit(monkeypatch) -> None:
+    searches = []
+
+    async def search(query: str, limit: int = 4) -> list[dict[str, str]]:
+        searches.append(query)
+        return [
+            {
+                "title": f"R{len(searches)}",
+                "url": f"https://x.com/{len(searches)}",
+                "snippet": f"S{len(searches)}.",
+            }
+        ]
+
+    def tool_call_response(call_id: str, query: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "arguments": f'{{"query":"{query}"}}',
+                    },
+                }
+            ],
+        }
+
+    FakeAgentClient.responses = [
+        tool_call_response("c1", "q1"),
+        tool_call_response("c2", "q2"),
+        tool_call_response("c3", "q3"),
+        tool_call_response("c4", "q4"),
+    ]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-c",
+        started_at=datetime(2026, 7, 25, tzinfo=UTC),
+        events=[
+            MeetingEvent(
+                event_id="event-1",
+                meeting_id="meeting-c",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 25, 10, tzinfo=UTC),
+                kind=EventKind.TRANSCRIPT,
+                provenance=EventProvenance(source="native_transcript"),
+                payload=TranscriptPayload(
+                    segment_id="s1",
+                    speaker="发言",
+                    text="上下文",
+                ),
+            )
+        ],
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "deepseek",
+            "DEEPSEEK_API_KEY": "test-key",
+        },
+        web_search=search,
+    )
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    result = asyncio.run(
+        service.answer_meeting(record, "exhaustive?", collect)
+    )
+
+    assert len(searches) == 3
+    assert len(FakeAgentClient.payloads) == 4
+    deltas = "".join(
+        event["data"]["delta"] for event in emitted
+        if event.get("data", {}).get("delta")
+    )
+    assert "超过了工具调用上限" in deltas
