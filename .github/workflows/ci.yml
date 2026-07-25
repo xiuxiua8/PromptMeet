@@ -107,11 +107,11 @@ jobs:
     
     - name: Build Docker images
       run: |
-        docker-compose -f docker/docker-compose.yml build
+        docker compose -f docker/docker-compose.yml build
         
     - name: Test Docker setup
       run: |
-        docker-compose -f docker/docker-compose.yml up -d
+        docker compose -f docker/docker-compose.yml up -d
         echo "Waiting for services to start..."
         sleep 60
         echo "Testing backend health endpoint..."
@@ -121,5 +121,5 @@ jobs:
     - name: Cleanup Docker
       if: always()
       run: |
-        docker-compose -f docker/docker-compose.yml down -v
+        docker compose -f docker/docker-compose.yml down -v
         docker system prune -f 
