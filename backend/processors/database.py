@@ -179,13 +179,11 @@ class MeetingSessionStorage:
             cursor = conn.cursor()
 
             # 创建数据库
-            cursor.execute(
-                f"""
+            cursor.execute(f"""
                 CREATE DATABASE IF NOT EXISTS {self.db_config['database']}
                 CHARACTER SET utf8mb4
                 COLLATE utf8mb4_unicode_ci
-            """
-            )
+            """)
             conn.commit()
             print(f"数据库 {self.db_config['database']} 创建成功或已存在")
             return True
@@ -239,8 +237,7 @@ class MeetingSessionStorage:
             cursor.execute("USE meeting_sessions")
 
             # 创建会话主表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id VARCHAR(36) PRIMARY KEY COMMENT '会话唯一标识',
                     is_recording BOOLEAN COMMENT '是否正在录制',
@@ -250,11 +247,9 @@ class MeetingSessionStorage:
                     audio_file_path VARCHAR(255) NULL COMMENT '音频文件路径',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
                 ) COMMENT '会议会话主表'
-            """
-            )
+            """)
             # 创建转录文本片段表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS transcript_segments (
                     id VARCHAR(36) PRIMARY KEY COMMENT '片段ID',
                     session_id VARCHAR(36) COMMENT '关联会话ID',
@@ -266,12 +261,10 @@ class MeetingSessionStorage:
                     end_time DATETIME NULL COMMENT '结束时间',
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 ) COMMENT '会议转录文本片段'
-            """
-            )
+            """)
 
             # 创建会议摘要表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS session_summaries (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '摘要ID',
                     session_id VARCHAR(36) COMMENT '关联会话ID',
@@ -279,12 +272,10 @@ class MeetingSessionStorage:
                     generated_at DATETIME COMMENT '生成时间',
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 ) COMMENT '会议内容摘要'
-            """
-            )
+            """)
 
             # 创建任务表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '任务ID',
                     session_id VARCHAR(36) COMMENT '关联会话ID',
@@ -296,32 +287,27 @@ class MeetingSessionStorage:
                     status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending' COMMENT '任务状态',
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 ) COMMENT '会议生成的任务'
-            """
-            )
+            """)
 
             # 创建关键点表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS key_points (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '关键点ID',
                     session_id VARCHAR(36) COMMENT '关联会话ID',
                     point_text TEXT COMMENT '关键点内容',
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 ) COMMENT '会议关键点'
-            """
-            )
+            """)
 
             # 创建决策表
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS decisions (
                     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '决策ID',
                     session_id VARCHAR(36) COMMENT '关联会话ID',
                     decision_text TEXT COMMENT '决策内容',
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 ) COMMENT '会议决策'
-            """
-            )
+            """)
 
             self.create_views()
             self.connection.commit()
@@ -876,13 +862,11 @@ class MeetingSessionStorage:
         try:
             cursor = self.connection.cursor(dictionary=True)
             # 只查询session_id
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT session_id
                 FROM sessions
                 ORDER BY start_time DESC
-            """
-            )
+            """)
             sessions = cursor.fetchall()
 
             # 为每个会话获取前1个关键词并清理格式

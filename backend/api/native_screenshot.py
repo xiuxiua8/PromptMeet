@@ -5,7 +5,6 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Header, HTTPException
 
-
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 

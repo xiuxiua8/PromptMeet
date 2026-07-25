@@ -18,7 +18,6 @@ from services.context_builder import ContextBudget, MeetingContextBuilder
 from services.model_provider import ProviderCapabilities
 from services.prompt_builder import MeetingPromptBuilder
 
-
 START = datetime(2026, 7, 25, 9, 0, tzinfo=UTC)
 
 

@@ -4,7 +4,6 @@ import subprocess
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 DESKTOP_PYTHON = ROOT / "build/desktop-python/bin/python3"

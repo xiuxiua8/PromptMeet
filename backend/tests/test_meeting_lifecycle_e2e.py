@@ -10,7 +10,6 @@ from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalys
 from services.meeting_repository import MeetingRepository
 from services.desktop_storage import HybridSessionStorage
 
-
 PNG = b"\x89PNG\r\n\x1a\nPromptMeet screenshot"
 
 

@@ -11,7 +11,6 @@ from models.meeting_context import (
 )
 from services.meeting_repository import MeetingRepository
 
-
 START = datetime(2026, 7, 25, 10, 0, tzinfo=UTC)
 
 

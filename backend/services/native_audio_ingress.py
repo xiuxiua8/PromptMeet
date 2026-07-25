@@ -4,7 +4,6 @@ from threading import Lock
 
 from models.native_bridge import NativeAudioChunk, NativeAudioReceipt
 
-
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 

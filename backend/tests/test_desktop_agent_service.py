@@ -17,21 +17,13 @@ class FakeResponse:
         pass
 
     def json(self) -> dict:
-        return {
-            "choices": [
-                {
-                    "message": {
-                        "content": """```json
+        return {"choices": [{"message": {"content": """```json
 [
   {"question":"如何实现一个线程安全的 LRU 缓存？","evidence":"请实现一个线程安全的 LRU 缓存"},
   {"question":"项目预算是多少？","evidence":"预算是 100 万元"},
   {"question":"谁负责上线？","evidence":""}
 ]
-```"""
-                    }
-                }
-            ]
-        }
+```"""}}]}
 
 
 class FakeClient:

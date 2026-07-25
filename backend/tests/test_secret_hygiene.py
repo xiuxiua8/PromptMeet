@@ -2,7 +2,6 @@ from pathlib import Path
 import re
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OPENAI_SECRET = re.compile(r"sk-[A-Za-z0-9_-]{20,}")
 SECRET_OUTPUT = re.compile(

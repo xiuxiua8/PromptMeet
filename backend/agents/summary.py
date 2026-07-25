@@ -74,8 +74,7 @@ class MeetingProcessor:
 
     async def _extract_my_tasks(self, text: str) -> List[Dict]:
         """提取与qin_ran(我)相关的任务（增强DDL识别能力）"""
-        prompt = ChatPromptTemplate.from_template(
-            """
+        prompt = ChatPromptTemplate.from_template("""
             请从以下会议内容中识别出分配给[{username}](可能称呼包括：{aliases})的任务，
             以及虽然没有明确分配但可能需要我负责的任务。
 
@@ -108,8 +107,7 @@ class MeetingProcessor:
 
             当前日期：{current_date}
             会议内容：
-            {text}"""
-        )
+            {text}""")
 
         chain = prompt | self.llm | StrOutputParser()
         tasks_json = await chain.ainvoke(
@@ -158,8 +156,7 @@ class MeetingProcessor:
             else "无特定任务"
         )
 
-        prompt = ChatPromptTemplate.from_template(
-            """
+        prompt = ChatPromptTemplate.from_template("""
             请用中文总结以下会议内容：
             1. 主要讨论议题（议题内容如果有重复或者相似的，请合并）
             2. 重要结论或决定
@@ -167,8 +164,7 @@ class MeetingProcessor:
             {tasks}
 
             会议内容：
-            {text}"""
-        )
+            {text}""")
 
         async for chunk in (prompt | self.llm | StrOutputParser()).astream(
             {"text": text, "tasks": tasks_str}
@@ -177,8 +173,7 @@ class MeetingProcessor:
 
     async def _extract_email_info(self, text: str) -> Dict:
         """提取邮件信息"""
-        prompt = ChatPromptTemplate.from_template(
-            """
+        prompt = ChatPromptTemplate.from_template("""
             请从以下会议内容中识别出需要发送邮件的信息，包括：
             1. 收信人姓名或部门
             2. 收信人邮箱地址
@@ -206,8 +201,7 @@ class MeetingProcessor:
             }}
 
             会议内容：
-            {text}"""
-        )
+            {text}""")
 
         chain = prompt | self.llm | StrOutputParser()
         email_json = await chain.ainvoke({"text": text[:3000]})
@@ -259,8 +253,7 @@ class MeetingProcessor:
         self, tasks: List[Dict]
     ) -> AsyncGenerator[str, Any]:
         """生成结构化的待办事项JSON"""
-        prompt = ChatPromptTemplate.from_template(
-            """
+        prompt = ChatPromptTemplate.from_template("""
             请将以下任务列表转换为更结构化的JSON格式，要求：
             1. 包含所有原始信息
             2. 确保所有日期格式为YYYY-MM-DD或null
@@ -279,8 +272,7 @@ class MeetingProcessor:
             }}
 
             原始任务列表：
-            {tasks}"""
-        )
+            {tasks}""")
 
         # 将原始任务转换为易读格式
         tasks_str = (
