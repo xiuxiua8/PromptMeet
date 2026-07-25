@@ -9,12 +9,16 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+from dotenv import load_dotenv
+
+load_dotenv(os.getenv("PROMPTMEET_ENV_FILE") or None, override=False)
 
 from models.data_models import (
     SessionState,
@@ -31,7 +35,18 @@ from models.data_models import WebSocketMessage
 from services.session_manager import SessionManager
 from services.websocket_manager import WebSocketManager
 from services.process_manager import ProcessManager
-from processors.database import MeetingSessionStorage
+from services.native_audio_ingress import NativeAudioIngress
+DESKTOP_MODE = os.getenv("PROMPTMEET_DESKTOP_MODE") == "1"
+if DESKTOP_MODE:
+    from services.desktop_agent_service import DesktopAgentService
+    from services.desktop_storage import HybridSessionStorage
+    from services.desktop_summary_service import OriginalSummaryService
+else:
+    from processors.database import MeetingSessionStorage
+from api.native_audio import build_native_audio_router
+from api.native_recording import build_native_recording_router
+from api.native_screenshot import build_native_screenshot_router
+from api.native_transcript import build_native_transcript_router
 
 # 配置日志
 logging.basicConfig(
@@ -76,7 +91,126 @@ app.add_middleware(
 session_manager = SessionManager()
 websocket_manager = WebSocketManager()
 process_manager = ProcessManager()
-db_storage = MeetingSessionStorage()
+db_storage = (
+    HybridSessionStorage.from_environment(os.getenv("PROMPTMEET_DATA_DIR"))
+    if DESKTOP_MODE
+    else MeetingSessionStorage()
+)
+desktop_agent_service = DesktopAgentService() if DESKTOP_MODE else None
+desktop_summary_service = OriginalSummaryService() if DESKTOP_MODE else None
+native_audio_ingress = NativeAudioIngress(process_manager.work_dir / "native_audio")
+
+
+async def start_native_recording(session_id: str) -> None:
+    session = session_manager.get_session(session_id)
+    if not session or session.is_recording:
+        return
+    if not DESKTOP_MODE:
+        await process_manager.start_question_process(session_id)
+    session.is_recording = True
+    session_manager.update_session(session)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": MessageType.AUDIO_START,
+            "data": {"session_id": session_id, "capture": "native"},
+            "timestamp": datetime.now(),
+            "session_id": session_id,
+        },
+    )
+
+
+async def stop_native_recording(session_id: str) -> None:
+    session = session_manager.get_session(session_id)
+    if not session or not session.is_recording:
+        return
+    if not DESKTOP_MODE:
+        await process_manager.stop_question_process(session_id)
+    session.is_recording = False
+    session_manager.update_session(session)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": MessageType.AUDIO_STOP,
+            "data": {"session_id": session_id, "capture": "native"},
+            "timestamp": datetime.now(),
+            "session_id": session_id,
+        },
+    )
+
+
+async def process_native_screenshot(session_id: str, image_path) -> None:
+    if DESKTOP_MODE:
+        if session_id in process_manager.image_processes:
+            await process_manager.stop_image_process(session_id)
+        await process_manager.start_image_process(
+            session_id,
+            image_path=str(image_path),
+        )
+        return
+    if session_id in process_manager.image_processes:
+        await process_manager.stop_image_process(session_id)
+    await process_manager.start_image_process(session_id, image_path=str(image_path))
+
+
+async def process_native_transcript(session_id: str, transcript: dict) -> None:
+    await on_transcript_received(session_id, transcript)
+    target = transcript.get("translation_target")
+    if DESKTOP_MODE and desktop_agent_service is not None and target:
+        asyncio.create_task(
+            translate_native_transcript(
+                session_id,
+                transcript["id"],
+                transcript["text"],
+                target,
+            )
+        )
+
+
+async def translate_native_transcript(
+    session_id: str,
+    transcript_id: str,
+    text: str,
+    target_language: str,
+) -> None:
+    try:
+        translated_text = await desktop_agent_service.translate(text, target_language)
+        await websocket_manager.broadcast_to_session(
+            session_id,
+            {
+                "type": "transcript_translation",
+                "data": {"id": transcript_id, "translated_text": translated_text},
+                "timestamp": datetime.now(),
+                "session_id": session_id,
+            },
+        )
+    except Exception as error:
+        logger.warning("实时翻译失败: session=%s, error=%s", session_id, error)
+
+
+app.include_router(
+    build_native_audio_router(session_manager.get_session, native_audio_ingress)
+)
+app.include_router(
+    build_native_screenshot_router(
+        session_manager.get_session,
+        process_manager.work_dir / "native_screenshots",
+        process_native_screenshot,
+    )
+)
+app.include_router(
+    build_native_recording_router(
+        session_manager.get_session,
+        start_native_recording,
+        stop_native_recording,
+    )
+)
+app.include_router(
+    build_native_transcript_router(
+        session_manager.get_session,
+        process_native_transcript,
+    )
+)
 
 
 
@@ -88,13 +222,18 @@ db_storage = MeetingSessionStorage()
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {
+    result = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "service": "PromptMeet FastAPI",
         "active_sessions": len(session_manager.sessions),
         "connected_clients": len(websocket_manager.connections),
+        "storage": getattr(db_storage, "backend_name", "mysql"),
+        "desktop_mode": DESKTOP_MODE,
     }
+    if DESKTOP_MODE and desktop_agent_service is not None:
+        result["ai"] = desktop_agent_service.provider_status()
+    return result
 
 
 @app.get("/api/windows")
@@ -212,7 +351,8 @@ async def create_session():
     session_manager.add_session(session)
     logger.info("收到创建会话请求")
     # 启动Agent进程
-    await process_manager.start_agent_process(session_id)
+    if not DESKTOP_MODE:
+        await process_manager.start_agent_process(session_id)
     logger.info("Agent进程启动完成")
     logger.info(f"创建新会话: {session_id}")
     return {"success": True, "session_id": session_id, "message": "会话创建成功"}
@@ -336,6 +476,16 @@ async def generate_summary(session_id: str):
         return {"success": False, "message": "没有转录内容可分析"}
 
     try:
+        if DESKTOP_MODE and desktop_summary_service is not None:
+            summary_data = await desktop_summary_service.summarize(
+                session_id,
+                session.transcript_segments,
+            )
+            await on_summary_generated(
+                session_id,
+                summary_data,
+            )
+            return {"success": True, "message": "会议摘要已生成"}
         # 启动 Summary 分析进程
         await process_manager.start_summary_process(session_id)
 
@@ -358,6 +508,13 @@ async def generate_questions(session_id: str):
         return {"success": False, "message": "没有转录内容可生成问题"}
 
     try:
+        if DESKTOP_MODE and desktop_agent_service is not None:
+            questions = await desktop_agent_service.generate_questions(
+                session.transcript_segments
+            )
+            await on_questions_generated(session_id, {"questions": questions})
+            logger.info(f"会话 {session_id} 已生成桌面追问")
+            return {"success": True, "message": "问题已生成"}
         # 启动 Question 生成进程
         await process_manager.start_question_process(session_id)
 
@@ -505,6 +662,28 @@ async def handle_websocket_message(session_id: str, message: dict):
         )
 
     elif message_type == "agent_message":
+        if DESKTOP_MODE and desktop_agent_service is not None:
+            session = session_manager.get_session(session_id)
+            request_id = data.get("request_id")
+            try:
+                await desktop_agent_service.answer(
+                    data.get("content", ""),
+                    session.transcript_segments if session else [],
+                    lambda response: on_agent_response(session_id, response, request_id),
+                )
+            except Exception as e:
+                await websocket_manager.broadcast_to_session(
+                    session_id,
+                    {
+                        "type": "error",
+                        "data": {
+                            "scope": "ai",
+                            "request_id": request_id,
+                            "message": str(e),
+                        },
+                    },
+                )
+            return
         # 转发消息到Agent进程
         session_dir = process_manager.work_dir / session_id
         ipc_input = session_dir / "agent_input.pipe"
@@ -523,7 +702,7 @@ async def handle_websocket_message(session_id: str, message: dict):
 
 
 # 添加Agent响应回调
-async def on_agent_response(session_id: str, response: dict):
+async def on_agent_response(session_id: str, response: dict, request_id: str | None = None):
     """处理Agent响应，支持流式分片"""
     # 兼容旧结构，提取最终回答内容
     try:
@@ -533,14 +712,14 @@ async def on_agent_response(session_id: str, response: dict):
             delta = data.get("delta") or data.get("chunk")
             await websocket_manager.broadcast_to_session(session_id, {
                 "type": "answer",
-                "data": {"delta": delta}
+                "data": {"request_id": request_id, "delta": delta}
             })
             return
         # 完整内容
         if isinstance(data, dict) and "content" in data:
             await websocket_manager.broadcast_to_session(session_id, {
                 "type": "answer",
-                "data": {"content": data["content"]}
+                "data": {"request_id": request_id, "content": data["content"]}
             })
             return
         # 邮件相关
@@ -571,39 +750,6 @@ async def on_agent_response(session_id: str, response: dict):
         })
 # 注册回调
 process_manager.on_agent_response = on_agent_response
-
-# ============= Database 接口 =============
-
-@app.get("/db/sessions", response_class=JSONResponse)
-async def get_all_sessions():
-    """获取所有会话列表"""
-    try:
-        sessions_json = db_storage.get_all_sessions()
-        return JSONResponse(content=json.loads(sessions_json))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
-
-@app.get("/db/sessions/{session_id}", response_class=JSONResponse)
-async def get_session_details(session_id: str):
-    """获取会话详情"""
-    try:
-        session_json = db_storage.get_session_details(session_id)
-        if not session_json or session_json == "null":
-            raise HTTPException(status_code=404, detail="会话不存在")
-        return JSONResponse(content=json.loads(session_json))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取会话详情失败: {str(e)}")
-
-@app.post("/db/sessions/{session_id}/export")
-async def export_session(session_id: str):
-    """导出会话数据"""
-    try:
-        filepath = db_storage.save_session_to_json_file(session_id)
-        if not filepath:
-            raise HTTPException(status_code=404, detail="会话不存在")
-        return {"success": True, "filepath": filepath}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
 
 # ============= Database 接口 =============
 
@@ -675,6 +821,7 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
         logger.info(
             f"转录片段已添加: session={session_id}, text={segment.text[:50]}..."
         )
+        await persist_session(session_id)
 
     except Exception as e:
         logger.error(f"处理转录结果失败: {e}")
@@ -711,9 +858,21 @@ async def on_summary_generated(session_id: str, summary_data: dict):
         )
 
         logger.info(f"摘要已生成: session={session_id}")
+        await persist_session(session_id)
 
     except Exception as e:
         logger.error(f"处理摘要结果失败: {e}")
+
+
+async def persist_session(session_id: str) -> bool:
+    session = session_manager.get_session(session_id)
+    if not session:
+        return False
+    return await asyncio.get_running_loop().run_in_executor(
+        None,
+        db_storage.store_session,
+        session.model_dump(),
+    )
 
 
 async def on_image_result_received(session_id: str, image_result: dict):
@@ -772,6 +931,14 @@ async def on_questions_generated(session_id: str, questions_data: dict):
     try:
         questions = questions_data.get("questions", [])
 
+        batch_message = {
+            "type": "questions",
+            "data": {"questions": questions},
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+        }
+        await websocket_manager.broadcast_to_session(session_id, batch_message)
+
         # 直接打印问题到终端
         print("\n" + "=" * 80)
         print(f"🎯 会话 {session_id[:8]} 生成了 {len(questions)} 个问题:")
@@ -813,7 +980,23 @@ process_manager.on_progress_update = on_progress_update
 process_manager.on_questions_generated = on_questions_generated
 process_manager.on_image_result_received = on_image_result_received
 
+
+def server_options() -> dict:
+    if DESKTOP_MODE:
+        return {
+            "host": "127.0.0.1",
+            "port": 8000,
+            "reload": False,
+            "log_level": "info",
+        }
+    return {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "reload": True,
+        "log_level": "info",
+    }
+
+
 if __name__ == "__main__":
-    uvicorn.run(
-        "main_service:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
-    )
+    target = app if DESKTOP_MODE else "main_service:app"
+    uvicorn.run(target, **server_options())

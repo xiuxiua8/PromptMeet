@@ -628,14 +628,21 @@ if __name__ == "__main__":
     parser.add_argument("--ipc-input", required=False)
     parser.add_argument("--work-dir", required=False)
     parser.add_argument("--window-id", required=False, help="指定要截图的窗口ID")
+    parser.add_argument("--image-path", required=False, help="原生内容选择器导出的图片")
     args = parser.parse_args()
 
     pipe_path = args.ipc_output
     session_id = args.session_id or "unknown-session"
     window_id = args.window_id
+    image_path = args.image_path
 
+    if image_path:
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"原生截图不存在: {image_path}")
+        logger.info("使用原生内容选择器导出的截图")
+        captured_paths = [image_path]
     # 如果指定了窗口ID，只处理该窗口
-    if window_id:
+    elif window_id:
         logger.info(f"处理指定窗口: {window_id}")
         window_dict = get_specific_window(window_id)
         if not window_dict:
@@ -671,8 +678,9 @@ if __name__ == "__main__":
             write_result_to_pipe(pipe_path, session_id, msg["data"])
             exit(0)
 
-    logger.info("正在截图会议窗口...")
-    captured_paths = take_screenshots(window_dict, folder="screenshots")
+    if not image_path:
+        logger.info("正在截图会议窗口...")
+        captured_paths = take_screenshots(window_dict, folder="screenshots")
 
     logger.info("正在调用 OCR 识别文字...")
     results = recognize_ocr_batch(captured_paths, max_workers=5)

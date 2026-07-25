@@ -1,0 +1,185 @@
+import Foundation
+
+enum BackendClientError: LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case serviceRejected(Int)
+    case serviceMessage(String)
+    case missingSessionID
+    case socketUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            "后端地址无效"
+        case .invalidResponse:
+            "后端返回了无法识别的数据"
+        case let .serviceRejected(status):
+            "后端请求失败（\(status)）"
+        case let .serviceMessage(message):
+            message
+        case .missingSessionID:
+            "后端未返回会话 ID"
+        case .socketUnavailable:
+            "实时连接尚未建立"
+        }
+    }
+}
+
+protocol BackendClientProtocol: AnyObject, Sendable {
+    func healthCheck() async throws
+    func createSession() async throws -> String
+    func perform(sessionID: String, action: String) async throws
+    func connect(sessionID: String, onEvent: @escaping @Sendable (BackendEvent) -> Void) throws
+    func sendPrompt(_ prompt: String, requestID: UUID) async throws
+    func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws
+    func fetchMeetingHistory() async throws -> [StoredMeeting]
+    func disconnect()
+}
+
+final class BackendClient: BackendClientProtocol, @unchecked Sendable {
+    private struct ActionResponse: Decodable {
+        let success: Bool
+        let message: String?
+    }
+
+    private struct CreateSessionResponse: Decodable {
+        let sessionID: String
+
+        enum CodingKeys: String, CodingKey {
+            case sessionID = "session_id"
+        }
+    }
+
+    private let environment: BackendEnvironment
+    private let session: URLSession
+    private var socket: URLSessionWebSocketTask?
+    private var listener: Task<Void, Never>?
+
+    init(environment: BackendEnvironment = .local, session: URLSession = .shared) {
+        self.environment = environment
+        self.session = session
+    }
+
+    func healthCheck() async throws {
+        let (_, response) = try await session.data(for: environment.request(path: "/health"))
+        try validate(response)
+    }
+
+    func createSession() async throws -> String {
+        let (data, response) = try await session.data(
+            for: environment.request(path: "/api/sessions", method: "POST")
+        )
+        try validate(response)
+        guard let result = try? JSONDecoder().decode(CreateSessionResponse.self, from: data) else {
+            throw BackendClientError.missingSessionID
+        }
+        return result.sessionID
+    }
+
+    func perform(sessionID: String, action: String) async throws {
+        let (data, response) = try await session.data(
+            for: environment.sessionActionRequest(sessionID: sessionID, action: action)
+        )
+        try validate(response)
+        if let result = try? JSONDecoder().decode(ActionResponse.self, from: data), !result.success {
+            throw BackendClientError.serviceMessage(result.message ?? "操作未完成")
+        }
+    }
+
+    func connect(
+        sessionID: String,
+        onEvent: @escaping @Sendable (BackendEvent) -> Void
+    ) throws {
+        disconnect()
+        let task = session.webSocketTask(with: try environment.webSocketURL(sessionID: sessionID))
+        socket = task
+        task.resume()
+        listener = Task { [weak self] in
+            guard let self else { return }
+            await self.listen(onEvent: onEvent)
+        }
+    }
+
+    func sendPrompt(_ prompt: String, requestID: UUID) async throws {
+        guard let socket else { throw BackendClientError.socketUnavailable }
+        let payload: [String: Any] = [
+            "type": "agent_message",
+            "data": ["request_id": requestID.uuidString, "content": prompt],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw BackendClientError.invalidResponse
+        }
+        try await socket.send(.string(text))
+    }
+
+    func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws {
+        let formatter = ISO8601DateFormatter()
+        var payload: [String: Any] = [
+            "id": transcript.id.uuidString,
+            "text": transcript.text,
+            "speaker": transcript.speaker,
+            "source": transcript.source.rawValue,
+            "timestamp": formatter.string(from: transcript.timestamp),
+        ]
+        if let translationTarget = transcript.translationTarget {
+            payload["translation_target"] = translationTarget
+        }
+        var request = environment.request(
+            path: "/api/sessions/\(sessionID)/native-transcript",
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (_, response) = try await session.data(for: request)
+        try validate(response)
+    }
+
+    func fetchMeetingHistory() async throws -> [StoredMeeting] {
+        let (data, response) = try await session.data(for: environment.request(path: "/db/sessions"))
+        try validate(response)
+        return try StoredMeeting.parseList(data)
+    }
+
+    func disconnect() {
+        listener?.cancel()
+        listener = nil
+        socket?.cancel(with: .normalClosure, reason: nil)
+        socket = nil
+    }
+
+    private func listen(onEvent: @escaping @Sendable (BackendEvent) -> Void) async {
+        guard let socket else { return }
+        while !Task.isCancelled {
+            do {
+                let message = try await socket.receive()
+                let text: String
+                switch message {
+                case let .string(value):
+                    text = value
+                case let .data(data):
+                    guard let value = String(data: data, encoding: .utf8) else { continue }
+                    text = value
+                @unknown default:
+                    continue
+                }
+                onEvent(try BackendEvent.decode(text))
+            } catch {
+                if !Task.isCancelled {
+                    onEvent(.failure(error.localizedDescription))
+                }
+                return
+            }
+        }
+    }
+
+    private func validate(_ response: URLResponse) throws {
+        guard let response = response as? HTTPURLResponse else {
+            throw BackendClientError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw BackendClientError.serviceRejected(response.statusCode)
+        }
+    }
+}

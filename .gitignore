@@ -94,6 +94,17 @@ yarn.lock
 *.json
 *.md
 
+# Keep approved native-app design specifications while excluding brainstorming artifacts.
+!docs/superpowers/specs/*.md
+!docs/superpowers/plans/*.md
+!desktop-macos/THIRD_PARTY_NOTICES.md
+.superpowers/
+.worktrees/
+
+desktop-macos/.build/
+desktop-macos/.local/
+
+*.md
 
 *.f0
 

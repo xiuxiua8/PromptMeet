@@ -248,7 +248,6 @@ class WhisperProcessor:
                     timeout=30,
                 )
 
-            logger.info(f"openai API响应: {self.api_key}")
             logger.info(
                 f"准备转录音频文件: {filename}, 大小: {os.path.getsize(filename)} bytes"
             )

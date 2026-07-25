@@ -8,6 +8,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 import os
+from pathlib import Path
 from io import StringIO
 import logging
 from pydantic import SecretStr
@@ -19,6 +20,21 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def summary_model_name(environment: dict[str, str] | None = None) -> str:
+    values = os.environ if environment is None else environment
+    return values.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+
+def summary_result_path() -> Path:
+    configured_work_dir = os.getenv("PROMPTMEET_WORK_DIR")
+    directory = (
+        Path(configured_work_dir) / "summary"
+        if configured_work_dir
+        else Path(__file__).parent / "temp"
+    )
+    return directory / "Result.txt"
+
 class MeetingProcessor:
     def __init__(self, streaming: bool = True):
         """初始化处理器"""
@@ -28,8 +44,8 @@ class MeetingProcessor:
         if deepseek_api_key:
             api_key = deepseek_api_key
             base_url = deepseek_api_base
-            model = "deepseek-chat"
-            print(f"使用DEEPSEEK API: {base_url}, Key: {api_key[:8]}...")
+            model = summary_model_name()
+            print(f"使用 DEEPSEEK API: {base_url}")
         else:
             raise ValueError("请设置DEEPSEEK_API_KEY环境变量")
         api_key = SecretStr(api_key) if api_key else None
@@ -293,15 +309,9 @@ class MeetingProcessor:
         
         # 保存结果到文件
         try:
-            import os
-
-            # 获取 temp 目录路径（在 backend 目录下）
-            temp_dir = os.path.join(os.path.dirname(__file__), "temp")
-            os.makedirs(temp_dir, exist_ok=True)
-
-            # 保存 Result.txt 到 temp 目录
-            result_path = os.path.join(temp_dir, "Result.txt")
-            with open(result_path, "w", encoding="utf-8") as f:
+            result_path = summary_result_path()
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            with result_path.open("w", encoding="utf-8") as f:
                 f.write(result_buffer.getvalue())
             logger.info("\n结果已保存到 Result.txt\n")
         except Exception as e:
@@ -325,15 +335,9 @@ async def run_processor(input_text: str):
         result_buffer.write(chunk)
     # 先写入文件
     try:
-        import os
-
-        # 获取 temp 目录路径（在 backend 目录下）
-        temp_dir = os.path.join(os.path.dirname(__file__), "temp")
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # 保存 Result.txt 到 temp 目录
-        result_path = os.path.join(temp_dir, "Result.txt")
-        with open(result_path, "w", encoding="utf-8") as f:
+        result_path = summary_result_path()
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        with result_path.open("w", encoding="utf-8") as f:
             f.write(result_buffer.getvalue())
         logger.info("\n结果已保存到 Result.txt\n")
     except Exception as e:

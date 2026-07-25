@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import os
 
-load_dotenv()  # 加载环境变量
+load_dotenv(os.getenv("PROMPTMEET_ENV_FILE") or None)  # 加载环境变量
 
 class DatabaseConfig(BaseModel):
     """数据库配置模型"""

@@ -13,7 +13,10 @@ from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, List
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from backend.models.database_config import get_database_config
+try:
+    from backend.models.database_config import get_database_config
+except ModuleNotFoundError:
+    from models.database_config import get_database_config
 
 load_dotenv()  # 加载.env文件
 

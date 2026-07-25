@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleExecutable</key>
+    <string>PromptMeet</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.promptmeet.desktop</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PromptMeet</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>PromptMeet 使用麦克风生成本地实时会议转写。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>PromptMeet 使用屏幕录制权限采集系统音频，不会录制或上传无关画面。</string>
+</dict>
+</plist>
