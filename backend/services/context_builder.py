@@ -208,7 +208,7 @@ class MeetingContextBuilder:
     def _terms(value: str) -> set[str]:
         words = set(re.findall(r"[a-z0-9_]+", value))
         chinese = "".join(character for character in value if "\u4e00" <= character <= "\u9fff")
-        words.update(chinese[index : index + 2] for index in range(max(0, len(chinese) - 1)))
+        words.update(chinese[index: index + 2] for index in range(max(0, len(chinese) - 1)))
         return words
 
     @staticmethod

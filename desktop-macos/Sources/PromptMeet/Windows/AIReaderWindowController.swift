@@ -138,7 +138,6 @@ final class AIReaderWindowController: NSWindowController, NSWindowDelegate {
         )
     }
 
-
     private func resize(for state: MeetingState) {
         guard let window else { return }
         let size = AIReaderLayout.targetSize(

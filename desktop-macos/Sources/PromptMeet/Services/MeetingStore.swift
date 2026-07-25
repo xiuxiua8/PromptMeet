@@ -455,7 +455,7 @@ final class MeetingStore: ObservableObject {
     }
 
     func toggleReader() {
-        state.aiReader.isVisible ? hideReader() : showReader()
+        if state.aiReader.isVisible { hideReader() } else { showReader() }
     }
 
     func shutdown() {

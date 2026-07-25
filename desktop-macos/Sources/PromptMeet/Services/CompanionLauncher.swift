@@ -58,12 +58,12 @@ enum CompanionRuntimeLocator {
         let bundledPythonRoot = resourceURL?.appendingPathComponent("companion/python/bin")
         let pythonCandidates = [
             bundledPythonRoot?.appendingPathComponent("python3"),
-            bundledPythonRoot?.appendingPathComponent("python"),
+            bundledPythonRoot?.appendingPathComponent("python")
         ].compactMap { $0 } + repositoryRoots.flatMap { root in
             [
                 root.appendingPathComponent("build/desktop-python/bin/python3"),
                 root.appendingPathComponent("build/desktop-python/bin/python"),
-                root.appendingPathComponent("backend/venv/bin/python"),
+                root.appendingPathComponent("backend/venv/bin/python")
             ]
         }
         guard let pythonURL = pythonCandidates.first(where: { fileManager.isExecutableFile(atPath: $0.path) }) else {
@@ -194,7 +194,8 @@ final class CompanionLauncher: CompanionLaunching {
         let defaults = UserDefaults.standard
         let provider = defaults.string(forKey: "aiProvider") ?? "deepseek"
         processEnvironment["PROMPTMEET_AI_PROVIDER"] = provider
-        processEnvironment["DEEPSEEK_ANSWER_MODEL"] = defaults.string(forKey: "deepSeekAnswerModel") ?? "deepseek-v4-pro"
+        processEnvironment["DEEPSEEK_ANSWER_MODEL"] =
+            defaults.string(forKey: "deepSeekAnswerModel") ?? "deepseek-v4-pro"
         processEnvironment["DEEPSEEK_QUESTION_MODEL"] = "deepseek-v4-flash"
         processEnvironment["OPENAI_ANSWER_MODEL"] = defaults.string(forKey: "openAIAnswerModel") ?? "gpt-4o"
         processEnvironment["OPENAI_QUESTION_MODEL"] = "gpt-4o-mini"

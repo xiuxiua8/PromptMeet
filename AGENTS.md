@@ -1,13 +1,3 @@
 # Project agent memory
 
-This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
-
-- The macOS meeting-agent architecture, local data layout, migration behavior, and validation commands are documented in `docs/macos-meeting-agent.md`.
-- Run `scripts/check-macos-package-inputs.sh` before native packaging. `build-macos-app.sh` invokes it automatically.
-
-## Maintaining this file
-
-Keep this file for knowledge useful to almost every future agent session in this project.
-Do not repeat what the codebase already shows; point to the authoritative file or command instead.
-Prefer rewriting or pruning existing entries over appending new ones.
-When updating this file, preserve this bar for all agents and keep entries concise.
+Project-intrinsic agent knowledge lives in `CLAUDE.md`. See that file for build, test, release, architecture, and sharp-edge notes.

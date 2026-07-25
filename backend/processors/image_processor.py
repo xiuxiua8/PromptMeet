@@ -516,7 +516,7 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
         "data": {
             "session_id": session_id,
             "text": res["content"],
-            #"words": res["words"],  # [{"word": ..., "prob": ...}]
+            # "words": res["words"],  # [{"word": ..., "prob": ...}]
             "image_file": os.path.join("screenshots", res["filename"]),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
@@ -536,6 +536,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 
+
 def summarize_ocr_result(res: dict) -> dict:
     """
     接收一个 OCR 结果字典，读取其中 'content' 字段，
@@ -543,9 +544,7 @@ def summarize_ocr_result(res: dict) -> dict:
     """
     # 初始化模型（建议用环境变量传 key，演示写死）
     llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0.3,
-        api_key=os.getenv("OPENAI_API_KEY")
+        model="gpt-4", temperature=0.3, api_key=os.getenv("OPENAI_API_KEY")
     )
 
     # Prompt 模板（可根据需求自定义语气）
@@ -556,7 +555,7 @@ def summarize_ocr_result(res: dict) -> dict:
             "{content}\n\n"
             "请你将这段内容整理为一段完整、自然、可读性强的总结，"
             "修正不通顺之处并补全语义。"
-        )
+        ),
     )
 
     chain = LLMChain(llm=llm, prompt=prompt)
@@ -578,9 +577,7 @@ def summarize_ocr_result(res: dict) -> dict:
     """
     # 初始化模型（建议用环境变量传 key，演示写死）
     llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0.3,
-        api_key=os.getenv("OPENAI_API_KEY")
+        model="gpt-4", temperature=0.3, api_key=os.getenv("OPENAI_API_KEY")
     )
 
     # Prompt 模板（可根据需求自定义语气）
@@ -591,7 +588,7 @@ def summarize_ocr_result(res: dict) -> dict:
             "{content}\n\n"
             "请你将这段内容整理为一段完整、自然、可读性强的总结，"
             "修正不通顺之处并补全语义。"
-        )
+        ),
     )
 
     chain = LLMChain(llm=llm, prompt=prompt)
@@ -651,7 +648,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": f"未找到指定的窗口ID: {window_id}",
-                    #"words": [],
+                    # "words": [],
                     "image_file": None,
                     "timestamp": datetime.utcnow().isoformat(),
                 },
@@ -669,7 +666,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": "未检测到会议窗口。",
-                    #"words": [],
+                    # "words": [],
                     "image_file": None,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
@@ -692,7 +689,7 @@ if __name__ == "__main__":
             "data": {
                 "session_id": session_id,
                 "text": "未识别到任何图像文字内容。",
-                #"words": [],
+                # "words": [],
                 "image_file": None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },

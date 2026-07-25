@@ -45,7 +45,7 @@ struct AIReaderView: View {
                         colors: [
                             VisualTokens.live.opacity(0.42),
                             Color.white.opacity(0.08),
-                            VisualTokens.sky.opacity(0.60),
+                            VisualTokens.sky.opacity(0.60)
                         ],
                         startPoint: .bottomLeading,
                         endPoint: .topTrailing

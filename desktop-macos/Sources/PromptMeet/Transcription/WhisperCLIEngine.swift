@@ -67,7 +67,7 @@ struct WhisperCLIEngine<Runner: WhisperProcessRunning>: LocalTranscriptionEngine
                 "-f", audioURL.path,
                 "-l", language,
                 "-nt",
-                "-np",
+                "-np"
             ]
         )
         return Self.normalized(output)

@@ -29,7 +29,7 @@ struct KeychainStore: KeychainStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecReturnData as String: true,
+            kSecReturnData as String: true
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -49,7 +49,7 @@ struct KeychainStore: KeychainStoring {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String: Data(value.utf8),
+            kSecValueData as String: Data(value.utf8)
         ]
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -63,7 +63,7 @@ struct KeychainStore: KeychainStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecReturnAttributes as String: true,
+            kSecReturnAttributes as String: true
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -78,7 +78,7 @@ struct KeychainStore: KeychainStoring {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: account
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {

@@ -112,7 +112,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         guard let socket else { throw BackendClientError.socketUnavailable }
         let payload: [String: Any] = [
             "type": "agent_message",
-            "data": ["request_id": requestID.uuidString, "content": prompt],
+            "data": ["request_id": requestID.uuidString, "content": prompt]
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         guard let text = String(data: data, encoding: .utf8) else {
@@ -128,7 +128,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             "text": transcript.text,
             "speaker": transcript.speaker,
             "source": transcript.source.rawValue,
-            "timestamp": formatter.string(from: transcript.timestamp),
+            "timestamp": formatter.string(from: transcript.timestamp)
         ]
         if let translationTarget = transcript.translationTarget {
             payload["translation_target"] = translationTarget
@@ -175,7 +175,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             withJSONObject: [
                 "request_id": requestID.uuidString,
                 "thread_id": threadID,
-                "question": question,
+                "question": question
             ]
         )
         let (data, response) = try await session.data(for: request)

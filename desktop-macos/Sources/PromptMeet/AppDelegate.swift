@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleMeeting() {
-        store.state.phase == .live ? store.endMeeting() : store.startMeeting()
+        if store.state.phase == .live { store.endMeeting() } else { store.startMeeting() }
     }
 
     @objc private func openQuickAsk() {
@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .quickAsk: { [weak self] in self?.openQuickAsk() },
             .workspace: { [weak self] in self?.openWorkspace() },
             .reader: { [weak self] in self?.toggleReader() },
-            .recording: { [weak self] in self?.toggleMeeting() },
+            .recording: { [weak self] in self?.toggleMeeting() }
         ])
         controller.start()
         shortcutController = controller

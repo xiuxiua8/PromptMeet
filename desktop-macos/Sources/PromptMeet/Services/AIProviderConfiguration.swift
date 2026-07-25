@@ -53,7 +53,7 @@ enum AIProviderCatalog {
                     displayName: "DeepSeek V4 Flash",
                     supportsVision: false,
                     detail: "快速文字问答，不接收截图像素"
-                ),
+                )
             ],
             validationURL: URL(string: "https://api.deepseek.com/models")!,
             capabilitySummary: "转写、摘要与文字问答。截图会保留，但当前模型只使用分析文字。"
@@ -74,11 +74,11 @@ enum AIProviderCatalog {
                     displayName: "GPT-4o mini",
                     supportsVision: true,
                     detail: "更快的文字与截图理解"
-                ),
+                )
             ],
             validationURL: URL(string: "https://api.openai.com/v1/models")!,
             capabilitySummary: "转写、摘要、文字问答与原始截图多模态理解。"
-        ),
+        )
     ]
 
     static func provider(id: String) -> AIProviderDescriptor? {

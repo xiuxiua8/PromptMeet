@@ -39,7 +39,7 @@ struct IslandRootView: View {
                             colors: [
                                 auraLeadingColor,
                                 Color.white.opacity(isExpanded ? 0.10 : 0.035),
-                                auraTrailingColor,
+                                auraTrailingColor
                             ],
                             startPoint: .leading,
                             endPoint: .trailing

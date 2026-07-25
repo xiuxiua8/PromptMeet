@@ -1,11 +1,9 @@
 import os
-import json
 import requests
 import time
 import wave
 import pyaudio
 import threading
-import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -125,7 +123,7 @@ class AudioRecorder:
             # 删除临时文件
             try:
                 os.remove(filename)
-            except:
+            except Exception:
                 pass
 
     def stop(self):

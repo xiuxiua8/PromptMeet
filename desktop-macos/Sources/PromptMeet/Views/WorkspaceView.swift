@@ -169,7 +169,8 @@ struct WorkspaceView: View {
                             meeting.title
                                 ?? meeting.summary?.summaryText.split(separator: "\n").first.map(String.init)
                                 ?? "历史会议",
-                            detail: "\(meeting.startTime.formatted(date: .abbreviated, time: .shortened)) · \(meetingStatus(meeting.status))",
+                            detail: "\(meeting.startTime.formatted(date: .abbreviated, time: .shortened))"
+                                + " · \(meetingStatus(meeting.status))",
                             active: store.state.selectedArchivedMeetingID == meeting.id
                         ) {
                             store.selectArchivedMeeting(meeting.id)
@@ -427,10 +428,12 @@ struct WorkspaceView: View {
                             )
                             .frame(minHeight: 360)
                         } else {
-                            ForEach(Array(store.state.displayedTranscript.enumerated()), id: \.element.id) { index, line in
+                            let enumerated = Array(store.state.displayedTranscript.enumerated())
+                            ForEach(enumerated, id: \.element.id) { index, line in
                                 transcriptRow(
                                     line,
-                                    isLast: index == store.state.displayedTranscript.count - 1 && store.state.activeTranscript.isEmpty
+                                    isLast: index == store.state.displayedTranscript.count - 1
+                                        && store.state.activeTranscript.isEmpty
                                 )
                                 .id(line.id)
                             }

@@ -335,7 +335,10 @@ struct PromptMeetSettingsView: View {
                                 .foregroundStyle(VisualTokens.danger)
                         }
                         Button("验证连接", action: validateSelectedKey)
-                            .disabled(secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isValidatingAI)
+                            .disabled(
+                                secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || isValidatingAI
+                            )
                         Button("保存并应用", action: saveSelectedKey)
                             .buttonStyle(.borderedProminent)
                             .tint(VisualTokens.cobalt)

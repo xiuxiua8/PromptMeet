@@ -31,7 +31,7 @@ enum WhisperModelCatalog {
             "ggml-large-v3-turbo.bin",
             1_620_000_000,
             "最高准确率 · 未量化 · 推荐高性能 Mac"
-        ),
+        )
     ]
 
     static func descriptor(id: String) -> WhisperModelDescriptor? {

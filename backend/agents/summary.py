@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import json
 import re
-from typing import Iterator, Dict, List, AsyncGenerator, Any
+from typing import Dict, List, AsyncGenerator, Any
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -14,8 +14,7 @@ import logging
 from pydantic import SecretStr
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +33,7 @@ def summary_result_path() -> Path:
         else Path(__file__).parent / "temp"
     )
     return directory / "Result.txt"
+
 
 class MeetingProcessor:
     def __init__(self, streaming: bool = True):
@@ -54,16 +54,18 @@ class MeetingProcessor:
             base_url=base_url,
             model=model,
             temperature=0.2,
-            streaming=streaming
+            streaming=streaming,
         )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1200,
             chunk_overlap=200,
-            separators=["\n\n", "\n", "。", "；", "! ", "? ", "…"]
+            separators=["\n\n", "\n", "。", "；", "! ", "? ", "…"],
         )
         self.my_aliases = ["qin_ran", "秦然", "qinran", "ran", "秦工", "秦老师"]
 
-    async def _stream_with_progress(self, prompt: ChatPromptTemplate, input_dict: dict, progress_msg: str) -> AsyncGenerator[str, Any]:
+    async def _stream_with_progress(
+        self, prompt: ChatPromptTemplate, input_dict: dict, progress_msg: str
+    ) -> AsyncGenerator[str, Any]:
         """带进度提示的流式处理方法"""
         yield f"{progress_msg}...\n"
         chain = prompt | self.llm | StrOutputParser()
@@ -72,28 +74,29 @@ class MeetingProcessor:
 
     async def _extract_my_tasks(self, text: str) -> List[Dict]:
         """提取与qin_ran(我)相关的任务（增强DDL识别能力）"""
-        prompt = ChatPromptTemplate.from_template("""
+        prompt = ChatPromptTemplate.from_template(
+            """
             请从以下会议内容中识别出分配给[{username}](可能称呼包括：{aliases})的任务，
             以及虽然没有明确分配但可能需要我负责的任务。
-            
+
             特别注意：必须提取所有提到的时间节点作为deadline，即使没有明确说"截止"。
             例如："下周三前完成" → "下周三", "周五评审" → "周五"
-            
+
             要求返回严格合法的JSON数组格式，每个对象包含：
             - "task" (任务内容)
             - "deadline" (截止日期，格式YYYY-MM-DD或相对日期如"下周三")
             - "describe" (任务详情)
-            
+
             日期转换规则：
             1. "下周三" → 转换为实际日期如"2023-12-20"
             2. "3天后" → 转换为实际日期
             3. 保持原始表述如果无法确定具体日期
-            
+
             示例格式：
             [
                 {{
-                    "task": "完成需求文档", 
-                    "deadline": "2023-12-20", 
+                    "task": "完成需求文档",
+                    "deadline": "2023-12-20",
                     "describe": "需要与产品经理确认所有需求点"
                 }},
                 {{
@@ -102,29 +105,32 @@ class MeetingProcessor:
                     "describe": "准备架构图和接口设计"
                 }}
             ]
-            
+
             当前日期：{current_date}
             会议内容：
-            {text}""")
-        
+            {text}"""
+        )
+
         chain = prompt | self.llm | StrOutputParser()
-        tasks_json = await chain.ainvoke({
-            "username": "qin_ran",
-            "aliases": "、".join(self.my_aliases),
-            "current_date": datetime.now().strftime("%Y-%m-%d"),
-            "text": text[:3000]  # 限制长度防止过载
-        })
-        
+        tasks_json = await chain.ainvoke(
+            {
+                "username": "qin_ran",
+                "aliases": "、".join(self.my_aliases),
+                "current_date": datetime.now().strftime("%Y-%m-%d"),
+                "text": text[:3000],  # 限制长度防止过载
+            }
+        )
+
         try:
             if not tasks_json.strip() or tasks_json.strip() == "[]":
                 return []
-            
+
             # 清理可能的非JSON内容
-            json_str = re.search(r'\[.*\]', tasks_json.replace('\n', ''), re.DOTALL)
+            json_str = re.search(r"\[.*\]", tasks_json.replace("\n", ""), re.DOTALL)
             if json_str:
                 tasks_json = json_str.group(0)
             tasks = json.loads(tasks_json)
-            
+
             # 数据清洗
             for task in tasks:
                 if "deadline" in task and isinstance(task["deadline"], str):
@@ -138,42 +144,49 @@ class MeetingProcessor:
             print(f"⚠️ 任务解析错误: {str(e)}")
             return []
 
-
-    async def _generate_summary(self, text: str, tasks: List[Dict]) -> AsyncGenerator[str, Any]:
+    async def _generate_summary(
+        self, text: str, tasks: List[Dict]
+    ) -> AsyncGenerator[str, Any]:
         """生成整合了任务信息的会议摘要"""
         # 将任务转换为易读格式
-        tasks_str = "\n".join(
-            f"- {task['task']} (截止: {task['deadline'] or '无'})\n  详情: {task['describe']}"
-            for task in tasks
-        ) if tasks else "无特定任务"
-        
-        prompt = ChatPromptTemplate.from_template("""
+        tasks_str = (
+            "\n".join(
+                f"- {task['task']} (截止: {task['deadline'] or '无'})\n  详情: {task['describe']}"
+                for task in tasks
+            )
+            if tasks
+            else "无特定任务"
+        )
+
+        prompt = ChatPromptTemplate.from_template(
+            """
             请用中文总结以下会议内容：
             1. 主要讨论议题（议题内容如果有重复或者相似的，请合并）
             2. 重要结论或决定
             3. 我的待办事项：
             {tasks}
-            
+
             会议内容：
-            {text}""")
-        
-        async for chunk in (prompt | self.llm | StrOutputParser()).astream({
-            "text": text,
-            "tasks": tasks_str
-        }):
+            {text}"""
+        )
+
+        async for chunk in (prompt | self.llm | StrOutputParser()).astream(
+            {"text": text, "tasks": tasks_str}
+        ):
             yield chunk
 
     async def _extract_email_info(self, text: str) -> Dict:
         """提取邮件信息"""
-        prompt = ChatPromptTemplate.from_template("""
+        prompt = ChatPromptTemplate.from_template(
+            """
             请从以下会议内容中识别出需要发送邮件的信息，包括：
             1. 收信人姓名或部门
             2. 收信人邮箱地址
             3. 邮件主题
             4. 邮件内容要点
-            
+
             如果会议中没有明确提到需要发送邮件，请返回空结果。
-            
+
             要求返回严格合法的JSON格式：
             {{
                 "need_email": true/false,
@@ -182,7 +195,7 @@ class MeetingProcessor:
                 "subject": "邮件主题",
                 "content": "邮件内容要点"
             }}
-            
+
             如果没有需要发送邮件的信息，返回：
             {{
                 "need_email": false,
@@ -191,46 +204,68 @@ class MeetingProcessor:
                 "subject": "",
                 "content": ""
             }}
-            
+
             会议内容：
-            {text}""")
-        
+            {text}"""
+        )
+
         chain = prompt | self.llm | StrOutputParser()
         email_json = await chain.ainvoke({"text": text[:3000]})
-        
+
         try:
             if not email_json.strip():
-                return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
-            
+                return {
+                    "need_email": False,
+                    "recipient_name": "",
+                    "recipient_email": "",
+                    "subject": "",
+                    "content": "",
+                }
+
             # 清理可能的非JSON内容
-            json_str = re.search(r'\{.*\}', email_json.replace('\n', ''), re.DOTALL)
+            json_str = re.search(r"\{.*\}", email_json.replace("\n", ""), re.DOTALL)
             if json_str:
                 email_json = json_str.group(0)
             email_info = json.loads(email_json)
-            
+
             # 数据清洗
             email_info.setdefault("need_email", False)
             email_info.setdefault("recipient_name", "")
             email_info.setdefault("recipient_email", "")
             email_info.setdefault("subject", "")
             email_info.setdefault("content", "")
-            
+
             return email_info
         except json.JSONDecodeError:
             print(f"⚠️ 邮件信息JSON解析失败，原始输出:\n{email_json}")
-            return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+            return {
+                "need_email": False,
+                "recipient_name": "",
+                "recipient_email": "",
+                "subject": "",
+                "content": "",
+            }
         except Exception as e:
             print(f"⚠️ 邮件信息解析错误: {str(e)}")
-            return {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+            return {
+                "need_email": False,
+                "recipient_name": "",
+                "recipient_email": "",
+                "subject": "",
+                "content": "",
+            }
 
-    async def _generate_structured_tasks(self, tasks: List[Dict]) -> AsyncGenerator[str, Any]:
+    async def _generate_structured_tasks(
+        self, tasks: List[Dict]
+    ) -> AsyncGenerator[str, Any]:
         """生成结构化的待办事项JSON"""
-        prompt = ChatPromptTemplate.from_template("""
+        prompt = ChatPromptTemplate.from_template(
+            """
             请将以下任务列表转换为更结构化的JSON格式，要求：
             1. 包含所有原始信息
             2. 确保所有日期格式为YYYY-MM-DD或null
             3. 对任务内容进行简洁化处理
-            
+
             返回格式示例：
             {{
                 "tasks": [
@@ -242,19 +277,24 @@ class MeetingProcessor:
                 ],
                 "total": 任务总数
             }}
-            
+
             原始任务列表：
-            {tasks}""")
-        
+            {tasks}"""
+        )
+
         # 将原始任务转换为易读格式
-        tasks_str = "\n".join(
-            f"- 任务: {task['task']}, 截止: {task['deadline'] or '无'}, 详情: {task['describe']}"
-            for task in tasks
-        ) if tasks else "无任务"
-        
-        async for chunk in (prompt | self.llm | StrOutputParser()).astream({
-            "tasks": tasks_str
-        }):
+        tasks_str = (
+            "\n".join(
+                f"- 任务: {task['task']}, 截止: {task['deadline'] or '无'}, 详情: {task['describe']}"
+                for task in tasks
+            )
+            if tasks
+            else "无任务"
+        )
+
+        async for chunk in (prompt | self.llm | StrOutputParser()).astream(
+            {"tasks": tasks_str}
+        ):
             yield chunk
 
     async def process_meeting(self, transcript: str) -> AsyncGenerator[str, Any]:
@@ -263,50 +303,50 @@ class MeetingProcessor:
             yield "⚠️ 输入内容为空"
             return
 
-        logger.info("="*50)
+        logger.info("=" * 50)
         logger.info("开始处理会议内容...\n")
-        
+
         yield "\n=== 会议内容分析开始 ===\n"
-        
+
         # 创建StringIO缓存完整结果
         result_buffer = StringIO()
-        
+
         # 先提取任务
         tasks = await self._extract_my_tasks(transcript)
-        
+
         # 提取邮件信息
         email_info = await self._extract_email_info(transcript)
-        
+
         # 生成整合了任务信息的总结
         yield "\n【会议总结】\n"
         async for text_chunk in self._generate_summary(transcript, tasks):
             result_buffer.write(text_chunk)
             yield text_chunk
-        
+
         # 原始任务JSON
         yield "\n【原始待办事项】\n"
         tasks_json = json.dumps(tasks, ensure_ascii=False, indent=2)
         result_buffer.write("\n【原始待办事项】\n")
         result_buffer.write(tasks_json)
         yield tasks_json
-        
+
         # 邮件信息JSON
         yield "\n\n【邮件信息】\n"
         email_json = json.dumps(email_info, ensure_ascii=False, indent=2)
         result_buffer.write("\n\n【邮件信息】\n")
         result_buffer.write(email_json)
         yield email_json
-        
+
         # 结构化任务JSON
         yield "\n\n【结构化待办事项】\n"
         result_buffer.write("\n\n【结构化待办事项】\n")
         async for json_chunk in self._generate_structured_tasks(tasks):
             result_buffer.write(json_chunk)
             yield json_chunk
-        
+
         yield "\n=== 分析完成 ===\n"
         result_buffer.write("\n=== 分析完成 ===\n")
-        
+
         # 保存结果到文件
         try:
             result_path = summary_result_path()
@@ -316,16 +356,16 @@ class MeetingProcessor:
             logger.info("\n结果已保存到 Result.txt\n")
         except Exception as e:
             logger.error(f"保存结果到文件失败: {e}")
-        
-        logger.info("="*50)
+
+        logger.info("=" * 50)
         logger.info(f"处理完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("="*50)
+        logger.info("=" * 50)
 
 
 async def run_processor(input_text: str):
     """执行入口，先保存结果到文件，再输出到前端"""
     processor = MeetingProcessor()
-    logger.info("="*50)
+    logger.info("=" * 50)
     logger.info("开始处理会议内容...\n")
     # 创建StringIO缓存完整结果
     result_buffer = StringIO()
@@ -345,9 +385,9 @@ async def run_processor(input_text: str):
     # 再输出到前端/控制台
     for chunk in all_chunks:
         print(chunk, end="", flush=True)
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print(f"处理完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*50)
+    print("=" * 50)
 
 
 if __name__ == "__main__":
@@ -375,6 +415,7 @@ if __name__ == "__main__":
     # 异步处理
     try:
         import nest_asyncio
+
         nest_asyncio.apply()
         loop = asyncio.get_event_loop()
         loop.run_until_complete(run_processor(meeting_text))

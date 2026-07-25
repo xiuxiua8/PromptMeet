@@ -266,9 +266,9 @@ class WhisperProcessor:
                         text=text,
                         timestamp=datetime.now(),
                         audio_file=filename,
-                        duration=result.get('duration', 0.0),
-                        confidence=result.get('confidence', 0.0),
-                        speaker=result.get('speaker', None)
+                        duration=result.get("duration", 0.0),
+                        confidence=result.get("confidence", 0.0),
+                        speaker=result.get("speaker", None),
                     )
 
                     logger.info(f"转录成功: {text[:50]}...")
@@ -379,7 +379,7 @@ class WhisperProcessor:
                     success=success,
                     data={"message": "录音已开始" if success else "录音启动失败"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "stop" or command.command == "stop_recording":
@@ -388,7 +388,7 @@ class WhisperProcessor:
                     success=success,
                     data={"message": "录音已停止" if success else "录音停止失败"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "status":
@@ -402,7 +402,7 @@ class WhisperProcessor:
                         "processor_status": "ready",
                     },
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             else:
@@ -416,11 +416,9 @@ class WhisperProcessor:
         except Exception as e:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
-                success=False,
-                data=None,
-                error=str(e),
-                timestamp=datetime.now()
+                success=False, data=None, error=str(e), timestamp=datetime.now()
             )
+
 
 async def main():
     """主函数 - 作为独立进程运行"""

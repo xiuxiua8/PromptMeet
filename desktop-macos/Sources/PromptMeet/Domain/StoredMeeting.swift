@@ -91,8 +91,8 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
     private static func parseLegacy(_ object: [String: Any]) -> StoredMeeting? {
         guard let id = object["session_id"] as? String else { return nil }
         let startTime = parseDate(object["start_time"] as? String)
-        let transcript = (object["transcript_segments"] as? [[String: Any]] ?? []).compactMap {
-            segment -> TranscriptLine? in
+        let raw = object["transcript_segments"] as? [[String: Any]] ?? []
+        let transcript = raw.compactMap { segment -> TranscriptLine? in
             guard let text = segment["text"] as? String else { return nil }
             let identifier = (segment["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
             return TranscriptLine(

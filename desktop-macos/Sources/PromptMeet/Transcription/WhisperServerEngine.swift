@@ -81,7 +81,7 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
             "-sow",
             "-nth", "0.65",
             "--host", "127.0.0.1",
-            "--port", String(port),
+            "--port", String(port)
         ]
     }
 

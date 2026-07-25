@@ -3,7 +3,8 @@ import CoreMedia
 import Foundation
 import ScreenCaptureKit
 
-final class SystemAudioCapture: NSObject, NativeAudioSourceCapture, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class SystemAudioCapture: NSObject, NativeAudioSourceCapture,
+    SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let source = NativeAudioSource.system
     private let lock = NSLock()
     private var handler: (@Sendable (CapturedPCM) -> Void)?
