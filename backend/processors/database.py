@@ -1086,5 +1086,3 @@ def load_sample_data(file_path):
     except Exception as e:
         print(f"加载示例数据失败: {e}")
         return None
-
-

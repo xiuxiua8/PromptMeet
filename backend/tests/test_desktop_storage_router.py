@@ -35,10 +35,14 @@ def test_hybrid_storage_prefers_original_database_and_mirrors_locally(tmp_path) 
     assert storage.store_session({"session_id": "session-1", "transcript_segments": []})
 
     assert "session-1" in primary.sessions
-    assert json.loads(local.get_session_details("session-1"))["session_id"] == "session-1"
+    assert (
+        json.loads(local.get_session_details("session-1"))["session_id"] == "session-1"
+    )
 
 
-def test_hybrid_storage_falls_back_when_original_database_is_unavailable(tmp_path) -> None:
+def test_hybrid_storage_falls_back_when_original_database_is_unavailable(
+    tmp_path,
+) -> None:
     storage = HybridSessionStorage(
         primary=MemoryPrimaryStorage(available=False),
         fallback=DesktopSessionStorage(tmp_path),
@@ -47,10 +51,15 @@ def test_hybrid_storage_falls_back_when_original_database_is_unavailable(tmp_pat
     assert storage.initialize_database()
     assert storage.backend_name == "local"
     assert storage.store_session({"session_id": "session-2"})
-    assert json.loads(storage.get_session_details("session-2"))["session_id"] == "session-2"
+    assert (
+        json.loads(storage.get_session_details("session-2"))["session_id"]
+        == "session-2"
+    )
 
 
-def test_desktop_storage_defaults_to_local_without_explicit_mysql_opt_in(tmp_path) -> None:
+def test_desktop_storage_defaults_to_local_without_explicit_mysql_opt_in(
+    tmp_path,
+) -> None:
     storage = HybridSessionStorage.from_environment(tmp_path, environment={})
 
     assert storage.primary is None

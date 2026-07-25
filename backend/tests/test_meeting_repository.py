@@ -20,7 +20,9 @@ def transcript_event(text: str, at: datetime = START) -> MeetingEvent:
         occurred_at=at,
         kind=EventKind.TRANSCRIPT,
         provenance=EventProvenance(source="native_transcript"),
-        payload=TranscriptPayload(segment_id=f"segment-{text}", text=text, speaker="林晨"),
+        payload=TranscriptPayload(
+            segment_id=f"segment-{text}", text=text, speaker="林晨"
+        ),
     )
 
 
@@ -104,7 +106,9 @@ def test_legacy_desktop_sessions_are_migrated_without_removing_source(tmp_path) 
     assert isinstance(records[0].events[1].payload, SummaryPayload)
 
 
-def test_corrupt_versioned_record_is_preserved_and_visible_as_recovery_item(tmp_path) -> None:
+def test_corrupt_versioned_record_is_preserved_and_visible_as_recovery_item(
+    tmp_path,
+) -> None:
     record_directory = tmp_path / "meetings" / "v2"
     record_directory.mkdir(parents=True)
     corrupt_path = record_directory / "damaged-meeting.json"

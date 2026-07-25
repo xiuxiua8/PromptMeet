@@ -25,14 +25,18 @@ def test_original_summary_processor_imports_without_loading_full_agent_stack() -
     assert SummaryProcessor.__name__ == "SummaryProcessor"
 
 
-def test_original_summary_result_uses_external_work_directory(monkeypatch, tmp_path) -> None:
+def test_original_summary_result_uses_external_work_directory(
+    monkeypatch, tmp_path
+) -> None:
     from agents.summary import summary_model_name, summary_result_path
 
     monkeypatch.setenv("PROMPTMEET_WORK_DIR", str(tmp_path))
 
     assert summary_result_path() == Path(tmp_path) / "summary" / "Result.txt"
     assert summary_model_name({}) == "deepseek-v4-flash"
-    assert summary_model_name({"DEEPSEEK_MODEL": "deepseek-v4-pro"}) == "deepseek-v4-pro"
+    assert (
+        summary_model_name({"DEEPSEEK_MODEL": "deepseek-v4-pro"}) == "deepseek-v4-pro"
+    )
 
 
 def test_original_summary_service_returns_original_structured_result() -> None:

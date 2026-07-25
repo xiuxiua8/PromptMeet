@@ -30,7 +30,9 @@ class FakeMeetingAgent:
         await emit({"data": {"content": answer}})
         return MeetingAnswerResult(
             answer=answer,
-            sources=[EvidenceSource(source_id="M3", event_id="fake-source", label="截图分析")],
+            sources=[
+                EvidenceSource(source_id="M3", event_id="fake-source", label="截图分析")
+            ],
             degraded_vision=False,
             provider="fake",
             model="fake-model",
@@ -64,7 +66,10 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     client = TestClient(main_service.app)
 
     meeting_id = client.post("/api/sessions").json()["session_id"]
-    assert client.post(f"/api/sessions/{meeting_id}/start-native-recording").status_code == 200
+    assert (
+        client.post(f"/api/sessions/{meeting_id}/start-native-recording").status_code
+        == 200
+    )
     transcript = {
         "id": "4E2CB506-925E-4A6E-BB68-E5006AB09BDF",
         "text": "发布候选周五交付",
@@ -72,10 +77,13 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
         "source": "microphone",
         "timestamp": "2026-07-25T10:00:00+00:00",
     }
-    assert client.post(
-        f"/api/sessions/{meeting_id}/native-transcript",
-        json=transcript,
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/sessions/{meeting_id}/native-transcript",
+            json=transcript,
+        ).status_code
+        == 200
+    )
     screenshot = client.post(
         f"/api/sessions/{meeting_id}/native-screenshot",
         headers={"Content-Type": "image/png"},
@@ -94,7 +102,10 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     )
     assert answer.status_code == 200
     assert answer.json()["answer"] == "周岚负责回滚演练 [M3]。"
-    assert client.post(f"/api/sessions/{meeting_id}/stop-native-recording").status_code == 200
+    assert (
+        client.post(f"/api/sessions/{meeting_id}/stop-native-recording").status_code
+        == 200
+    )
     assert client.post(f"/api/sessions/{meeting_id}/store-session").status_code == 200
     assert not (root / "desktop-sessions.json").exists()
 
@@ -126,7 +137,9 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     assert restored["events"][-1]["payload"]["request_id"] == "request-history"
 
 
-def test_rapid_questions_keep_request_scoped_snapshots_and_answers(monkeypatch, tmp_path) -> None:
+def test_rapid_questions_keep_request_scoped_snapshots_and_answers(
+    monkeypatch, tmp_path
+) -> None:
     main_service = importlib.import_module("main_service")
     repository = MeetingRepository(tmp_path)
     ingestion = MeetingIngestionService(repository)
@@ -164,11 +177,15 @@ def test_rapid_questions_keep_request_scoped_snapshots_and_answers(monkeypatch, 
 
     async def run_questions() -> None:
         first = asyncio.create_task(
-            main_service.process_meeting_question("meeting-fast", "request-1", "main", "问题一")
+            main_service.process_meeting_question(
+                "meeting-fast", "request-1", "main", "问题一"
+            )
         )
         await asyncio.sleep(0)
         second = asyncio.create_task(
-            main_service.process_meeting_question("meeting-fast", "request-2", "main", "问题二")
+            main_service.process_meeting_question(
+                "meeting-fast", "request-2", "main", "问题二"
+            )
         )
         await asyncio.sleep(0)
         releases["request-2"].set()

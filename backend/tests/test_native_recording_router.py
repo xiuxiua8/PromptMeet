@@ -17,8 +17,12 @@ def test_native_recording_routes_do_not_reuse_web_audio_capture() -> None:
     app.include_router(build_native_recording_router(lambda _: object(), start, stop))
     client = TestClient(app)
 
-    assert client.post("/api/sessions/session-1/start-native-recording").status_code == 200
-    assert client.post("/api/sessions/session-1/stop-native-recording").status_code == 200
+    assert (
+        client.post("/api/sessions/session-1/start-native-recording").status_code == 200
+    )
+    assert (
+        client.post("/api/sessions/session-1/stop-native-recording").status_code == 200
+    )
     assert calls == ["start:session-1", "stop:session-1"]
 
 
@@ -29,4 +33,7 @@ def test_native_recording_rejects_unknown_session() -> None:
     app = FastAPI()
     app.include_router(build_native_recording_router(lambda _: None, no_op, no_op))
 
-    assert TestClient(app).post("/api/sessions/missing/start-native-recording").status_code == 404
+    assert (
+        TestClient(app).post("/api/sessions/missing/start-native-recording").status_code
+        == 404
+    )

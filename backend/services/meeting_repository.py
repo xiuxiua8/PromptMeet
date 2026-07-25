@@ -33,7 +33,10 @@ class MeetingRepository:
     def create(self, meeting_id: str, started_at: datetime) -> MeetingRecord:
         with self._lock:
             existing = self.get(meeting_id)
-            if existing is not None and existing.status != MeetingStatus.RECOVERY_REQUIRED:
+            if (
+                existing is not None
+                and existing.status != MeetingStatus.RECOVERY_REQUIRED
+            ):
                 return existing
             record = MeetingRecord(meeting_id=meeting_id, started_at=started_at)
             self._write(record)
@@ -48,7 +51,9 @@ class MeetingRepository:
             bound_event = event.model_copy(
                 update={"meeting_id": meeting_id, "sequence": sequence}
             )
-            updated = record.model_copy(update={"events": [*record.events, bound_event]})
+            updated = record.model_copy(
+                update={"events": [*record.events, bound_event]}
+            )
             self._write(updated)
             return updated
 
@@ -78,7 +83,9 @@ class MeetingRepository:
     def list(self) -> list[MeetingRecord]:
         with self._lock:
             self._migrate_legacy()
-            records = [self._read(path) for path in self.records_directory.glob("*.json")]
+            records = [
+                self._read(path) for path in self.records_directory.glob("*.json")
+            ]
             return sorted(records, key=lambda record: record.started_at, reverse=True)
 
     def _read(self, path: Path) -> MeetingRecord:
@@ -100,8 +107,10 @@ class MeetingRepository:
         temporary.replace(path)
 
     def _path(self, meeting_id: str) -> Path:
-        if not meeting_id or meeting_id in {".", ".."} or any(
-            separator in meeting_id for separator in ("/", "\\")
+        if (
+            not meeting_id
+            or meeting_id in {".", ".."}
+            or any(separator in meeting_id for separator in ("/", "\\"))
         ):
             raise ValueError("meeting_id contains an invalid path component")
         return self.records_directory / f"{meeting_id}.json"
@@ -152,7 +161,10 @@ class MeetingRepository:
         )
         events: list[MeetingEvent] = []
         for segment in payload.get("transcript_segments") or []:
-            if not isinstance(segment, dict) or not str(segment.get("text") or "").strip():
+            if (
+                not isinstance(segment, dict)
+                or not str(segment.get("text") or "").strip()
+            ):
                 continue
             occurred_at = self._date(segment.get("timestamp"), fallback=started_at)
             events.append(
@@ -163,7 +175,9 @@ class MeetingRepository:
                     kind=EventKind.TRANSCRIPT,
                     provenance=EventProvenance(source="legacy_desktop_session"),
                     payload=TranscriptPayload(
-                        segment_id=str(segment.get("id") or f"legacy-{len(events) + 1}"),
+                        segment_id=str(
+                            segment.get("id") or f"legacy-{len(events) + 1}"
+                        ),
                         speaker=str(segment.get("speaker") or "发言人"),
                         text=str(segment["text"]),
                         translated_text=segment.get("translated_text"),
@@ -176,7 +190,8 @@ class MeetingRepository:
                 MeetingEvent(
                     meeting_id=meeting_id,
                     sequence=len(events) + 1,
-                    occurred_at=ended_at or (events[-1].occurred_at if events else started_at),
+                    occurred_at=ended_at
+                    or (events[-1].occurred_at if events else started_at),
                     kind=EventKind.SUMMARY,
                     provenance=EventProvenance(source="legacy_desktop_session"),
                     payload=SummaryPayload(

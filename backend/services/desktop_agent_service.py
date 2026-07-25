@@ -140,7 +140,9 @@ class DesktopAgentService:
         async with httpx.AsyncClient(timeout=90) as client:
             tool_rounds_used = 0
             for _ in range(self.MAX_TOOL_ROUNDS + 1):
-                tools_available = search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
+                tools_available = (
+                    search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
+                )
                 request_payload: dict[str, object] = {
                     "model": configuration.model,
                     "messages": messages,
@@ -172,7 +174,9 @@ class DesktopAgentService:
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call.get("id", "web_search"),
-                                "content": await self._execute_tool_call(tool_call, web_sources),
+                                "content": await self._execute_tool_call(
+                                    tool_call, web_sources
+                                ),
                             }
                         )
                     continue
@@ -279,7 +283,9 @@ class DesktopAgentService:
         async with httpx.AsyncClient(timeout=90) as client:
             tool_rounds_used = 0
             for _ in range(self.MAX_TOOL_ROUNDS + 1):
-                tools_available = search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
+                tools_available = (
+                    search_enabled and tool_rounds_used < self.MAX_TOOL_ROUNDS
+                )
                 request_payload: dict[str, object] = {
                     "model": model,
                     "messages": messages,
@@ -482,7 +488,9 @@ class DesktopAgentService:
             "7. 使用与用户问题相同的语言，表达简洁、具体。"
         )
         if not search_enabled:
-            system_prompt += "\n8. 本次没有提供联网工具，请仅依据已有知识和会议上下文完成任务。"
+            system_prompt += (
+                "\n8. 本次没有提供联网工具，请仅依据已有知识和会议上下文完成任务。"
+            )
         user_prompt = (
             f"会议状态：实时转写，内容可能尚未讲完\n"
             f"会议片段数：{len(recent_transcript)}\n\n"
@@ -618,7 +626,7 @@ class DesktopAgentService:
         ):
             return (
                 "error: invalid web_search arguments\n"
-                'help: Call web_search with a non-empty query and an integer limit from 1 to 5.'
+                "help: Call web_search with a non-empty query and an integer limit from 1 to 5."
             )
         query = " ".join(query.split())
         try:

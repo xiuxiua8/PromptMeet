@@ -81,7 +81,7 @@ class SummaryProcessor:
             key_points = []
             decisions = []
             email_info = {}
-            
+
             try:
                 # 解析原始待办事项JSON
                 raw_tasks_match = re.search(
@@ -103,9 +103,11 @@ class SummaryProcessor:
                             tasks.append(task)
                     except json.JSONDecodeError:
                         logger.warning("无法解析原始待办事项JSON")
-                
+
                 # 解析邮件信息JSON
-                email_match = re.search(r'【邮件信息】\n(.*?)(?=\n\n【|$)', full_result, re.DOTALL)
+                email_match = re.search(
+                    r"【邮件信息】\n(.*?)(?=\n\n【|$)", full_result, re.DOTALL
+                )
                 if email_match:
                     email_json = email_match.group(1).strip()
                     try:
@@ -113,10 +115,22 @@ class SummaryProcessor:
                         logger.info(f"解析到邮件信息: {email_info}")
                     except json.JSONDecodeError:
                         logger.warning("无法解析邮件信息JSON")
-                        email_info = {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
+                        email_info = {
+                            "need_email": False,
+                            "recipient_name": "",
+                            "recipient_email": "",
+                            "subject": "",
+                            "content": "",
+                        }
                 else:
-                    email_info = {"need_email": False, "recipient_name": "", "recipient_email": "", "subject": "", "content": ""}
-                
+                    email_info = {
+                        "need_email": False,
+                        "recipient_name": "",
+                        "recipient_email": "",
+                        "subject": "",
+                        "content": "",
+                    }
+
                 # 提取会议总结
                 summary_match = re.search(
                     r"【会议总结】\n(.*?)(?=\n【|$)", full_result, re.DOTALL
@@ -143,7 +157,11 @@ class SummaryProcessor:
 
             # 创建摘要对象
             summary = MeetingSummary(
-                session_id=self.current_session_id if self.current_session_id is not None else "",
+                session_id=(
+                    self.current_session_id
+                    if self.current_session_id is not None
+                    else ""
+                ),
                 summary_text=summary_text,
                 tasks=tasks,
                 key_points=key_points,
@@ -161,7 +179,7 @@ class SummaryProcessor:
                 "full_ai_result": full_result,
                 "raw_tasks": tasks,
                 "email_info": email_info,
-                "processed_text_length": len(transcript_text)
+                "processed_text_length": len(transcript_text),
             }
 
         except Exception as e:
@@ -225,12 +243,23 @@ class SummaryProcessor:
                                     "timestamp": datetime.now().isoformat(),
                                 }
                                 if not self.ipc_output_file:
-                                    logger.error("ipc_output_file 未设置，无法写入摘要结果")
+                                    logger.error(
+                                        "ipc_output_file 未设置，无法写入摘要结果"
+                                    )
                                 else:
-                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                        out_f.write(json.dumps(summary_message, ensure_ascii=False, default=str) + '\n')
+                                    with open(
+                                        self.ipc_output_file, "a", encoding="utf-8"
+                                    ) as out_f:
+                                        out_f.write(
+                                            json.dumps(
+                                                summary_message,
+                                                ensure_ascii=False,
+                                                default=str,
+                                            )
+                                            + "\n"
+                                        )
                                         out_f.flush()
-                                
+
                                 logger.info("摘要生成完成并已发送")
                             else:
                                 logger.error(f"摘要生成失败: {result.get('error')}")
@@ -255,7 +284,7 @@ class SummaryProcessor:
                     success=True,
                     data={"message": "Summary处理器已启动"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "stop":
@@ -264,7 +293,7 @@ class SummaryProcessor:
                     success=True,
                     data={"message": "Summary处理器已停止"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "process":
@@ -286,7 +315,7 @@ class SummaryProcessor:
                         "processor_status": "ready",
                     },
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             else:
@@ -300,11 +329,9 @@ class SummaryProcessor:
         except Exception as e:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
-                success=False,
-                data=None,
-                error=str(e),
-                timestamp=datetime.now()
+                success=False, data=None, error=str(e), timestamp=datetime.now()
             )
+
 
 async def main():
     """主函数 - 作为独立进程运行"""
@@ -357,7 +384,7 @@ async def main():
                                         success=True,
                                         data={"message": "Summary处理完成"},
                                         error=None,
-                                        timestamp=datetime.now()
+                                        timestamp=datetime.now(),
                                     )
                                 else:
                                     response = await processor.handle_command(command)

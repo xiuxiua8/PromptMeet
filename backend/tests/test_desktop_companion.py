@@ -10,7 +10,9 @@ BACKEND = ROOT / "backend"
 DESKTOP_PYTHON = ROOT / "build/desktop-python/bin/python3"
 
 
-def test_desktop_companion_is_only_a_compatibility_alias_for_main_service(tmp_path: Path) -> None:
+def test_desktop_companion_is_only_a_compatibility_alias_for_main_service(
+    tmp_path: Path,
+) -> None:
     if not DESKTOP_PYTHON.exists():
         pytest.skip("desktop-python bundle not available on this platform")
     environment = os.environ.copy()

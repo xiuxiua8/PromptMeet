@@ -30,7 +30,9 @@ def build_native_screenshot_router(
 
         if content_type.startswith("image/png") and payload.startswith(PNG_SIGNATURE):
             extension = "png"
-        elif content_type.startswith("image/jpeg") and payload.startswith(JPEG_SIGNATURE):
+        elif content_type.startswith("image/jpeg") and payload.startswith(
+            JPEG_SIGNATURE
+        ):
             extension = "jpg"
         else:
             raise HTTPException(status_code=422, detail="只接受 PNG 或 JPEG 截图")

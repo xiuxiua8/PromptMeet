@@ -9,7 +9,9 @@ from services.native_audio_ingress import NativeAudioIngress
 
 def create_client(tmp_path: Path, session_exists=lambda _: True) -> TestClient:
     app = FastAPI()
-    app.include_router(build_native_audio_router(session_exists, NativeAudioIngress(tmp_path)))
+    app.include_router(
+        build_native_audio_router(session_exists, NativeAudioIngress(tmp_path))
+    )
     return TestClient(app)
 
 
@@ -50,5 +52,15 @@ def test_native_audio_endpoint_maps_session_and_sequence_errors(tmp_path: Path) 
         "X-PromptMeet-Channels": "1",
         "Content-Type": "application/octet-stream",
     }
-    assert client.post("/api/sessions/session-1/native-audio", headers=headers, content=b"\x00").status_code == 200
-    assert client.post("/api/sessions/session-1/native-audio", headers=headers, content=b"\x00").status_code == 409
+    assert (
+        client.post(
+            "/api/sessions/session-1/native-audio", headers=headers, content=b"\x00"
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/sessions/session-1/native-audio", headers=headers, content=b"\x00"
+        ).status_code
+        == 409
+    )

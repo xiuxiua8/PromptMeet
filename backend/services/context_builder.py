@@ -87,7 +87,9 @@ class MeetingContextBuilder:
                 screenshot = screenshots_by_asset.get(candidate.payload.asset_id)
                 if screenshot is not None and screenshot.event_id not in selected_ids:
                     bundle.append(screenshot)
-            bundle_cost = sum(self.token_estimator(self.render_event(event)) for event in bundle)
+            bundle_cost = sum(
+                self.token_estimator(self.render_event(event)) for event in bundle
+            )
             if bundle_cost <= event_budget - spent:
                 selected.extend(bundle)
                 selected_ids.update(event.event_id for event in bundle)
@@ -99,9 +101,14 @@ class MeetingContextBuilder:
                 selected_ids.add(candidate.event_id)
                 spent += candidate_cost
 
-        selected = sorted(selected, key=lambda event: (event.sequence, event.occurred_at, event.event_id))
+        selected = sorted(
+            selected,
+            key=lambda event: (event.sequence, event.occurred_at, event.event_id),
+        )
         omitted = [event for event in candidates if event.event_id not in selected_ids]
-        summary = self._compress(omitted, max(0, available - spent)) if omitted else None
+        summary = (
+            self._compress(omitted, max(0, available - spent)) if omitted else None
+        )
         summary_cost = self.token_estimator(summary) if summary else 0
         sources = [
             EvidenceSource(
@@ -145,7 +152,9 @@ class MeetingContextBuilder:
             return payload.thread_id == thread_id
         return True
 
-    def _rank(self, event: MeetingEvent, question: str, event_count: int) -> tuple[float, int]:
+    def _rank(
+        self, event: MeetingEvent, question: str, event_count: int
+    ) -> tuple[float, int]:
         normalized_question = self._normalize(question)
         rendered = self._normalize(self.render_event(event))
         terms = self._terms(normalized_question)
@@ -160,17 +169,30 @@ class MeetingContextBuilder:
             EventKind.TRANSCRIPT: 10,
             EventKind.LIFECYCLE: 1,
         }[event.kind]
-        visual_query = any(term in normalized_question for term in ("截图", "图片", "图上", "画面", "屏幕"))
-        visual_bonus = 80 if visual_query and event.kind in {
-            EventKind.SCREENSHOT,
-            EventKind.SCREENSHOT_ANALYSIS,
-        } else 0
+        visual_query = any(
+            term in normalized_question
+            for term in ("截图", "图片", "图上", "画面", "屏幕")
+        )
+        visual_bonus = (
+            80
+            if visual_query
+            and event.kind
+            in {
+                EventKind.SCREENSHOT,
+                EventKind.SCREENSHOT_ANALYSIS,
+            }
+            else 0
+        )
         return relevance * 100 + visual_bonus + kind_weight + recency, event.sequence
 
     def _compress(self, omitted: list[MeetingEvent], token_limit: int) -> str | None:
         if token_limit <= 0:
             return None
-        summaries = [self.render_event(event) for event in omitted if event.kind != EventKind.SCREENSHOT]
+        summaries = [
+            self.render_event(event)
+            for event in omitted
+            if event.kind != EventKind.SCREENSHOT
+        ]
         if not summaries:
             return None
         value = "较早内容摘要：" + "；".join(summaries)
@@ -207,8 +229,12 @@ class MeetingContextBuilder:
     @staticmethod
     def _terms(value: str) -> set[str]:
         words = set(re.findall(r"[a-z0-9_]+", value))
-        chinese = "".join(character for character in value if "\u4e00" <= character <= "\u9fff")
-        words.update(chinese[index: index + 2] for index in range(max(0, len(chinese) - 1)))
+        chinese = "".join(
+            character for character in value if "\u4e00" <= character <= "\u9fff"
+        )
+        words.update(
+            chinese[index : index + 2] for index in range(max(0, len(chinese) - 1))
+        )
         return words
 
     @staticmethod

@@ -43,9 +43,21 @@ def test_native_transcript_rejects_unknown_session_and_blank_text() -> None:
         "source": "system",
         "timestamp": "2026-07-24T20:00:00+08:00",
     }
-    assert TestClient(missing).post("/api/sessions/missing/native-transcript", json=payload).status_code == 404
+    assert (
+        TestClient(missing)
+        .post("/api/sessions/missing/native-transcript", json=payload)
+        .status_code
+        == 404
+    )
 
     existing = FastAPI()
-    existing.include_router(build_native_transcript_router(lambda _: object(), dispatch))
+    existing.include_router(
+        build_native_transcript_router(lambda _: object(), dispatch)
+    )
     payload["text"] = "   "
-    assert TestClient(existing).post("/api/sessions/session-1/native-transcript", json=payload).status_code == 422
+    assert (
+        TestClient(existing)
+        .post("/api/sessions/session-1/native-transcript", json=payload)
+        .status_code
+        == 422
+    )

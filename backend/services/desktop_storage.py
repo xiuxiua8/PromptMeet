@@ -5,25 +5,24 @@ from typing import Protocol
 
 
 class SessionStorage(Protocol):
-    def initialize_database(self) -> bool:
-        ...
+    def initialize_database(self) -> bool: ...
 
-    def store_session(self, session: dict) -> bool:
-        ...
+    def store_session(self, session: dict) -> bool: ...
 
-    def get_all_sessions(self) -> str:
-        ...
+    def get_all_sessions(self) -> str: ...
 
-    def get_session_details(self, session_id: str) -> str:
-        ...
+    def get_session_details(self, session_id: str) -> str: ...
 
-    def save_session_to_json_file(self, session_id: str) -> str | None:
-        ...
+    def save_session_to_json_file(self, session_id: str) -> str | None: ...
 
 
 class DesktopSessionStorage:
     def __init__(self, root: str | Path | None = None):
-        self.root = Path(root) if root else Path.home() / "Library/Application Support/PromptMeet"
+        self.root = (
+            Path(root)
+            if root
+            else Path.home() / "Library/Application Support/PromptMeet"
+        )
         self.root.mkdir(parents=True, exist_ok=True)
 
     def initialize_database(self) -> bool:
@@ -36,10 +35,14 @@ class DesktopSessionStorage:
         return True
 
     def get_all_sessions(self) -> str:
-        return json.dumps(list(self._read_sessions().values()), ensure_ascii=False, default=str)
+        return json.dumps(
+            list(self._read_sessions().values()), ensure_ascii=False, default=str
+        )
 
     def get_session_details(self, session_id: str) -> str:
-        return json.dumps(self._read_sessions().get(session_id), ensure_ascii=False, default=str)
+        return json.dumps(
+            self._read_sessions().get(session_id), ensure_ascii=False, default=str
+        )
 
     def save_session_to_json_file(self, session_id: str) -> str | None:
         session = self._read_sessions().get(session_id)
@@ -48,7 +51,10 @@ class DesktopSessionStorage:
         export_directory = self.root / "exports"
         export_directory.mkdir(parents=True, exist_ok=True)
         path = export_directory / f"{session_id}.json"
-        path.write_text(json.dumps(session, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        path.write_text(
+            json.dumps(session, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
         return str(path)
 
     def _read_sessions(self) -> dict[str, dict]:
@@ -63,7 +69,10 @@ class DesktopSessionStorage:
     def _write_sessions(self, sessions: dict[str, dict]) -> None:
         path = self.root / "desktop-sessions.json"
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(sessions, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(sessions, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
         temporary.replace(path)
 
 

@@ -35,8 +35,14 @@ from services.session_manager import SessionManager  # noqa: E402
 from services.websocket_manager import WebSocketManager  # noqa: E402
 from services.process_manager import ProcessManager  # noqa: E402
 from services.native_audio_ingress import NativeAudioIngress  # noqa: E402
-from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult  # noqa: E402
-from services.meeting_repository import MeetingNotFoundError, MeetingRepository  # noqa: E402
+from services.meeting_ingestion import (
+    MeetingIngestionService,
+    ScreenshotAnalysisResult,
+)  # noqa: E402
+from services.meeting_repository import (
+    MeetingNotFoundError,
+    MeetingRepository,
+)  # noqa: E402
 from models.meeting_context import (  # noqa: E402
     EventKind,
     MeetingEvent,
@@ -47,6 +53,7 @@ from models.meeting_context import (  # noqa: E402
     SummaryPayload,
     TranscriptPayload,
 )
+
 DESKTOP_MODE = os.getenv("PROMPTMEET_DESKTOP_MODE") == "1"
 if DESKTOP_MODE:
     from services.desktop_agent_service import DesktopAgentService  # noqa: E402
@@ -82,6 +89,7 @@ async def lifespan(app: FastAPI):
     await process_manager.cleanup()
     logger.info("PromptMeet 服务已关闭")
 
+
 app = FastAPI(
     title="PromptMeet API",
     description="智能会议助手 - Vue + FastAPI + IPC 架构",
@@ -102,7 +110,9 @@ app.add_middleware(
 session_manager = SessionManager()
 websocket_manager = WebSocketManager()
 process_manager = ProcessManager()
-meeting_data_root = Path(os.getenv("PROMPTMEET_DATA_DIR") or process_manager.work_dir / "meeting_data")
+meeting_data_root = Path(
+    os.getenv("PROMPTMEET_DATA_DIR") or process_manager.work_dir / "meeting_data"
+)
 meeting_repository = MeetingRepository(meeting_data_root)
 meeting_ingestion = MeetingIngestionService(meeting_repository)
 db_storage = (
@@ -212,12 +222,18 @@ async def broadcast_meeting_event(session_id: str, event: MeetingEvent) -> None:
 
 
 async def process_native_screenshot(session_id: str, image_path) -> dict:
-    mime_type = "image/jpeg" if Path(image_path).suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    mime_type = (
+        "image/jpeg"
+        if Path(image_path).suffix.lower() in {".jpg", ".jpeg"}
+        else "image/png"
+    )
     try:
         loop = asyncio.get_running_loop()
         event = await loop.run_in_executor(
             None,
-            lambda: meeting_ingestion.screenshot(session_id, Path(image_path), mime_type),
+            lambda: meeting_ingestion.screenshot(
+                session_id, Path(image_path), mime_type
+            ),
         )
     except (FileNotFoundError, MeetingNotFoundError, ValueError):
         if DESKTOP_MODE:
@@ -421,7 +437,7 @@ async def create_session():
         end_time=None,
         current_summary=None,
         participant_count=0,
-        audio_file_path=None
+        audio_file_path=None,
     )
 
     session_manager.add_session(session)
@@ -916,7 +932,9 @@ async def handle_websocket_message(session_id: str, message: dict):
                 await desktop_agent_service.answer(
                     data.get("content", ""),
                     session.transcript_segments if session else [],
-                    lambda response: on_agent_response(session_id, response, request_id),
+                    lambda response: on_agent_response(
+                        session_id, response, request_id
+                    ),
                 )
             except Exception as e:
                 await websocket_manager.broadcast_to_session(
@@ -949,7 +967,9 @@ async def handle_websocket_message(session_id: str, message: dict):
 
 
 # 添加Agent响应回调
-async def on_agent_response(session_id: str, response: dict, request_id: str | None = None):
+async def on_agent_response(
+    session_id: str, response: dict, request_id: str | None = None
+):
     """处理Agent响应，支持流式分片"""
     # 兼容旧结构，提取最终回答内容
     try:
@@ -957,17 +977,20 @@ async def on_agent_response(session_id: str, response: dict, request_id: str | N
         # 流式分片
         if isinstance(data, dict) and ("delta" in data or "chunk" in data):
             delta = data.get("delta") or data.get("chunk")
-            await websocket_manager.broadcast_to_session(session_id, {
-                "type": "answer",
-                "data": {"request_id": request_id, "delta": delta}
-            })
+            await websocket_manager.broadcast_to_session(
+                session_id,
+                {"type": "answer", "data": {"request_id": request_id, "delta": delta}},
+            )
             return
         # 完整内容
         if isinstance(data, dict) and "content" in data:
-            await websocket_manager.broadcast_to_session(session_id, {
-                "type": "answer",
-                "data": {"request_id": request_id, "content": data["content"]}
-            })
+            await websocket_manager.broadcast_to_session(
+                session_id,
+                {
+                    "type": "answer",
+                    "data": {"request_id": request_id, "content": data["content"]},
+                },
+            )
             return
         # 邮件相关
         content = None
@@ -981,20 +1004,19 @@ async def on_agent_response(session_id: str, response: dict, request_id: str | N
             elif isinstance(data.get("content"), str):
                 content = data["content"]
         if content and ("邮件" in content or "email" in content.lower()):
-            await websocket_manager.broadcast_to_session(session_id, {
-                "type": "email_response",
-                "data": {"content": content}
-            })
+            await websocket_manager.broadcast_to_session(
+                session_id, {"type": "email_response", "data": {"content": content}}
+            )
         elif content:
-            await websocket_manager.broadcast_to_session(session_id, {
-                "type": "answer",
-                "data": {"content": content}
-            })
+            await websocket_manager.broadcast_to_session(
+                session_id, {"type": "answer", "data": {"content": content}}
+            )
     except Exception:
-        await websocket_manager.broadcast_to_session(session_id, {
-            "type": "answer",
-            "data": {"content": str(response)}
-        })
+        await websocket_manager.broadcast_to_session(
+            session_id, {"type": "answer", "data": {"content": str(response)}}
+        )
+
+
 # 注册回调
 process_manager.on_agent_response = on_agent_response
 
@@ -1047,7 +1069,10 @@ async def get_all_sessions():
     try:
         if DESKTOP_MODE:
             return JSONResponse(
-                content=[legacy_meeting_projection(record) for record in meeting_repository.list()]
+                content=[
+                    legacy_meeting_projection(record)
+                    for record in meeting_repository.list()
+                ]
             )
         sessions_json = db_storage.get_all_sessions()
         return JSONResponse(content=json.loads(sessions_json))
@@ -1083,6 +1108,7 @@ async def export_session(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
 
+
 # ============= IPC 回调处理 =============
 
 
@@ -1097,7 +1123,7 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             confidence=transcript_data.get("confidence", 0.0),
             speaker=transcript_data.get("speaker"),
             start_time=transcript_data.get("start_time"),  # 或者合适的默认值
-            end_time=transcript_data.get("end_time")       # 或者合适的默认值
+            end_time=transcript_data.get("end_time"),  # 或者合适的默认值
         )
         timeline_event = meeting_ingestion.transcript(session_id, transcript_data)
 
@@ -1259,10 +1285,7 @@ async def on_questions_generated(session_id: str, questions_data: dict):
             # 发送单个问题给前端
             question_message = {
                 "type": "question",
-                "data": {
-                    "id": i,
-                    "content": question_content
-                },
+                "data": {"id": i, "content": question_content},
                 "timestamp": datetime.now().isoformat(),
                 "session_id": session_id,
             }

@@ -45,7 +45,9 @@ class MeetingIngestionService:
                     occurred_at=self._aware(started_at),
                     kind=EventKind.LIFECYCLE,
                     provenance=EventProvenance(source="session_api"),
-                    payload=LifecyclePayload(status=MeetingStatus.ACTIVE, detail="会议已创建"),
+                    payload=LifecyclePayload(
+                        status=MeetingStatus.ACTIVE, detail="会议已创建"
+                    ),
                 ),
             )
         return record
@@ -254,5 +256,7 @@ class MeetingIngestionService:
     @staticmethod
     def _dimensions(data: bytes, mime_type: str) -> tuple[int | None, int | None]:
         if mime_type == "image/png" and len(data) >= 24 and data.startswith(b"\x89PNG"):
-            return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+            return int.from_bytes(data[16:20], "big"), int.from_bytes(
+                data[20:24], "big"
+            )
         return None, None

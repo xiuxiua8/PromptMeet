@@ -172,7 +172,9 @@ class FakeAgentStreamResponse:
                     )
         tool_calls = self.message.get("tool_calls") or []
         if tool_calls:
-            indexed_calls = [dict(call, index=index) for index, call in enumerate(tool_calls)]
+            indexed_calls = [
+                dict(call, index=index) for index, call in enumerate(tool_calls)
+            ]
             yield "data: " + json.dumps(
                 {"choices": [{"delta": {"tool_calls": indexed_calls}}]},
                 ensure_ascii=False,
@@ -423,7 +425,9 @@ def test_answer_does_not_expose_or_call_web_search_when_disabled(monkeypatch) ->
     async def search(query: str, limit: int = 4) -> list[dict[str, str]]:
         raise AssertionError("disabled web search must never run")
 
-    FakeAgentClient.responses = [{"role": "assistant", "content": "仅基于已有知识回答。"}]
+    FakeAgentClient.responses = [
+        {"role": "assistant", "content": "仅基于已有知识回答。"}
+    ]
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
         lambda **kwargs: FakeAgentClient(),
@@ -484,8 +488,12 @@ def test_answer_and_question_generation_use_different_models() -> None:
     assert service._provider("questions")[2] == "deepseek-v4-flash"
 
 
-def test_meeting_answer_uses_typed_budgeted_context_and_exact_question(monkeypatch) -> None:
-    FakeAgentClient.responses = [{"role": "assistant", "content": "负责人是林晨 [M1]。"}]
+def test_meeting_answer_uses_typed_budgeted_context_and_exact_question(
+    monkeypatch,
+) -> None:
+    FakeAgentClient.responses = [
+        {"role": "assistant", "content": "负责人是林晨 [M1]。"}
+    ]
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
         lambda **kwargs: FakeAgentClient(),
@@ -561,7 +569,9 @@ def test_answer_finalizes_immediately_on_empty_no_tool_response(monkeypatch) -> 
 
     assert len(FakeAgentClient.payloads) == 1
     deltas = "".join(
-        event["data"]["delta"] for event in emitted if event.get("data", {}).get("delta")
+        event["data"]["delta"]
+        for event in emitted
+        if event.get("data", {}).get("delta")
     )
     assert deltas == "抱歉，我暂时无法生成回答。"
 
@@ -619,12 +629,16 @@ def test_answer_emits_exhaustion_on_tool_budget_limit(monkeypatch) -> None:
     assert len(searches) == 3
     assert len(FakeAgentClient.payloads) == 4
     deltas = "".join(
-        event["data"]["delta"] for event in emitted if event.get("data", {}).get("delta")
+        event["data"]["delta"]
+        for event in emitted
+        if event.get("data", {}).get("delta")
     )
     assert "超过了工具调用上限" in deltas
 
 
-def test_answer_meeting_finalizes_immediately_on_empty_no_tool_response(monkeypatch) -> None:
+def test_answer_meeting_finalizes_immediately_on_empty_no_tool_response(
+    monkeypatch,
+) -> None:
     FakeAgentClient.responses = [{"role": "assistant", "content": None}]
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
@@ -661,13 +675,12 @@ def test_answer_meeting_finalizes_immediately_on_empty_no_tool_response(monkeypa
     async def collect(message: dict) -> None:
         emitted.append(message)
 
-    asyncio.run(
-        service.answer_meeting(record, "问题？", collect)
-    )
+    asyncio.run(service.answer_meeting(record, "问题？", collect))
 
     assert len(FakeAgentClient.payloads) == 1
     deltas = "".join(
-        event["data"]["delta"] for event in emitted[:-1]
+        event["data"]["delta"]
+        for event in emitted[:-1]
         if event.get("data", {}).get("delta")
     )
     assert deltas == "抱歉，我暂时无法生成回答。"
@@ -743,14 +756,13 @@ def test_answer_meeting_emits_exhaustion_on_tool_budget_limit(monkeypatch) -> No
     async def collect(message: dict) -> None:
         emitted.append(message)
 
-    asyncio.run(
-        service.answer_meeting(record, "exhaustive?", collect)
-    )
+    asyncio.run(service.answer_meeting(record, "exhaustive?", collect))
 
     assert len(searches) == 3
     assert len(FakeAgentClient.payloads) == 4
     deltas = "".join(
-        event["data"]["delta"] for event in emitted
+        event["data"]["delta"]
+        for event in emitted
         if event.get("data", {}).get("delta")
     )
     assert "超过了工具调用上限" in deltas

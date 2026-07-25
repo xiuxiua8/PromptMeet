@@ -99,7 +99,7 @@ class WebSocketManager:
     def get_all_sessions(self) -> List[str]:
         """获取所有活跃会话ID"""
         return list(self.connections.keys())
-    
+
     def get_connection_count(self, session_id: Optional[str] = None) -> int:
         """获取连接数量"""
         if session_id:

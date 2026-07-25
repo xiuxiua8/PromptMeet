@@ -37,7 +37,9 @@ def test_desktop_question_route_uses_in_process_agent(monkeypatch, tmp_path) -> 
 
     monkeypatch.setattr(main_service, "desktop_agent_service", FakeAgentService())
     monkeypatch.setattr(main_service, "on_questions_generated", collect)
-    monkeypatch.setattr(main_service.process_manager, "start_question_process", fail_if_started)
+    monkeypatch.setattr(
+        main_service.process_manager, "start_question_process", fail_if_started
+    )
 
     response = asyncio.run(main_service.generate_questions("question-session"))
 

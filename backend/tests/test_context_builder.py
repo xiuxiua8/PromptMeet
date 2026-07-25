@@ -34,7 +34,9 @@ def event(sequence: int, kind: EventKind, payload) -> MeetingEvent:
     )
 
 
-def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order() -> None:
+def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order() -> (
+    None
+):
     events = [
         event(
             index,
@@ -84,7 +86,9 @@ def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order()
         selected.sequence for selected in selection.events
     )
     assert EventKind.SCREENSHOT in [selected.kind for selected in selection.events]
-    assert EventKind.SCREENSHOT_ANALYSIS in [selected.kind for selected in selection.events]
+    assert EventKind.SCREENSHOT_ANALYSIS in [
+        selected.kind for selected in selection.events
+    ]
     assert selection.omitted_count > 0
     assert selection.derived_summary
     assert [source.source_id for source in selection.sources] == [
@@ -92,7 +96,9 @@ def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order()
     ]
 
 
-def test_relevant_screenshot_analysis_keeps_its_raw_image_ahead_of_unrelated_evidence() -> None:
+def test_relevant_screenshot_analysis_keeps_its_raw_image_ahead_of_unrelated_evidence() -> (
+    None
+):
     record = MeetingRecord(
         meeting_id="meeting-a",
         started_at=START,
@@ -145,7 +151,9 @@ def test_selector_only_uses_prior_turns_from_requested_thread() -> None:
             event(
                 1,
                 EventKind.USER_QUESTION,
-                QuestionPayload(request_id="q1", thread_id="main", question="主要风险？"),
+                QuestionPayload(
+                    request_id="q1", thread_id="main", question="主要风险？"
+                ),
             ),
             event(
                 2,
@@ -155,7 +163,9 @@ def test_selector_only_uses_prior_turns_from_requested_thread() -> None:
             event(
                 3,
                 EventKind.USER_QUESTION,
-                QuestionPayload(request_id="q2", thread_id="private", question="薪资？"),
+                QuestionPayload(
+                    request_id="q2", thread_id="private", question="薪资？"
+                ),
             ),
             event(
                 4,
@@ -188,7 +198,9 @@ def test_selector_omits_lifecycle_noise_and_uses_compact_source_labels() -> None
             event(
                 2,
                 EventKind.TRANSCRIPT,
-                TranscriptPayload(segment_id="segment-2", speaker="成员", text="周岚负责回滚"),
+                TranscriptPayload(
+                    segment_id="segment-2", speaker="成员", text="周岚负责回滚"
+                ),
             ),
         ],
     )
@@ -246,15 +258,23 @@ def test_prompt_has_system_developer_user_boundaries_and_exact_question() -> Non
     request = MeetingPromptBuilder().build(
         selection,
         "  原样保留这个问题？  ",
-        ProviderCapabilities(provider="deepseek", model="deepseek-chat", supports_vision=False),
+        ProviderCapabilities(
+            provider="deepseek", model="deepseek-chat", supports_vision=False
+        ),
     )
 
-    assert [message.role for message in request.messages] == ["system", "developer", "user"]
+    assert [message.role for message in request.messages] == [
+        "system",
+        "developer",
+        "user",
+    ]
     assert request.messages[-1].content == "  原样保留这个问题？  "
     assert "[M1]" in request.messages[1].content
 
 
-def test_text_only_provider_discloses_pixels_were_not_seen_but_vision_gets_asset_part() -> None:
+def test_text_only_provider_discloses_pixels_were_not_seen_but_vision_gets_asset_part() -> (
+    None
+):
     record = MeetingRecord(
         meeting_id="meeting-a",
         started_at=START,
@@ -280,7 +300,9 @@ def test_text_only_provider_discloses_pixels_were_not_seen_but_vision_gets_asset
     text_request = MeetingPromptBuilder().build(
         selection,
         "图上是什么？",
-        ProviderCapabilities(provider="deepseek", model="deepseek-chat", supports_vision=False),
+        ProviderCapabilities(
+            provider="deepseek", model="deepseek-chat", supports_vision=False
+        ),
     )
     vision_request = MeetingPromptBuilder().build(
         selection,

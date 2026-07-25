@@ -32,10 +32,16 @@ class ProviderConfiguration:
             if not key:
                 raise RuntimeError("请先在 PromptMeet 设置中配置 OpenAI API Key")
             model = environment.get(
-                "OPENAI_QUESTION_MODEL" if purpose == "questions" else "OPENAI_ANSWER_MODEL",
-                "gpt-4o-mini"
-                if purpose == "questions"
-                else environment.get("OPENAI_CHAT_MODEL", "gpt-4o"),
+                (
+                    "OPENAI_QUESTION_MODEL"
+                    if purpose == "questions"
+                    else "OPENAI_ANSWER_MODEL"
+                ),
+                (
+                    "gpt-4o-mini"
+                    if purpose == "questions"
+                    else environment.get("OPENAI_CHAT_MODEL", "gpt-4o")
+                ),
             )
             if not cls._openai_model(model):
                 raise ValueError(f"OpenAI 不支持所选模型：{model}")
@@ -58,12 +64,18 @@ class ProviderConfiguration:
         if not key:
             raise RuntimeError("请先在 PromptMeet 设置中配置 DeepSeek API Key")
         model = environment.get(
-            "DEEPSEEK_QUESTION_MODEL" if purpose == "questions" else "DEEPSEEK_ANSWER_MODEL",
+            (
+                "DEEPSEEK_QUESTION_MODEL"
+                if purpose == "questions"
+                else "DEEPSEEK_ANSWER_MODEL"
+            ),
             "deepseek-v4-flash" if purpose == "questions" else "deepseek-v4-pro",
         )
         if not model.startswith("deepseek-"):
             raise ValueError(f"DeepSeek 不支持所选模型：{model}")
-        base = environment.get("DEEPSEEK_API_BASE", "https://api.deepseek.com").rstrip("/")
+        base = environment.get("DEEPSEEK_API_BASE", "https://api.deepseek.com").rstrip(
+            "/"
+        )
         return cls(
             provider="deepseek",
             model=model,

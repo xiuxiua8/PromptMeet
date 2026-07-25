@@ -37,7 +37,9 @@ class NativeAudioIngress:
         with self._lock:
             seen = self._seen_sequences.setdefault(session_id, set())
             if chunk.sequence in seen:
-                raise NativeAudioSequenceError(max(seen, default=-1) + 1, chunk.sequence)
+                raise NativeAudioSequenceError(
+                    max(seen, default=-1) + 1, chunk.sequence
+                )
 
             session_dir = self.root / session_id
             session_dir.mkdir(parents=True, exist_ok=True)
