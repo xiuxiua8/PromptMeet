@@ -174,10 +174,13 @@ class DesktopAgentService:
                             }
                         )
                     continue
-                answer = message.get("content") or "抱歉，我暂时无法生成回答。"
-                if not message.get("content"):
+                answer = message.get("content")
+                if answer:
+                    break
+                if not tools_available:
+                    answer = "抱歉，我暂时无法生成回答。"
                     await emit({"data": {"delta": answer}})
-                break
+                    break
             else:
                 answer = "抱歉，本次回答超过了工具调用上限。"
 
@@ -311,10 +314,13 @@ class DesktopAgentService:
                         )
                     continue
 
-                answer = message.get("content") or "抱歉，我暂时无法生成回答。"
-                if not message.get("content"):
+                answer = message.get("content")
+                if answer:
+                    break
+                if not tools_available:
+                    answer = "抱歉，我暂时无法生成回答。"
                     await emit({"data": {"delta": answer}})
-                break
+                    break
             else:
                 answer = "抱歉，本次回答超过了工具调用上限。"
 

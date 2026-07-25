@@ -217,7 +217,11 @@ async def broadcast_meeting_event(session_id: str, event: MeetingEvent) -> None:
 async def process_native_screenshot(session_id: str, image_path) -> dict:
     mime_type = "image/jpeg" if Path(image_path).suffix.lower() in {".jpg", ".jpeg"} else "image/png"
     try:
-        event = meeting_ingestion.screenshot(session_id, Path(image_path), mime_type)
+        loop = asyncio.get_running_loop()
+        event = await loop.run_in_executor(
+            None,
+            lambda: meeting_ingestion.screenshot(session_id, Path(image_path), mime_type),
+        )
     except (FileNotFoundError, MeetingNotFoundError, ValueError):
         if DESKTOP_MODE:
             await process_manager.start_image_process(
@@ -361,55 +365,6 @@ async def health_check():
     if DESKTOP_MODE and desktop_agent_service is not None:
         result["ai"] = desktop_agent_service.provider_status()
     return result
-
-
-@app.get("/api/windows")
-async def get_available_windows():
-    """获取可用的会议窗口列表"""
-    try:
-        # 临时启动图像处理器来获取窗口列表
-        import sys
-        import os
-
-        sys.path.append(os.path.join(os.path.dirname(__file__), "processors"))
-
-        from image_processor import get_meeting_windows
-
-        window_dict = get_meeting_windows()
-        if not window_dict:
-            return {"success": True, "windows": [], "message": "未检测到会议窗口"}
-
-        # 格式化窗口信息供前端使用
-        windows = []
-        for window_id, window in window_dict.items():
-            if isinstance(window, dict):
-                # macOS 或 fallback 窗口
-                windows.append(
-                    {
-                        "id": str(window_id),
-                        "title": window.get("title", "Unknown"),
-                        "type": window.get("type", "unknown"),
-                    }
-                )
-            else:
-                # pygetwindow 窗口对象
-                windows.append(
-                    {"id": str(window_id), "title": window.title, "type": "window"}
-                )
-
-        return {
-            "success": True,
-            "windows": windows,
-            "message": f"找到 {len(windows)} 个可用窗口",
-        }
-
-    except Exception as e:
-        logger.error(f"获取窗口列表失败: {e}")
-        return {
-            "success": False,
-            "windows": [],
-            "message": f"获取窗口列表失败: {str(e)}",
-        }
 
 
 @app.get("/api/windows")
