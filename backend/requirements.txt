@@ -24,8 +24,8 @@ opencc
 ipython
 
 # LangChain 相关
-langchain
-langchain-openai
+langchain>=0.3.0,<1.0
+langchain-openai>=0.3.0,<1.0
 
 # 安装 pipwin 后用于安装 PyAudio（Windows）
 pipwin

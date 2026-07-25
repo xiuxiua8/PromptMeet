@@ -2,12 +2,16 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DESKTOP_PYTHON = ROOT / "build/desktop-python/bin/python3"
 
 
 def test_main_service_desktop_profile_keeps_original_managers(tmp_path: Path) -> None:
+    if not DESKTOP_PYTHON.exists():
+        pytest.skip("desktop-python bundle not available on this platform")
     backend = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
     environment.update(
