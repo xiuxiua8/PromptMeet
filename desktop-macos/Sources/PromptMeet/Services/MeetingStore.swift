@@ -531,13 +531,11 @@ final class MeetingStore: ObservableObject {
             state.reduce(.questionGenerated(question))
         case .questions(let generationID, let contextRevision, let questions):
             if let generationID,
-                generationID != activeSuggestionGenerationID
-            {
+                generationID != activeSuggestionGenerationID {
                 return
             }
             if let contextRevision,
-                contextRevision != suggestionContextRevision
-            {
+                contextRevision != suggestionContextRevision {
                 return
             }
             state.reduce(.questionsGenerated(questions))

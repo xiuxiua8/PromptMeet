@@ -112,7 +112,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         request.httpBody = try JSONSerialization.data(
             withJSONObject: [
                 "generation_id": generationID.uuidString,
-                "context_revision": contextRevision,
+                "context_revision": contextRevision
             ]
         )
         let (data, response) = try await session.data(for: request)
@@ -140,7 +140,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         guard let socket else { throw BackendClientError.socketUnavailable }
         let payload: [String: Any] = [
             "type": "agent_message",
-            "data": ["request_id": requestID.uuidString, "content": prompt],
+            "data": ["request_id": requestID.uuidString, "content": prompt]
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         guard let text = String(data: data, encoding: .utf8) else {
@@ -157,7 +157,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             "speaker": transcript.speaker,
             "source": transcript.source.rawValue,
             "timestamp": formatter.string(from: transcript.timestamp),
-            "meeting_time_ms": transcript.meetingTime?.millisecondsValue as Any,
+            "meeting_time_ms": transcript.meetingTime?.millisecondsValue as Any
         ]
         if transcript.meetingTime == nil {
             payload.removeValue(forKey: "meeting_time_ms")
@@ -207,7 +207,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             withJSONObject: [
                 "request_id": requestID.uuidString,
                 "thread_id": threadID,
-                "question": question,
+                "question": question
             ]
         )
         let (data, response) = try await session.data(for: request)

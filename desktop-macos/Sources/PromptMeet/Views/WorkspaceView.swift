@@ -183,8 +183,7 @@ struct WorkspaceView: View {
                 .lineLimit(1)
 
             if store.state.screenshotOperation == .selecting
-                || store.state.screenshotOperation == .capturing
-            {
+                || store.state.screenshotOperation == .capturing {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(VisualTokens.sky)
@@ -749,8 +748,7 @@ struct WorkspaceView: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if !isViewingHistory,
                         let insight = store.state.latestInsight,
-                        !insight.isEmpty
-                    {
+                        !insight.isEmpty {
                         aiSection(icon: "sparkles", title: "当前洞察") {
                             Text(insight)
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -907,8 +905,7 @@ struct WorkspaceView: View {
                 .foregroundStyle(VisualTokens.secondaryText)
                 .padding(.vertical, 9)
             } else if !isViewingHistory,
-                case .failed(let message) = store.state.suggestionRefresh.phase
-            {
+                case .failed(let message) = store.state.suggestionRefresh.phase {
                 Button(action: store.requestQuestions) {
                     Label("更新失败，点此重试", systemImage: "arrow.clockwise")
                 }

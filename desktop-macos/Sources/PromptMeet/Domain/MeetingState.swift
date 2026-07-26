@@ -367,8 +367,7 @@ struct MeetingState: Equatable {
         case .meetingHistoryLoaded(let meetings):
             meetingHistory = meetings
             if let selectedArchivedMeetingID,
-                !meetings.contains(where: { $0.id == selectedArchivedMeetingID })
-            {
+                !meetings.contains(where: { $0.id == selectedArchivedMeetingID }) {
                 self.selectedArchivedMeetingID = nil
             }
         case .meetingHistoryUpdated(let meeting):
@@ -400,8 +399,7 @@ struct MeetingState: Equatable {
             return $0.occurredAt < $1.occurredAt
         }
         if let line = event.transcript,
-            !transcript.contains(where: { $0.id == line.id })
-        {
+            !transcript.contains(where: { $0.id == line.id }) {
             transcript.append(line)
         }
         for projected in MeetingTimelineProjection.conversation(timeline) {
@@ -474,12 +472,12 @@ extension MeetingState {
                 TranscriptLine(
                     speaker: "林晨",
                     text: "接下来需要确认每个行动项的负责人、截止时间，以及发布前必须完成的风险检查。"
-                ),
+                )
             ],
             latestInsight: "团队正在收敛发布范围，当前关键是确定负责人和截止时间。",
             generatedQuestions: [
                 "这次发布最大的风险是什么？",
-                "帮我整理明确的行动项",
+                "帮我整理明确的行动项"
             ]
         )
     }
@@ -528,7 +526,7 @@ extension MeetingState {
             summaryText: "团队确认本次发布以核心流程稳定为优先，视觉体验保持克制，并在上线前完成风险复核。",
             tasks: [
                 MeetingTask(title: "确认最终发布范围", deadline: "今天 18:00", assignee: "林晨"),
-                MeetingTask(title: "完成回滚路径验证", deadline: "明天 12:00", assignee: "周岚"),
+                MeetingTask(title: "完成回滚路径验证", deadline: "明天 12:00", assignee: "周岚")
             ],
             keyPoints: ["核心流程优先", "避免临时增加范围", "上线前完成风险复核"],
             decisions: ["采用 Aura 视觉方向", "保留独立 AI 阅读器"]
