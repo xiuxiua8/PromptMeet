@@ -8,7 +8,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.13'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   test-backend:
@@ -74,26 +74,24 @@ jobs:
       uses: actions/setup-node@v3
       with:
         node-version: ${{ env.NODE_VERSION }}
-        cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
         
     - name: Install dependencies
       run: |
         cd frontend
-        npm ci
-        
+        npm install
+
     - name: Run tests
       run: |
         cd frontend
         npm test
         
     - name: Type check (if TypeScript)
+      continue-on-error: true
       run: |
         cd frontend
         if [ -f "tsconfig.json" ]; then
           npx vue-tsc --noEmit
         fi
-        continue-on-error: true
         
     - name: Build
       run: |
@@ -109,11 +107,11 @@ jobs:
     
     - name: Build Docker images
       run: |
-        docker-compose -f docker/docker-compose.yml build
+        docker compose -f docker/docker-compose.yml build
         
     - name: Test Docker setup
       run: |
-        docker-compose -f docker/docker-compose.yml up -d
+        docker compose -f docker/docker-compose.yml up -d
         echo "Waiting for services to start..."
         sleep 60
         echo "Testing backend health endpoint..."
@@ -123,5 +121,5 @@ jobs:
     - name: Cleanup Docker
       if: always()
       run: |
-        docker-compose -f docker/docker-compose.yml down -v
+        docker compose -f docker/docker-compose.yml down -v
         docker system prune -f 

@@ -1,8 +1,6 @@
 import os
-import json
 import requests
 import time
-import wave
 import threading
 import queue
 import sounddevice as sd
@@ -18,8 +16,6 @@ load_dotenv()
 
 # 配置参数
 API_KEY = os.getenv("OPENAI_API_KEY")
-print(API_KEY)
-API_KEY = "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"
 if not API_KEY:
     raise ValueError("请在.env文件中设置OPENAI_API_KEY")
 
@@ -67,7 +63,10 @@ class SystemAudioRecorder:
             )
 
             print(
-                f"{i}: {dev['name']} (输入通道: {dev['max_input_channels']}, 输出通道: {dev['max_output_channels']}, API: {hostapi_name})"
+                f"{i}: {dev['name']} "
+                f"(输入通道: {dev['max_input_channels']}, "
+                f"输出通道: {dev['max_output_channels']}, "
+                f"API: {hostapi_name})"
             )
 
             # 收集所有有输入通道的设备
@@ -115,14 +114,14 @@ class SystemAudioRecorder:
             print("   brew install blackhole-2ch")
             print("   然后重启系统")
 
-        print(f"\n可用的输入设备:")
+        print("\n可用的输入设备:")
         for idx, (device_id, dev) in enumerate(input_devices):
             print(f"  {idx}: {dev['name']} (设备ID: {device_id})")
 
         # 自动选择第一个输入设备，或让用户选择
         try:
             choice = input(
-                f"\n请选择设备 (0-{len(input_devices)-1}, 回车使用默认): "
+                f"\n请选择设备 (0-{len(input_devices) - 1}, 回车使用默认): "
             ).strip()
             if choice == "":
                 selected_idx = 0
@@ -176,7 +175,7 @@ class SystemAudioRecorder:
         )
 
         self.stream.start()
-        print(f"🔊 开始录制系统音频")
+        print("🔊 开始录制系统音频")
 
         try:
             while self.is_recording:
@@ -282,7 +281,7 @@ class SystemAudioRecorder:
             # 删除临时文件
             try:
                 os.remove(filename)
-            except:
+            except Exception:
                 pass
 
 

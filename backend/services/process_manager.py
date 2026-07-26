@@ -11,11 +11,10 @@ import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable
 import os
-import signal
 from dotenv import load_dotenv
-from models.data_models import ProcessStatus, IPCMessage, IPCCommand, IPCResponse
+from models.data_models import ProcessStatus, IPCCommand
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,16 @@ class ProcessManager:
         self.on_progress_update: Optional[Callable] = None
         self.on_questions_generated: Optional[Callable] = None
         self.on_agent_response: Optional[Callable] = None
-        
+
         # 工作目录 - 使用项目根目录下的temp_sessions，与进程cwd保持一致
         project_root = Path(__file__).parent.parent.parent
-        self.work_dir = project_root / "temp_sessions"
-        self.work_dir.mkdir(exist_ok=True)
+        configured_work_dir = os.getenv("PROMPTMEET_WORK_DIR")
+        self.work_dir = (
+            Path(configured_work_dir)
+            if configured_work_dir
+            else project_root / "temp_sessions"
+        )
+        self.work_dir.mkdir(parents=True, exist_ok=True)
 
     async def initialize(self):
         """初始化进程管理器"""
@@ -608,7 +612,10 @@ class ProcessManager:
             await self.on_agent_response(session_id, message)
 
     async def start_image_process(
-        self, session_id: str, window_id: Optional[str] = None
+        self,
+        session_id: str,
+        window_id: Optional[str] = None,
+        image_path: Optional[str] = None,
     ) -> str:
         """启动 Image OCR 进程"""
         process_id = f"image_{session_id}_{uuid.uuid4().hex[:8]}"
@@ -639,6 +646,8 @@ class ProcessManager:
             # 如果指定了窗口ID，添加到命令行参数
             if window_id:
                 cmd.extend(["--window-id", window_id])
+            if image_path:
+                cmd.extend(["--image-path", image_path])
 
             logger.info(f"启动 Image OCR 进程: {' '.join(cmd)}")
 
@@ -679,7 +688,11 @@ class ProcessManager:
             asyncio.create_task(self._monitor_image_output(session_id, ipc_output))
 
             # 传递window_id参数到IPC命令
-            params = {"window_id": window_id} if window_id else {}
+            params = {}
+            if window_id:
+                params["window_id"] = window_id
+            if image_path:
+                params["image_path"] = image_path
             await self._send_ipc_command(
                 ipc_input,
                 IPCCommand(command="start", session_id=session_id, params=params),
@@ -1001,7 +1014,7 @@ class ProcessManager:
                     line = await asyncio.to_thread(process.stdout.readline)
                     if line:
                         # 移除末尾的换行符并添加进程名前缀
-                        log_line = line.rstrip('\n\r')
+                        log_line = line.rstrip("\n\r")
                         if log_line:
                             # 使用主程序的logger输出子进程日志
                             logger.info(f"[{process_name}] {log_line}")

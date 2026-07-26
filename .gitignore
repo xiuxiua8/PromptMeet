@@ -94,6 +94,17 @@ yarn.lock
 *.json
 *.md
 
+# Keep approved native-app design specifications while excluding brainstorming artifacts.
+!docs/superpowers/specs/*.md
+!docs/superpowers/plans/*.md
+!desktop-macos/THIRD_PARTY_NOTICES.md
+.superpowers/
+.worktrees/
+
+desktop-macos/.build/
+desktop-macos/.local/
+
+*.md
 
 *.f0
 
@@ -112,3 +123,14 @@ temp_sessions/
 *源码/
 *.zip
 *.mov
+
+# Required source inputs and durable project documentation.
+!backend/requirements-desktop.txt
+!desktop-macos/THIRD_PARTY_NOTICES.md
+!docs/
+!docs/superpowers/
+!docs/superpowers/plans/
+!docs/superpowers/plans/*.md
+!docs/macos-meeting-agent.md
+!AGENTS.md
+!CLAUDE.md

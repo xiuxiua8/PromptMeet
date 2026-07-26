@@ -126,9 +126,9 @@ class QuestionProcessor:
                 "success": False,
                 "error": str(e),
                 "questions": [],
-                "processed_segments": 0
+                "processed_segments": 0,
             }
-    
+
     async def _process_session_transcripts(self, session_id: str):
         """处理会话的所有转录数据，生成问题"""
         try:
@@ -171,13 +171,26 @@ class QuestionProcessor:
                                     "timestamp": datetime.now().isoformat(),
                                 }
                                 if not self.ipc_output_file:
-                                    logger.error("ipc_output_file 未设置，无法写入问题结果")
+                                    logger.error(
+                                        "ipc_output_file 未设置，无法写入问题结果"
+                                    )
                                 else:
-                                    with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                        out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
+                                    with open(
+                                        self.ipc_output_file, "a", encoding="utf-8"
+                                    ) as out_f:
+                                        out_f.write(
+                                            json.dumps(
+                                                question_message,
+                                                ensure_ascii=False,
+                                                default=str,
+                                            )
+                                            + "\n"
+                                        )
                                         out_f.flush()
-                                
-                                logger.info(f"问题生成完成并已发送，共 {len(result['questions'])} 个问题")
+
+                                logger.info(
+                                    f"问题生成完成并已发送，共 {len(result['questions'])} 个问题"
+                                )
                             else:
                                 logger.info(
                                     f"暂未生成问题: {result.get('message', '')}"
@@ -256,13 +269,26 @@ class QuestionProcessor:
                                         "timestamp": datetime.now().isoformat(),
                                     }
                                     if not self.ipc_output_file:
-                                        logger.error("ipc_output_file 未设置，无法写入问题结果")
+                                        logger.error(
+                                            "ipc_output_file 未设置，无法写入问题结果"
+                                        )
                                     else:
-                                        with open(self.ipc_output_file, 'a', encoding='utf-8') as out_f:
-                                            out_f.write(json.dumps(question_message, ensure_ascii=False, default=str) + '\n')
+                                        with open(
+                                            self.ipc_output_file, "a", encoding="utf-8"
+                                        ) as out_f:
+                                            out_f.write(
+                                                json.dumps(
+                                                    question_message,
+                                                    ensure_ascii=False,
+                                                    default=str,
+                                                )
+                                                + "\n"
+                                            )
                                             out_f.flush()
-                                    
-                                    logger.info(f"问题已发送给前端，共 {len(result['questions'])} 个问题")
+
+                                    logger.info(
+                                        f"问题已发送给前端，共 {len(result['questions'])} 个问题"
+                                    )
                                 else:
                                     logger.info(
                                         f"暂未生成问题: {result.get('message', '')}"
@@ -295,7 +321,7 @@ class QuestionProcessor:
                     success=True,
                     data={"message": "Question处理器已启动"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "stop":
@@ -304,7 +330,7 @@ class QuestionProcessor:
                     success=True,
                     data={"message": "Question处理器已停止"},
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             elif command.command == "process":
@@ -328,7 +354,7 @@ class QuestionProcessor:
                         "processor_status": "ready",
                     },
                     error=None,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
 
             else:
@@ -342,11 +368,9 @@ class QuestionProcessor:
         except Exception as e:
             logger.error(f"处理命令失败: {e}")
             return IPCResponse(
-                success=False,
-                data=None,
-                error=str(e),
-                timestamp=datetime.now()
+                success=False, data=None, error=str(e), timestamp=datetime.now()
             )
+
 
 async def main():
     """主函数 - 作为独立进程运行"""
@@ -402,9 +426,11 @@ async def main():
                                     )
                                     response = IPCResponse(
                                         success=True,
-                                        data={"message": "Question处理器已启动，开始监听转录片段"},
+                                        data={
+                                            "message": "Question处理器已启动，开始监听转录片段"
+                                        },
                                         error=None,
-                                        timestamp=datetime.now()
+                                        timestamp=datetime.now(),
                                     )
                                 else:
                                     response = await processor.handle_command(command)

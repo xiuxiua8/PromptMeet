@@ -516,7 +516,7 @@ def write_result_to_pipe(output_path: str, session_id: str, res: dict):
         "data": {
             "session_id": session_id,
             "text": res["content"],
-            #"words": res["words"],  # [{"word": ..., "prob": ...}]
+            # "words": res["words"],  # [{"word": ..., "prob": ...}]
             "image_file": os.path.join("screenshots", res["filename"]),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
@@ -536,6 +536,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 
+
 def summarize_ocr_result(res: dict) -> dict:
     """
     接收一个 OCR 结果字典，读取其中 'content' 字段，
@@ -543,9 +544,7 @@ def summarize_ocr_result(res: dict) -> dict:
     """
     # 初始化模型（建议用环境变量传 key，演示写死）
     llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0.3,
-        api_key=os.getenv("OPENAI_API_KEY")
+        model="gpt-4", temperature=0.3, api_key=os.getenv("OPENAI_API_KEY")
     )
 
     # Prompt 模板（可根据需求自定义语气）
@@ -556,7 +555,7 @@ def summarize_ocr_result(res: dict) -> dict:
             "{content}\n\n"
             "请你将这段内容整理为一段完整、自然、可读性强的总结，"
             "修正不通顺之处并补全语义。"
-        )
+        ),
     )
 
     chain = LLMChain(llm=llm, prompt=prompt)
@@ -578,9 +577,7 @@ def summarize_ocr_result(res: dict) -> dict:
     """
     # 初始化模型（建议用环境变量传 key，演示写死）
     llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0.3,
-        api_key=os.getenv("OPENAI_API_KEY")
+        model="gpt-4", temperature=0.3, api_key=os.getenv("OPENAI_API_KEY")
     )
 
     # Prompt 模板（可根据需求自定义语气）
@@ -591,7 +588,7 @@ def summarize_ocr_result(res: dict) -> dict:
             "{content}\n\n"
             "请你将这段内容整理为一段完整、自然、可读性强的总结，"
             "修正不通顺之处并补全语义。"
-        )
+        ),
     )
 
     chain = LLMChain(llm=llm, prompt=prompt)
@@ -628,14 +625,21 @@ if __name__ == "__main__":
     parser.add_argument("--ipc-input", required=False)
     parser.add_argument("--work-dir", required=False)
     parser.add_argument("--window-id", required=False, help="指定要截图的窗口ID")
+    parser.add_argument("--image-path", required=False, help="原生内容选择器导出的图片")
     args = parser.parse_args()
 
     pipe_path = args.ipc_output
     session_id = args.session_id or "unknown-session"
     window_id = args.window_id
+    image_path = args.image_path
 
+    if image_path:
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"原生截图不存在: {image_path}")
+        logger.info("使用原生内容选择器导出的截图")
+        captured_paths = [image_path]
     # 如果指定了窗口ID，只处理该窗口
-    if window_id:
+    elif window_id:
         logger.info(f"处理指定窗口: {window_id}")
         window_dict = get_specific_window(window_id)
         if not window_dict:
@@ -644,7 +648,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": f"未找到指定的窗口ID: {window_id}",
-                    #"words": [],
+                    # "words": [],
                     "image_file": None,
                     "timestamp": datetime.utcnow().isoformat(),
                 },
@@ -662,7 +666,7 @@ if __name__ == "__main__":
                 "data": {
                     "session_id": session_id,
                     "text": "未检测到会议窗口。",
-                    #"words": [],
+                    # "words": [],
                     "image_file": None,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
@@ -671,8 +675,9 @@ if __name__ == "__main__":
             write_result_to_pipe(pipe_path, session_id, msg["data"])
             exit(0)
 
-    logger.info("正在截图会议窗口...")
-    captured_paths = take_screenshots(window_dict, folder="screenshots")
+    if not image_path:
+        logger.info("正在截图会议窗口...")
+        captured_paths = take_screenshots(window_dict, folder="screenshots")
 
     logger.info("正在调用 OCR 识别文字...")
     results = recognize_ocr_batch(captured_paths, max_workers=5)
@@ -684,7 +689,7 @@ if __name__ == "__main__":
             "data": {
                 "session_id": session_id,
                 "text": "未识别到任何图像文字内容。",
-                #"words": [],
+                # "words": [],
                 "image_file": None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },

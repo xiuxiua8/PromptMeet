@@ -1,11 +1,9 @@
 import os
-import json
 import requests
 import time
 import wave
 import pyaudio
 import threading
-import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -14,8 +12,6 @@ load_dotenv()
 
 # 配置参数
 API_KEY = os.getenv("OPENAI_API_KEY")
-print(API_KEY)
-API_KEY = "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"
 if not API_KEY:
     raise ValueError("请在.env文件中设置OPENAI_API_KEY")
 
@@ -127,7 +123,7 @@ class AudioRecorder:
             # 删除临时文件
             try:
                 os.remove(filename)
-            except:
+            except Exception:
                 pass
 
     def stop(self):

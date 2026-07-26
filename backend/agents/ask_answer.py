@@ -54,7 +54,7 @@ class QAGenerator:
             return
 
         # 只取最新的3个片段生成问题，避免内容重复
-        buffer_to_use = self.segment_buffer[-self.buffer_size:]
+        buffer_to_use = self.segment_buffer[-self.buffer_size :]
         combined_text = "\n".join(buffer_to_use)
 
         prompt_template = """
