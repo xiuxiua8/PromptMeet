@@ -51,6 +51,7 @@ enum ScreenshotPickerError: LocalizedError, Equatable {
     case selectionInProgress
     case screenRecordingDenied
     case selectedTargetUnavailable(String)
+    case uploadFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -61,6 +62,7 @@ enum ScreenshotPickerError: LocalizedError, Equatable {
         case .selectionInProgress: "窗口选择器已打开"
         case .screenRecordingDenied: "需要屏幕录制权限才能选择和截取窗口"
         case .selectedTargetUnavailable(let label): "已选择的窗口不可用：\(label)"
+        case .uploadFailed(let reason): "截图上传失败，\(reason)"
         }
     }
 }
@@ -95,10 +97,9 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
 
     func captureSelected(sessionID: String) async throws {
         guard let selectedTarget else { throw ScreenshotPickerError.noSelectedTarget }
+        let data: Data
         do {
-            let data = try await targetCapturer.capture(selectedTarget)
-            try await uploader.upload(data, sessionID: sessionID)
-            targetState = .selected(label: selectedTarget.label)
+            data = try await targetCapturer.capture(selectedTarget)
         } catch let error as ScreenshotPickerError {
             if case .selectedTargetUnavailable = error {
                 targetState = .invalid(
@@ -116,6 +117,12 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
                 reason: error.localizedDescription
             )
             throw unavailable
+        }
+        do {
+            try await uploader.upload(data, sessionID: sessionID)
+            targetState = .selected(label: selectedTarget.label)
+        } catch {
+            throw ScreenshotPickerError.uploadFailed(error.localizedDescription)
         }
     }
 

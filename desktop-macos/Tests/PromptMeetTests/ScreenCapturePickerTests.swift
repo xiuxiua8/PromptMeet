@@ -55,6 +55,82 @@ final class ScreenCapturePickerTests: XCTestCase {
         XCTAssertEqual(uploader.sessionIDs, ["meeting-1", "meeting-1"])
     }
 
+    func testUploadFailurePreservesSelectedTargetAndSurfacesAccurateError() async throws {
+        let picker = ScreenshotTargetPickerSpy()
+        let uploader = NativeScreenshotUploaderSpy(
+            stubbedError: BackendClientError.serviceRejected(503)
+        )
+        let controller = ScreenCaptureController(
+            targetPicker: picker,
+            targetCapturer: ScreenshotTargetCapturerSpy(),
+            uploader: uploader
+        )
+        _ = try await controller.selectTarget()
+
+        do {
+            try await controller.captureSelected(sessionID: "meeting-1")
+            XCTFail("Expected upload failure")
+        } catch let error as ScreenshotPickerError {
+            guard case .uploadFailed(let reason) = error else {
+                XCTFail("Expected uploadFailed, got \(error)")
+                return
+            }
+            XCTAssertTrue(reason.contains("503"), "Upload error should surface the underlying status code")
+        } catch {
+            XCTFail("Expected ScreenshotPickerError, got \(error)")
+        }
+
+        XCTAssertEqual(controller.targetState, .selected(label: "测试窗口"))
+        XCTAssertEqual(uploader.uploadCount, 1)
+    }
+
+    func testCaptureTargetUnavailableMarksTargetInvalidAndRethrows() async throws {
+        let capturer = ScreenshotTargetCapturerSpy(
+            stubbedError: .selectedTargetUnavailable("已关闭的窗口")
+        )
+        let controller = ScreenCaptureController(
+            targetPicker: ScreenshotTargetPickerSpy(),
+            targetCapturer: capturer,
+            uploader: NativeScreenshotUploaderSpy()
+        )
+        _ = try await controller.selectTarget()
+
+        do {
+            try await controller.captureSelected(sessionID: "meeting-1")
+            XCTFail("Expected capture failure")
+        } catch let error as ScreenshotPickerError {
+            XCTAssertEqual(error, .selectedTargetUnavailable("已关闭的窗口"))
+        } catch {
+            XCTFail("Expected ScreenshotPickerError, got \(error)")
+        }
+
+        guard case .invalid(let label, let reason) = controller.targetState else {
+            XCTFail("Expected targetState .invalid, got \(controller.targetState)")
+            return
+        }
+        XCTAssertEqual(label, "测试窗口")
+        XCTAssertTrue(reason.contains("已关闭的窗口"))
+    }
+
+    func testCaptureEncodingFailureDoesNotMarkTargetInvalid() async throws {
+        let capturer = ScreenshotTargetCapturerSpy(stubbedError: .encodingFailed)
+        let controller = ScreenCaptureController(
+            targetPicker: ScreenshotTargetPickerSpy(),
+            targetCapturer: capturer,
+            uploader: NativeScreenshotUploaderSpy()
+        )
+        _ = try await controller.selectTarget()
+
+        do {
+            try await controller.captureSelected(sessionID: "meeting-1")
+            XCTFail("Expected capture encoding failure")
+        } catch {
+            XCTAssertEqual(error as? ScreenshotPickerError, .encodingFailed)
+        }
+
+        XCTAssertEqual(controller.targetState, .selected(label: "测试窗口"))
+    }
+
     func testCaptureWithoutSelectionExplainsThatSelectionIsRequired() async {
         let controller = ScreenCaptureController(
             targetPicker: ScreenshotTargetPickerSpy(),
@@ -99,9 +175,15 @@ private final class ScreenshotTargetPickerSpy: ScreenshotTargetPicking {
 @MainActor
 private final class ScreenshotTargetCapturerSpy: ScreenshotTargetCapturing {
     private(set) var captureCount = 0
+    private let stubbedError: ScreenshotPickerError?
+
+    init(stubbedError: ScreenshotPickerError? = nil) {
+        self.stubbedError = stubbedError
+    }
 
     func capture(_ target: ScreenshotTargetHandle) async throws -> Data {
         captureCount += 1
+        if let stubbedError { throw stubbedError }
         return Data([0, 1, 2])
     }
 }
@@ -109,9 +191,15 @@ private final class ScreenshotTargetCapturerSpy: ScreenshotTargetCapturing {
 private final class NativeScreenshotUploaderSpy: NativeScreenshotUploading, @unchecked Sendable {
     private(set) var uploadCount = 0
     private(set) var sessionIDs: [String] = []
+    private let stubbedError: (any Error)?
+
+    init(stubbedError: (any Error)? = nil) {
+        self.stubbedError = stubbedError
+    }
 
     func upload(_ pngData: Data, sessionID: String) async throws {
         uploadCount += 1
         sessionIDs.append(sessionID)
+        if let stubbedError { throw stubbedError }
     }
 }
