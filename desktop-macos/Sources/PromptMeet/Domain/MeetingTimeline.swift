@@ -15,6 +15,7 @@ enum MeetingTimelineKind: String, Codable, Equatable, Sendable {
     case userQuestion = "user_question"
     case assistantAnswer = "assistant_answer"
     case summary
+    case suggestions
 }
 
 struct TimelineProvenance: Codable, Equatable, Sendable {
@@ -54,11 +55,13 @@ struct TimelineTranscriptPayload: Codable, Equatable, Sendable {
     let speaker: String
     let source: String?
     let translatedText: String?
+    let meetingTimeMilliseconds: Int64?
 
     enum CodingKeys: String, CodingKey {
         case segmentID = "segment_id"
         case text, speaker, source
         case translatedText = "translated_text"
+        case meetingTimeMilliseconds = "meeting_time_ms"
     }
 }
 
@@ -137,6 +140,18 @@ struct TimelineSummaryPayload: Codable, Equatable, Sendable {
     }
 }
 
+struct TimelineSuggestionPayload: Codable, Equatable, Sendable {
+    let generationID: String
+    let contextRevision: Int
+    let questions: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case generationID = "generation_id"
+        case contextRevision = "context_revision"
+        case questions
+    }
+}
+
 indirect enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
@@ -147,28 +162,35 @@ indirect enum JSONValue: Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null
-        } else if let value = try? container.decode(String.self) { self = .string(value)
-        } else if let value = try? container.decode(Bool.self) { self = .bool(value)
-        } else if let value = try? container.decode(Double.self) { self = .number(value)
-        } else if let value = try? container.decode([String: JSONValue].self) { self = .object(value)
-        } else { self = .array(try container.decode([JSONValue].self)) }
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
+            self = .array(try container.decode([JSONValue].self))
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
-        case let .string(value): try container.encode(value)
-        case let .number(value): try container.encode(value)
-        case let .bool(value): try container.encode(value)
-        case let .object(value): try container.encode(value)
-        case let .array(value): try container.encode(value)
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
         case .null: try container.encodeNil()
         }
     }
 
     var stringValue: String? {
-        if case let .string(value) = self { return value }
+        if case .string(let value) = self { return value }
         return nil
     }
 }
@@ -181,6 +203,7 @@ enum MeetingTimelinePayload: Equatable, Decodable, Sendable {
     case userQuestion(TimelineQuestionPayload)
     case assistantAnswer(TimelineAnswerPayload)
     case summary(TimelineSummaryPayload)
+    case suggestions(TimelineSuggestionPayload)
 
     private enum CodingKeys: String, CodingKey { case type }
 
@@ -196,6 +219,7 @@ enum MeetingTimelinePayload: Equatable, Decodable, Sendable {
         case "assistant_answer":
             self = .assistantAnswer(try TimelineAnswerPayload(from: decoder))
         case "summary": self = .summary(try TimelineSummaryPayload(from: decoder))
+        case "suggestions": self = .suggestions(try TimelineSuggestionPayload(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -226,18 +250,20 @@ struct MeetingTimelineEvent: Identifiable, Equatable, Decodable, Sendable {
     }
 
     var transcript: TranscriptLine? {
-        guard case let .transcript(value) = payload else { return nil }
+        guard case .transcript(let value) = payload else { return nil }
         return TranscriptLine(
             id: UUID(uuidString: value.segmentID) ?? UUID(),
             speaker: value.speaker,
             text: value.text,
             timestamp: occurredAt,
+            source: value.source.flatMap(NativeAudioSource.init(rawValue:)),
+            meetingTime: value.meetingTimeMilliseconds.map(Duration.milliseconds),
             translatedText: value.translatedText
         )
     }
 
     var screenshot: ScreenshotAsset? {
-        guard case let .screenshot(value) = payload else { return nil }
+        guard case .screenshot(let value) = payload else { return nil }
         return ScreenshotAsset(
             id: value.assetID,
             relativePath: value.relativePath,
@@ -321,8 +347,8 @@ enum MeetingTimelineProjection {
                 assets.append(screenshot)
                 continue
             }
-            guard case let .screenshotAnalysis(value) = event.payload,
-                  let index = assets.firstIndex(where: { $0.id == value.assetID })
+            guard case .screenshotAnalysis(let value) = event.payload,
+                let index = assets.firstIndex(where: { $0.id == value.assetID })
             else { continue }
             assets[index].analysis = ScreenshotAnalysis(
                 status: value.status,
@@ -339,7 +365,7 @@ enum MeetingTimelineProjection {
         var turns: [ConversationTurn] = []
         for event in events.sorted(by: eventOrder) {
             switch event.payload {
-            case let .userQuestion(value):
+            case .userQuestion(let value):
                 if !turns.contains(where: { $0.requestID == value.requestID }) {
                     turns.append(
                         ConversationTurn(
@@ -358,7 +384,7 @@ enum MeetingTimelineProjection {
                         )
                     )
                 }
-            case let .assistantAnswer(value):
+            case .assistantAnswer(let value):
                 let index: Int
                 if let existing = turns.firstIndex(where: { $0.requestID == value.requestID }) {
                     index = existing

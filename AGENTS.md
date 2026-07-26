@@ -33,7 +33,7 @@ Desktop-mode services (`desktop_agent_service`, `desktop_storage`, `meeting_repo
 
 | Layer | Location | Role |
 | --- | --- | --- |
-| Domain | `Domain/` | `MeetingTimeline`, `MeetingState`, `BackendEvent`, `StoredMeeting` |
+| Domain | `Domain/` | `MeetingTimeline`, `MeetingState`, `CaptureState`, `BackendEvent`, `StoredMeeting` |
 | Services | `Services/` | `MeetingStore`, `BackendClient`, `CompanionLauncher`, `KeychainStore`, `AIProviderConfiguration` |
 | Views | `Views/` | `WorkspaceView`, `AIReaderView`, `HoverMeetingCardView`, `SettingsView`, `IslandRootView` |
 | Capture | `Capture/` | ScreenCaptureKit, microphone, system audio, screenshot upload |
@@ -82,6 +82,10 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - DeepSeek models are text-only. When selected context contains screenshot pixels, the prompt and answer metadata disclose the degradation truthfully.
 - Each question gets its own request ID, immutable snapshot, and streaming state. Rapid concurrent questions finish independently without overwriting.
 - `开始新会议` requires explicit confirmation when a meeting is active. Backend meeting creation precedes capture startup.
+- Microphone and system audio remain independent source-tagged streams with meeting-relative timing. Permission or runtime failure in one source must not stop or relabel the other.
+- Recording pause keeps the meeting active and its context available. Resume is transactional across the companion and native capture, and stop works while paused.
+- Window selection only retains a screenshot target. Screenshot capture never opens the picker and repeated captures reuse the current valid target.
+- Suggested-question generations are meeting-scoped, revisioned, cancellable, and durable. A stale generation must never overwrite newer or historical suggestions.
 
 ## Authoritative documentation
 

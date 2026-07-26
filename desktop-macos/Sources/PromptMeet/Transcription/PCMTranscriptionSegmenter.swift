@@ -4,6 +4,22 @@ struct PCMTranscriptionSegment: Equatable, Sendable {
     let source: NativeAudioSource
     let sampleRate: Int
     let samples: [Int16]
+    let capturedAt: Date
+    let meetingTime: Duration
+
+    init(
+        source: NativeAudioSource,
+        sampleRate: Int,
+        samples: [Int16],
+        capturedAt: Date = Date(),
+        meetingTime: Duration = .zero
+    ) {
+        self.source = source
+        self.sampleRate = sampleRate
+        self.samples = samples
+        self.capturedAt = capturedAt
+        self.meetingTime = meetingTime
+    }
 }
 
 struct PCMTranscriptionUpdate: Equatable, Sendable {
@@ -20,6 +36,8 @@ struct PCMTranscriptionSegmenter {
     private let minimumRMS: Double
     private var samplesBySource: [NativeAudioSource: [Int16]] = [:]
     private var lastPreviewSampleCountBySource: [NativeAudioSource: Int] = [:]
+    private var capturedAtBySource: [NativeAudioSource: Date] = [:]
+    private var meetingTimeBySource: [NativeAudioSource: Duration] = [:]
 
     init(
         segmentDuration: TimeInterval = 3,
@@ -45,6 +63,10 @@ struct PCMTranscriptionSegmenter {
         }
         let decoded = Self.decodePCM16(pcm.payload, channels: pcm.channels)
         let normalized = Self.resample(decoded, from: pcm.sampleRate, to: targetSampleRate)
+        if samplesBySource[pcm.source, default: []].isEmpty {
+            capturedAtBySource[pcm.source] = pcm.capturedAt
+            meetingTimeBySource[pcm.source] = pcm.meetingTime
+        }
         samplesBySource[pcm.source, default: []].append(contentsOf: normalized)
         let finalized = drainFullSegments(for: pcm.source)
         let preview = makePreviewIfNeeded(for: pcm.source)
@@ -61,13 +83,22 @@ struct PCMTranscriptionSegmenter {
             }
             if isAudible(remainder) {
                 output.append(
-                    PCMTranscriptionSegment(source: source, sampleRate: targetSampleRate, samples: remainder)
+                    segment(source: source, samples: remainder)
                 )
             }
             samplesBySource[source] = []
             lastPreviewSampleCountBySource[source] = 0
+            capturedAtBySource[source] = nil
+            meetingTimeBySource[source] = nil
         }
         return output
+    }
+
+    mutating func discardBufferedAudio() {
+        samplesBySource.removeAll(keepingCapacity: true)
+        lastPreviewSampleCountBySource.removeAll(keepingCapacity: true)
+        capturedAtBySource.removeAll(keepingCapacity: true)
+        meetingTimeBySource.removeAll(keepingCapacity: true)
     }
 
     private mutating func drainFullSegments(for source: NativeAudioSource) -> [PCMTranscriptionSegment] {
@@ -76,14 +107,11 @@ struct PCMTranscriptionSegmenter {
             let segment = Array(samples.prefix(segmentSampleCount))
             if isAudible(segment) {
                 output.append(
-                    PCMTranscriptionSegment(
-                        source: source,
-                        sampleRate: targetSampleRate,
-                        samples: segment
-                    )
+                    self.segment(source: source, samples: segment)
                 )
             }
             samplesBySource[source] = Array(samples.dropFirst(segmentSampleCount))
+            advanceTiming(for: source, sampleCount: segmentSampleCount)
             lastPreviewSampleCountBySource[source] = 0
         }
         return output
@@ -98,7 +126,27 @@ struct PCMTranscriptionSegmenter {
             return nil
         }
         lastPreviewSampleCountBySource[source] = samples.count
-        return PCMTranscriptionSegment(source: source, sampleRate: targetSampleRate, samples: samples)
+        return segment(source: source, samples: samples)
+    }
+
+    private func segment(source: NativeAudioSource, samples: [Int16]) -> PCMTranscriptionSegment {
+        PCMTranscriptionSegment(
+            source: source,
+            sampleRate: targetSampleRate,
+            samples: samples,
+            capturedAt: capturedAtBySource[source] ?? Date(),
+            meetingTime: meetingTimeBySource[source] ?? .zero
+        )
+    }
+
+    private mutating func advanceTiming(for source: NativeAudioSource, sampleCount: Int) {
+        let interval = Double(sampleCount) / Double(targetSampleRate)
+        if let capturedAt = capturedAtBySource[source] {
+            capturedAtBySource[source] = capturedAt.addingTimeInterval(interval)
+        }
+        if let meetingTime = meetingTimeBySource[source] {
+            meetingTimeBySource[source] = meetingTime + .milliseconds(Int64(interval * 1_000))
+        }
     }
 
     private func isAudible(_ samples: [Int16]) -> Bool {

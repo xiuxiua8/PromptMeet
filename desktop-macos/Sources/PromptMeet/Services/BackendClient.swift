@@ -14,9 +14,9 @@ enum BackendClientError: LocalizedError {
             "后端地址无效"
         case .invalidResponse:
             "后端返回了无法识别的数据"
-        case let .serviceRejected(status):
+        case .serviceRejected(let status):
             "后端请求失败（\(status)）"
-        case let .serviceMessage(message):
+        case .serviceMessage(let message):
             message
         case .missingSessionID:
             "后端未返回会话 ID"
@@ -30,6 +30,11 @@ protocol BackendClientProtocol: AnyObject, Sendable {
     func healthCheck() async throws
     func createSession() async throws -> String
     func perform(sessionID: String, action: String) async throws
+    func generateQuestions(
+        sessionID: String,
+        generationID: UUID,
+        contextRevision: Int
+    ) async throws
     func connect(sessionID: String, onEvent: @escaping @Sendable (BackendEvent) -> Void) throws
     func sendPrompt(_ prompt: String, requestID: UUID) async throws
     func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws
@@ -94,6 +99,29 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         }
     }
 
+    func generateQuestions(
+        sessionID: String,
+        generationID: UUID,
+        contextRevision: Int
+    ) async throws {
+        var request = environment.sessionActionRequest(
+            sessionID: sessionID,
+            action: "generate-questions"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "generation_id": generationID.uuidString,
+                "context_revision": contextRevision,
+            ]
+        )
+        let (data, response) = try await session.data(for: request)
+        try validate(response)
+        if let result = try? JSONDecoder().decode(ActionResponse.self, from: data), !result.success {
+            throw BackendClientError.serviceMessage(result.message ?? "问题生成未完成")
+        }
+    }
+
     func connect(
         sessionID: String,
         onEvent: @escaping @Sendable (BackendEvent) -> Void
@@ -112,7 +140,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         guard let socket else { throw BackendClientError.socketUnavailable }
         let payload: [String: Any] = [
             "type": "agent_message",
-            "data": ["request_id": requestID.uuidString, "content": prompt]
+            "data": ["request_id": requestID.uuidString, "content": prompt],
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         guard let text = String(data: data, encoding: .utf8) else {
@@ -128,8 +156,12 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             "text": transcript.text,
             "speaker": transcript.speaker,
             "source": transcript.source.rawValue,
-            "timestamp": formatter.string(from: transcript.timestamp)
+            "timestamp": formatter.string(from: transcript.timestamp),
+            "meeting_time_ms": transcript.meetingTime?.millisecondsValue as Any,
         ]
+        if transcript.meetingTime == nil {
+            payload.removeValue(forKey: "meeting_time_ms")
+        }
         if let translationTarget = transcript.translationTarget {
             payload["translation_target"] = translationTarget
         }
@@ -175,7 +207,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             withJSONObject: [
                 "request_id": requestID.uuidString,
                 "thread_id": threadID,
-                "question": question
+                "question": question,
             ]
         )
         let (data, response) = try await session.data(for: request)
@@ -197,9 +229,9 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
                 let message = try await socket.receive()
                 let text: String
                 switch message {
-                case let .string(value):
+                case .string(let value):
                     text = value
-                case let .data(data):
+                case .data(let data):
                     guard let value = String(data: data, encoding: .utf8) else { continue }
                     text = value
                 @unknown default:

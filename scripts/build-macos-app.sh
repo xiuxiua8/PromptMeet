@@ -89,6 +89,7 @@ codesign --force --sign "$SIGN_IDENTITY" \
   "$CONTENTS/Resources/whisper/bin/whisper-server"
 codesign --force --deep --sign "$SIGN_IDENTITY" \
   --identifier com.promptmeet.desktop \
+  --entitlements "$MACOS_ROOT/Resources/PromptMeet.entitlements" \
   --options runtime \
   "$APP"
 codesign --verify --deep --strict "$APP"

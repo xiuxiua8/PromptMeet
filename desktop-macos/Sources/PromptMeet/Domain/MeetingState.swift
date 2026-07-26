@@ -13,6 +13,8 @@ struct TranscriptLine: Identifiable, Equatable, Sendable {
     let speaker: String
     let text: String
     let timestamp: Date
+    let source: NativeAudioSource?
+    let meetingTime: Duration?
     var translatedText: String?
 
     init(
@@ -20,12 +22,16 @@ struct TranscriptLine: Identifiable, Equatable, Sendable {
         speaker: String,
         text: String,
         timestamp: Date = Date(),
+        source: NativeAudioSource? = nil,
+        meetingTime: Duration? = nil,
         translatedText: String? = nil
     ) {
         self.id = id
         self.speaker = speaker
         self.text = text
         self.timestamp = timestamp
+        self.source = source
+        self.meetingTime = meetingTime
         self.translatedText = translatedText
     }
 }
@@ -122,6 +128,11 @@ enum MeetingAction: Equatable {
 
 struct MeetingState: Equatable {
     var phase: MeetingPhase = .idle
+    var recordingActivity: RecordingActivity = .inactive
+    var screenshotTarget: ScreenshotTargetState = .none
+    var screenshotOperation: ScreenshotOperationState = .idle
+    var suggestionRefresh = SuggestionRefreshState()
+    var audioCapture = AudioCaptureSnapshot()
     var transcript: [TranscriptLine] = []
     var activeTranscript = ""
     var latestInsight: String?
@@ -162,6 +173,10 @@ struct MeetingState: Equatable {
 
     var displayedScreenshots: [ScreenshotAsset] {
         selectedArchivedMeeting?.screenshots ?? MeetingTimelineProjection.screenshots(timeline)
+    }
+
+    var displayedGeneratedQuestions: [String] {
+        selectedArchivedMeeting?.suggestions ?? generatedQuestions
     }
 
     var displayedConversation: [ConversationTurn] {
@@ -207,6 +222,10 @@ struct MeetingState: Equatable {
         switch action {
         case .prepareNewMeeting:
             phase = .idle
+            recordingActivity = .inactive
+            screenshotOperation = .idle
+            suggestionRefresh = SuggestionRefreshState()
+            audioCapture = AudioCaptureSnapshot()
             transcript = []
             activeTranscript = ""
             latestInsight = nil
@@ -224,16 +243,18 @@ struct MeetingState: Equatable {
             conversationTurns = []
         case .beginSession:
             phase = .connecting
+            recordingActivity = .starting
         case .connectionReady:
             phase = .live
-        case let .transcriptPartial(text):
+            recordingActivity = .recording
+        case .transcriptPartial(let text):
             activeTranscript = text
-        case let .transcriptFinal(line):
+        case .transcriptFinal(let line):
             if !transcript.contains(where: { $0.id == line.id }) {
                 transcript.append(line)
             }
             activeTranscript = ""
-        case let .transcriptTranslated(id, text):
+        case .transcriptTranslated(let id, let text):
             guard let index = transcript.firstIndex(where: { $0.id == id }) else { return }
             transcript[index].translatedText = text
         case .companionConnected:
@@ -241,10 +262,10 @@ struct MeetingState: Equatable {
             if latestInsight?.contains("AI companion") == true || latestInsight?.contains("AI 服务连接") == true {
                 latestInsight = nil
             }
-        case let .companionDisconnected(message):
+        case .companionDisconnected(let message):
             isCompanionConnected = false
             latestInsight = message
-        case let .userPromptSubmitted(id, prompt):
+        case .userPromptSubmitted(let id, let prompt):
             let keepsReaderVisible = aiReader.isVisible
             promptHistory.append(prompt)
             aiRequest = AIRequestState(id: id, prompt: prompt, phase: .submitting)
@@ -267,9 +288,9 @@ struct MeetingState: Equatable {
                     )
                 )
             }
-        case let .answerDelta(requestID, delta):
+        case .answerDelta(let requestID, let delta):
             guard let resolvedID = requestID ?? aiRequest.id,
-                  let index = conversationIndex(resolvedID)
+                let index = conversationIndex(resolvedID)
             else { return }
             conversationTurns[index].answer += delta
             conversationTurns[index].phase = .streaming
@@ -281,9 +302,9 @@ struct MeetingState: Equatable {
                 aiRequest.phase = .streaming
                 aiRequest.errorMessage = nil
             }
-        case let .answerFinal(requestID, answer):
+        case .answerFinal(let requestID, let answer):
             guard let resolvedID = requestID ?? aiRequest.id,
-                  let index = conversationIndex(resolvedID)
+                let index = conversationIndex(resolvedID)
             else { return }
             conversationTurns[index].answer = answer
             conversationTurns[index].phase = .completed
@@ -296,9 +317,9 @@ struct MeetingState: Equatable {
                 aiRequest.phase = .completed
                 aiRequest.errorMessage = nil
             }
-        case let .aiFailure(requestID, message):
+        case .aiFailure(let requestID, let message):
             guard let resolvedID = requestID ?? aiRequest.id,
-                  let index = conversationIndex(resolvedID)
+                let index = conversationIndex(resolvedID)
             else { return }
             conversationTurns[index].phase = .failed
             conversationTurns[index].errorMessage = message
@@ -307,16 +328,16 @@ struct MeetingState: Equatable {
                 aiRequest.errorMessage = message
                 aiReader.isStreaming = false
             }
-        case let .quickPromptChanged(prompt):
+        case .quickPromptChanged(let prompt):
             quickPromptDraft = prompt
-        case let .quickAskPresented(isPresented):
+        case .quickAskPresented(let isPresented):
             isQuickAskPresented = isPresented
-        case let .questionGenerated(question):
+        case .questionGenerated(let question):
             if !generatedQuestions.contains(question) {
                 generatedQuestions.append(question)
             }
             latestInsight = question
-        case let .questionsGenerated(questions):
+        case .questionsGenerated(let questions):
             let refreshed = questions.reduce(into: [String]()) { result, question in
                 let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty, !result.contains(trimmed) {
@@ -327,15 +348,15 @@ struct MeetingState: Equatable {
             if let first = refreshed.first {
                 latestInsight = first
             }
-        case let .suggestion(insight):
+        case .suggestion(let insight):
             latestInsight = insight
-        case let .summaryGenerated(summary):
+        case .summaryGenerated(let summary):
             self.summary = summary
             latestSummary = summary.summaryText
-        case let .screenshotInsight(insight):
+        case .screenshotInsight(let insight):
             screenshotInsights.append(insight)
             latestInsight = insight
-        case let .meetingEvent(event):
+        case .meetingEvent(let event):
             ingestTimelineEvent(event)
         case .hideReader:
             aiReader.isVisible = false
@@ -343,23 +364,25 @@ struct MeetingState: Equatable {
             if !aiReader.content.isEmpty {
                 aiReader.isVisible = true
             }
-        case let .meetingHistoryLoaded(meetings):
+        case .meetingHistoryLoaded(let meetings):
             meetingHistory = meetings
             if let selectedArchivedMeetingID,
-               !meetings.contains(where: { $0.id == selectedArchivedMeetingID }) {
+                !meetings.contains(where: { $0.id == selectedArchivedMeetingID })
+            {
                 self.selectedArchivedMeetingID = nil
             }
-        case let .meetingHistoryUpdated(meeting):
+        case .meetingHistoryUpdated(let meeting):
             if let index = meetingHistory.firstIndex(where: { $0.id == meeting.id }) {
                 meetingHistory[index] = meeting
             } else {
                 meetingHistory.append(meeting)
             }
             meetingHistory.sort { $0.startTime > $1.startTime }
-        case let .archivedMeetingSelected(id):
+        case .archivedMeetingSelected(let id):
             selectedArchivedMeetingID = id
-        case let .failure(message):
+        case .failure(let message):
             phase = .failed(message)
+            recordingActivity = .inactive
         }
     }
 
@@ -377,7 +400,8 @@ struct MeetingState: Equatable {
             return $0.occurredAt < $1.occurredAt
         }
         if let line = event.transcript,
-           !transcript.contains(where: { $0.id == line.id }) {
+            !transcript.contains(where: { $0.id == line.id })
+        {
             transcript.append(line)
         }
         for projected in MeetingTimelineProjection.conversation(timeline) {
@@ -390,7 +414,7 @@ struct MeetingState: Equatable {
             }
         }
         switch event.payload {
-        case let .summary(value):
+        case .summary(let value):
             let content = MeetingSummaryContent(
                 summaryText: value.summaryText,
                 tasks: value.tasks.compactMap { payload in
@@ -409,9 +433,14 @@ struct MeetingState: Equatable {
             )
             summary = content
             latestSummary = content.summaryText
-        case let .screenshotAnalysis(value):
+        case .screenshotAnalysis(let value):
             screenshotInsights.append(value.text)
             latestInsight = value.text
+        case .suggestions(let value):
+            generatedQuestions = value.questions
+            suggestionRefresh.phase = .ready
+            suggestionRefresh.generationID = UUID(uuidString: value.generationID)
+            suggestionRefresh.contextRevision = value.contextRevision
         default:
             break
         }
@@ -445,12 +474,12 @@ extension MeetingState {
                 TranscriptLine(
                     speaker: "林晨",
                     text: "接下来需要确认每个行动项的负责人、截止时间，以及发布前必须完成的风险检查。"
-                )
+                ),
             ],
             latestInsight: "团队正在收敛发布范围，当前关键是确定负责人和截止时间。",
             generatedQuestions: [
                 "这次发布最大的风险是什么？",
-                "帮我整理明确的行动项"
+                "帮我整理明确的行动项",
             ]
         )
     }
@@ -472,14 +501,14 @@ extension MeetingState {
         state.aiReader = AIReaderState(
             title: "这次发布最需要关注什么？",
             content: """
-            当前最需要关注三件事：
+                当前最需要关注三件事：
 
-            1. 明确发布范围，避免在最后阶段继续加入未经验证的功能。
-            2. 为每个行动项指定负责人和截止时间，并在发布前完成一次风险复核。
-            3. 保留回滚路径，确认监控、告警和用户反馈入口都能够正常工作。
+                1. 明确发布范围，避免在最后阶段继续加入未经验证的功能。
+                2. 为每个行动项指定负责人和截止时间，并在发布前完成一次风险复核。
+                3. 保留回滚路径，确认监控、告警和用户反馈入口都能够正常工作。
 
-            如果时间有限，优先保证核心流程稳定，再安排后续体验优化。
-            """,
+                如果时间有限，优先保证核心流程稳定，再安排后续体验优化。
+                """,
             isVisible: true,
             isStreaming: false
         )
@@ -499,7 +528,7 @@ extension MeetingState {
             summaryText: "团队确认本次发布以核心流程稳定为优先，视觉体验保持克制，并在上线前完成风险复核。",
             tasks: [
                 MeetingTask(title: "确认最终发布范围", deadline: "今天 18:00", assignee: "林晨"),
-                MeetingTask(title: "完成回滚路径验证", deadline: "明天 12:00", assignee: "周岚")
+                MeetingTask(title: "完成回滚路径验证", deadline: "明天 12:00", assignee: "周岚"),
             ],
             keyPoints: ["核心流程优先", "避免临时增加范围", "上线前完成风险复核"],
             decisions: ["采用 Aura 视觉方向", "保留独立 AI 阅读器"]

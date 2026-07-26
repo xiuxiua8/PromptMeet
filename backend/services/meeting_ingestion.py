@@ -18,6 +18,7 @@ from models.meeting_context import (
     ScreenshotAnalysisPayload,
     ScreenshotPayload,
     SummaryPayload,
+    SuggestionPayload,
     TranscriptPayload,
 )
 from services.meeting_repository import MeetingNotFoundError, MeetingRepository
@@ -63,6 +64,7 @@ class MeetingIngestionService:
                 speaker=str(transcript.get("speaker") or "发言人"),
                 source=transcript.get("source"),
                 translated_text=transcript.get("translated_text"),
+                meeting_time_ms=transcript.get("meeting_time_ms"),
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]
@@ -209,6 +211,25 @@ class MeetingIngestionService:
         )
         return self.repository.append(meeting_id, event).events[-1]
 
+    def suggestions(
+        self,
+        meeting_id: str,
+        generation_id: str,
+        context_revision: int,
+        questions: list[str],
+    ) -> MeetingEvent:
+        event = MeetingEvent(
+            occurred_at=datetime.now(UTC),
+            kind=EventKind.SUGGESTIONS,
+            provenance=EventProvenance(source="suggestion_service"),
+            payload=SuggestionPayload(
+                generation_id=generation_id,
+                context_revision=context_revision,
+                questions=questions,
+            ),
+        )
+        return self.repository.append(meeting_id, event).events[-1]
+
     def finish(
         self,
         meeting_id: str,
@@ -229,6 +250,15 @@ class MeetingIngestionService:
             return self.repository.finish(meeting_id, now, status)
         except MeetingNotFoundError:
             raise
+
+    def recording_activity(self, meeting_id: str, detail: str) -> MeetingEvent:
+        event = MeetingEvent(
+            occurred_at=datetime.now(UTC),
+            kind=EventKind.LIFECYCLE,
+            provenance=EventProvenance(source="native_recording"),
+            payload=LifecyclePayload(status=MeetingStatus.ACTIVE, detail=detail),
+        )
+        return self.repository.append(meeting_id, event).events[-1]
 
     def _required(self, meeting_id: str) -> MeetingRecord:
         record = self.repository.get(meeting_id)

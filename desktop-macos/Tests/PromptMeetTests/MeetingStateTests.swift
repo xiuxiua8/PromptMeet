@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import PromptMeet
 
 final class MeetingStateTests: XCTestCase {
@@ -224,6 +225,29 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(presentation.transcriptPlaceholder, "录音未开始，请检查权限或音频来源后重试。")
         XCTAssertTrue(presentation.canStart)
         XCTAssertFalse(presentation.canStop)
+    }
+
+    func testDeniedMicrophoneAndActiveSystemAudioHaveTruthfulLabels() {
+        let presentation = CaptureStatusPresentation(
+            snapshot: AudioCaptureSnapshot(microphone: .denied, system: .active)
+        )
+
+        XCTAssertEqual(presentation.microphone.label, "我 · 需要麦克风权限")
+        XCTAssertEqual(presentation.system.label, "会议 · 采集中")
+        XCTAssertTrue(presentation.showsMicrophoneSettingsAction)
+        XCTAssertTrue(presentation.showsMicrophoneRetryAction)
+    }
+
+    func testPausedMeetingPresentsResumeSeparateFromStop() {
+        let presentation = MeetingControlPresentation(
+            phase: .live,
+            recordingActivity: .paused
+        )
+
+        XCTAssertEqual(presentation.pauseResumeTitle, "继续录音")
+        XCTAssertEqual(presentation.pauseResumeIcon, "play.fill")
+        XCTAssertTrue(presentation.canPauseResume)
+        XCTAssertTrue(presentation.canStop)
     }
 
     func testSubmittedPromptsRemainVisibleInWorkbenchHistory() {

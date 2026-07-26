@@ -4,11 +4,15 @@ import Foundation
 protocol NativeAudioCaptureCoordinating: AnyObject {
     func start(
         sessionID: String,
+        onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
         onTranscriptionError: @escaping @Sendable (String) -> Void
     ) async throws
     func bindBackendSession(_ sessionID: String) async
+    func pause() async
+    func resume() async throws
+    func retry(_ source: NativeAudioSource) async throws
     func stop() async
 }
 
@@ -18,7 +22,14 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     private let uploader: NativeAudioUploading
     private let transcription: LocalTranscriptionServicing
     private var pump: NativeAudioPacketPump?
-    private var activeSources: [NativeAudioSourceCapture] = []
+    private var backendSessionID: String?
+    private var activeSources: [NativeAudioSource: NativeAudioSourceCapture] = [:]
+    private var resumableSources: Set<NativeAudioSource> = []
+    private var snapshot = AudioCaptureSnapshot()
+    private var statusHandler: (@Sendable (AudioCaptureSnapshot) -> Void)?
+    private var sourceHandler: (@Sendable (CapturedPCM) -> Void)?
+    private var transcriptionErrorHandler: (@Sendable (String) -> Void)?
+    private var isPaused = false
 
     init(
         sources: [NativeAudioSourceCapture] = [SystemAudioCapture(), MicrophoneCapture()],
@@ -36,6 +47,22 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
         onTranscriptionError: @escaping @Sendable (String) -> Void
     ) async throws {
+        try await start(
+            sessionID: sessionID,
+            onStatus: { _ in },
+            onPartialTranscript: onPartialTranscript,
+            onTranscript: onTranscript,
+            onTranscriptionError: onTranscriptionError
+        )
+    }
+
+    func start(
+        sessionID: String,
+        onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
+        onPartialTranscript: @escaping @Sendable (String) -> Void,
+        onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
+        onTranscriptionError: @escaping @Sendable (String) -> Void
+    ) async throws {
         try await transcription.start(
             onPartialTranscript: onPartialTranscript,
             onTranscript: onTranscript,
@@ -43,24 +70,36 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
         )
         let packetPump = NativeAudioPacketPump(uploader: uploader)
         pump = packetPump
-        activeSources = []
+        if let backendSessionID {
+            await packetPump.bind(sessionID: backendSessionID)
+        }
+        activeSources = [:]
+        resumableSources = []
+        snapshot = AudioCaptureSnapshot()
+        statusHandler = onStatus
+        transcriptionErrorHandler = onTranscriptionError
+        isPaused = false
+        let clock = NativeAudioMeetingClock()
+        let transcription = self.transcription
+        let capturedHandler: @Sendable (CapturedPCM) -> Void = { pcm in
+            let timed = pcm.timed(capturedAt: Date(), meetingTime: clock.offset())
+            Task { try? await packetPump.consume(timed) }
+            Task { await transcription.consume(timed) }
+        }
+        sourceHandler = capturedHandler
         var failures: [String] = []
         for source in sources {
             do {
-                try await source.start { pcm in
-                    Task {
-                        try? await packetPump.consume(pcm)
-                    }
-                    Task {
-                        await self.transcription.consume(pcm)
-                    }
-                }
-                activeSources.append(source)
+                update(source.source, state: source.source == .microphone ? .requestingPermission : .starting)
+                try await startSource(source, handler: capturedHandler)
+                activeSources[source.source] = source
+                update(source.source, state: .active)
             } catch {
                 await source.stop()
                 let name = source.source == .system ? "系统音频" : "麦克风"
-                let detail = "\(name)不可用，已尝试其他来源：\(error.localizedDescription)"
+                let detail = "\(name)不可用：\(error.localizedDescription)"
                 failures.append(detail)
+                update(source.source, state: Self.state(for: error))
                 onTranscriptionError(detail)
             }
         }
@@ -72,16 +111,127 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     }
 
     func bindBackendSession(_ sessionID: String) async {
+        backendSessionID = sessionID
         await pump?.bind(sessionID: sessionID)
     }
 
+    func pause() async {
+        guard !isPaused else { return }
+        isPaused = true
+        resumableSources = Set(activeSources.keys)
+        await pump?.suspend()
+        for (source, capture) in activeSources {
+            await capture.stop()
+            update(source, state: .paused)
+        }
+        activeSources = [:]
+        await transcription.pause()
+    }
+
+    func resume() async throws {
+        guard isPaused else { return }
+        guard let sourceHandler else { return }
+        let sourcesToResume = resumableSources
+        isPaused = false
+        await pump?.resume()
+        var failures: [String] = []
+        for source in sources where sourcesToResume.contains(source.source) {
+            do {
+                update(source.source, state: .starting)
+                try await startSource(source, handler: sourceHandler)
+                activeSources[source.source] = source
+                update(source.source, state: .active)
+            } catch {
+                await source.stop()
+                failures.append(error.localizedDescription)
+                update(source.source, state: Self.state(for: error))
+                transcriptionErrorHandler?(error.localizedDescription)
+            }
+        }
+        guard !activeSources.isEmpty else {
+            isPaused = true
+            resumableSources = sourcesToResume
+            await pump?.suspend()
+            throw CaptureError.noAvailableAudioSource(failures.joined(separator: "；"))
+        }
+        resumableSources = []
+    }
+
+    func retry(_ requestedSource: NativeAudioSource) async throws {
+        guard !isPaused, activeSources[requestedSource] == nil, let sourceHandler else { return }
+        guard let source = sources.first(where: { $0.source == requestedSource }) else { return }
+        do {
+            update(requestedSource, state: requestedSource == .microphone ? .requestingPermission : .starting)
+            try await startSource(source, handler: sourceHandler)
+            activeSources[requestedSource] = source
+            update(requestedSource, state: .active)
+        } catch {
+            await source.stop()
+            update(requestedSource, state: Self.state(for: error))
+            throw error
+        }
+    }
+
     func stop() async {
-        for source in activeSources {
+        await pump?.suspend()
+        for (_, source) in activeSources {
             await source.stop()
         }
-        activeSources = []
+        activeSources = [:]
+        resumableSources = []
         await transcription.stop()
         pump = nil
+        backendSessionID = nil
+        sourceHandler = nil
+        statusHandler = nil
+        transcriptionErrorHandler = nil
+        isPaused = false
+        snapshot = AudioCaptureSnapshot()
+    }
+
+    private func update(_ source: NativeAudioSource, state: AudioSourceState) {
+        snapshot[source] = state
+        statusHandler?(snapshot)
+    }
+
+    private func startSource(
+        _ source: NativeAudioSourceCapture,
+        handler: @escaping @Sendable (CapturedPCM) -> Void
+    ) async throws {
+        let semanticSource = source.source
+        try await source.start(
+            handler: handler,
+            onFailure: { [weak self] error in
+                Task { @MainActor [weak self] in
+                    await self?.handleRuntimeFailure(semanticSource, error: error)
+                }
+            }
+        )
+    }
+
+    private func handleRuntimeFailure(
+        _ source: NativeAudioSource,
+        error: any Error
+    ) async {
+        guard let capture = activeSources.removeValue(forKey: source) else { return }
+        await capture.stop()
+        let state = Self.state(for: error)
+        update(source, state: state)
+        transcriptionErrorHandler?(error.localizedDescription)
+    }
+
+    private static func state(for error: any Error) -> AudioSourceState {
+        guard let captureError = error as? CaptureError else {
+            return .failed(error.localizedDescription)
+        }
+        switch captureError {
+        case .microphoneDenied, .screenRecordingDenied: return .denied
+        case .microphoneRestricted: return .restricted
+        case .microphoneUnavailable, .noDisplay: return .unavailable(captureError.localizedDescription)
+        case .microphoneRuntimeFailure, .systemAudioRuntimeFailure,
+            .unsupportedAudioFormat, .noAvailableAudioSource:
+            return .failed(captureError.localizedDescription)
+        }
     }
 }
 
@@ -89,10 +239,14 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
 final class NoopNativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     func start(
         sessionID: String,
+        onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
         onTranscriptionError: @escaping @Sendable (String) -> Void
     ) async throws {}
     func bindBackendSession(_ sessionID: String) async {}
+    func pause() async {}
+    func resume() async throws {}
+    func retry(_ source: NativeAudioSource) async throws {}
     func stop() async {}
 }

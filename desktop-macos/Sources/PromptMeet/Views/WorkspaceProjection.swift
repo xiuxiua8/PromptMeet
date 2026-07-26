@@ -8,6 +8,7 @@ enum WorkspaceTimelineItemKind: Equatable, Sendable {
     case question
     case answer
     case summary
+    case suggestions
 }
 
 struct WorkspaceTimelineItem: Identifiable, Equatable, Sendable {
@@ -44,16 +45,16 @@ struct WorkspaceProjection: Equatable, Sendable {
             return $0.occurredAt < $1.occurredAt
         }.map { event in
             switch event.payload {
-            case let .lifecycle(value):
+            case .lifecycle(let value):
                 return Self.item(
                     event,
                     .lifecycle,
                     "会议状态",
                     value.detail ?? value.status.rawValue
                 )
-            case let .transcript(value):
+            case .transcript(let value):
                 return Self.item(event, .transcript, value.speaker, value.text)
-            case let .screenshot(value):
+            case .screenshot(let value):
                 return Self.item(
                     event,
                     .screenshot,
@@ -61,7 +62,7 @@ struct WorkspaceProjection: Equatable, Sendable {
                     "已保留原始截图，可用于后续提问",
                     screenshot: screenshots[value.assetID]
                 )
-            case let .screenshotAnalysis(value):
+            case .screenshotAnalysis(let value):
                 return Self.item(
                     event,
                     .screenshotAnalysis,
@@ -69,9 +70,9 @@ struct WorkspaceProjection: Equatable, Sendable {
                     value.text,
                     isFailure: value.status == "failed"
                 )
-            case let .userQuestion(value):
+            case .userQuestion(let value):
                 return Self.item(event, .question, "你问", value.question)
-            case let .assistantAnswer(value):
+            case .assistantAnswer(let value):
                 return Self.item(
                     event,
                     .answer,
@@ -80,8 +81,15 @@ struct WorkspaceProjection: Equatable, Sendable {
                     sources: value.sources,
                     isFailure: value.status == "failed"
                 )
-            case let .summary(value):
+            case .summary(let value):
                 return Self.item(event, .summary, "会议摘要", value.summaryText)
+            case .suggestions(let value):
+                return Self.item(
+                    event,
+                    .suggestions,
+                    "猜你想问",
+                    value.questions.joined(separator: "\n")
+                )
             }
         }
         self.conversation = conversation

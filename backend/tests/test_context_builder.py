@@ -142,6 +142,34 @@ def test_relevant_screenshot_analysis_keeps_its_raw_image_ahead_of_unrelated_evi
     ]
 
 
+def test_source_aware_transcript_is_explicit_in_rendering_and_evidence_label() -> None:
+    transcript = event(
+        1,
+        EventKind.TRANSCRIPT,
+        TranscriptPayload(
+            segment_id="segment-1",
+            text="我会负责回滚",
+            speaker="我",
+            source="microphone",
+            meeting_time_ms=1_250,
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-a", started_at=START, events=[transcript]
+    )
+
+    selection = MeetingContextBuilder().select(
+        record,
+        "谁负责回滚？",
+        ContextBudget(total_tokens=200, answer_reserve=50),
+    )
+
+    assert (
+        MeetingContextBuilder.render_event(transcript) == "我（麦克风）：我会负责回滚"
+    )
+    assert selection.sources[0].label.startswith("我（麦克风）转写 · ")
+
+
 def test_selector_only_uses_prior_turns_from_requested_thread() -> None:
     record = MeetingRecord(
         meeting_id="meeting-a",

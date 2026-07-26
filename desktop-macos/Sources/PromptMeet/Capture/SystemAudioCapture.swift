@@ -4,14 +4,28 @@ import Foundation
 import ScreenCaptureKit
 
 final class SystemAudioCapture: NSObject, NativeAudioSourceCapture,
-    SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    SCStreamOutput, SCStreamDelegate, @unchecked Sendable
+{
     let source = NativeAudioSource.system
     private let lock = NSLock()
     private var handler: (@Sendable (CapturedPCM) -> Void)?
+    private var failureHandler: (@Sendable (any Error) -> Void)?
     private var stream: SCStream?
+    private let permission: any ScreenRecordingPermissionProviding
     private let outputQueue = DispatchQueue(label: "com.promptmeet.capture.system-audio")
 
+    init(permission: any ScreenRecordingPermissionProviding = SystemScreenRecordingPermission()) {
+        self.permission = permission
+    }
+
     func start(handler: @escaping @Sendable (CapturedPCM) -> Void) async throws {
+        guard
+            await ScreenRecordingPermissionResolver(
+                permission: permission
+            ).resolveForUserAction()
+        else {
+            throw CaptureError.screenRecordingDenied
+        }
         lock.withLock { self.handler = handler }
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
@@ -42,12 +56,33 @@ final class SystemAudioCapture: NSObject, NativeAudioSourceCapture,
         self.stream = stream
     }
 
+    func start(
+        handler: @escaping @Sendable (CapturedPCM) -> Void,
+        onFailure: @escaping @Sendable (any Error) -> Void
+    ) async throws {
+        lock.withLock { failureHandler = onFailure }
+        do {
+            try await start(handler: handler)
+        } catch {
+            lock.withLock { failureHandler = nil }
+            throw error
+        }
+    }
+
     func stop() async {
         if let stream {
             try? await stream.stopCapture()
         }
         self.stream = nil
-        lock.withLock { handler = nil }
+        lock.withLock {
+            handler = nil
+            failureHandler = nil
+        }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        let failure = lock.withLock { failureHandler }
+        failure?(CaptureError.systemAudioRuntimeFailure(error.localizedDescription))
     }
 
     func stream(
@@ -97,6 +132,11 @@ final class SystemAudioCapture: NSObject, NativeAudioSourceCapture,
 enum CaptureError: LocalizedError {
     case noDisplay
     case microphoneDenied
+    case microphoneRestricted
+    case microphoneUnavailable
+    case microphoneRuntimeFailure(String)
+    case screenRecordingDenied
+    case systemAudioRuntimeFailure(String)
     case unsupportedAudioFormat
     case noAvailableAudioSource(String)
 
@@ -104,8 +144,13 @@ enum CaptureError: LocalizedError {
         switch self {
         case .noDisplay: "未找到可采集的显示器"
         case .microphoneDenied: "麦克风权限未授权"
+        case .microphoneRestricted: "麦克风访问受系统限制"
+        case .microphoneUnavailable: "未找到可用的麦克风"
+        case .microphoneRuntimeFailure(let detail): "麦克风采集失败：\(detail)"
+        case .screenRecordingDenied: "屏幕录制权限未授权，系统音频不可用"
+        case .systemAudioRuntimeFailure(let detail): "系统音频采集失败：\(detail)"
         case .unsupportedAudioFormat: "当前音频格式不受支持"
-        case let .noAvailableAudioSource(detail): "没有可用的音频来源：\(detail)"
+        case .noAvailableAudioSource(let detail): "没有可用的音频来源：\(detail)"
         }
     }
 }

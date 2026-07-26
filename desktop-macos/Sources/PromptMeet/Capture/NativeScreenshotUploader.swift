@@ -1,6 +1,10 @@
 import Foundation
 
-struct NativeScreenshotUploader: Sendable {
+protocol NativeScreenshotUploading: Sendable {
+    func upload(_ pngData: Data, sessionID: String) async throws
+}
+
+struct NativeScreenshotUploader: NativeScreenshotUploading, Sendable {
     private let environment: BackendEnvironment
     private let session: URLSession
 

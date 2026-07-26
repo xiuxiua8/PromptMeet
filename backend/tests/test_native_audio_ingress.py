@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,30 @@ def test_accept_writes_first_pcm_chunk_in_session_directory(tmp_path: Path) -> N
     assert receipt.sequence == 0
     assert receipt.path.read_bytes() == b"\x01\x02"
     assert receipt.path.parent == tmp_path / "session-1"
+
+
+def test_accept_writes_source_and_capture_timing_sidecar(tmp_path: Path) -> None:
+    ingress = NativeAudioIngress(tmp_path)
+    captured_at = datetime(2026, 7, 26, 10, 0, tzinfo=UTC)
+
+    receipt = ingress.accept(
+        "session-1",
+        NativeAudioChunk(
+            sequence=7,
+            sample_rate=16_000,
+            channels=1,
+            source="microphone",
+            captured_at=captured_at,
+            meeting_time_ms=1_250,
+        ),
+        b"\x01\x02",
+    )
+
+    metadata = json.loads(receipt.metadata_path.read_text())
+    assert receipt.path.name == "00000007-microphone.pcm"
+    assert metadata["source"] == "microphone"
+    assert metadata["meeting_time_ms"] == 1_250
+    assert metadata["captured_at"] == "2026-07-26T10:00:00Z"
 
 
 def test_accept_allows_out_of_order_sources_but_rejects_duplicate_sequence(

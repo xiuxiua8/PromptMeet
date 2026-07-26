@@ -13,6 +13,7 @@ class NativeTranscript(BaseModel):
     speaker: str
     source: Literal["system", "microphone", "mixed"]
     timestamp: datetime
+    meeting_time_ms: int | None = None
     translation_target: Literal["zh", "en", "ja", "ko"] | None = None
 
     @field_validator("text")

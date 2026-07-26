@@ -102,6 +102,19 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     assert answer.status_code == 200
     assert answer.json()["answer"] == "周岚负责回滚演练 [M3]。"
     assert (
+        client.post(f"/api/sessions/{meeting_id}/pause-native-recording").status_code
+        == 200
+    )
+    paused = client.get(f"/api/sessions/{meeting_id}").json()["session"]
+    assert paused["is_recording"] is True
+    assert paused["is_paused"] is True
+    assert (
+        client.post(f"/api/sessions/{meeting_id}/resume-native-recording").status_code
+        == 200
+    )
+    resumed = client.get(f"/api/sessions/{meeting_id}").json()["session"]
+    assert resumed["is_paused"] is False
+    assert (
         client.post(f"/api/sessions/{meeting_id}/stop-native-recording").status_code
         == 200
     )
@@ -118,6 +131,13 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     assert EventKind.SCREENSHOT_ANALYSIS in kinds
     assert EventKind.USER_QUESTION in kinds
     assert EventKind.ASSISTANT_ANSWER in kinds
+    lifecycle_details = [
+        event["payload"].get("detail")
+        for event in history[0]["events"]
+        if event["kind"] == EventKind.LIFECYCLE
+    ]
+    assert "录音已暂停" in lifecycle_details
+    assert "录音已恢复" in lifecycle_details
     legacy_projection = client.get("/db/sessions").json()
     assert legacy_projection[0]["schema_version"] == 2
     assert legacy_projection[0]["transcript_segments"][0]["text"] == "发布候选周五交付"

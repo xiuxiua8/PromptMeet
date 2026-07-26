@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,3 +31,15 @@ def test_repository_contains_every_required_packaging_source() -> None:
     result = run_check(ROOT)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_package_requires_audio_input_entitlement() -> None:
+    entitlement_path = ROOT / "desktop-macos/Resources/PromptMeet.entitlements"
+    assert entitlement_path.is_file()
+    entitlement = plistlib.loads(entitlement_path.read_bytes())
+    assert entitlement["com.apple.security.device.audio-input"] is True
+
+    build_script = (ROOT / "scripts/build-macos-app.sh").read_text()
+    assert (
+        '--entitlements "$MACOS_ROOT/Resources/PromptMeet.entitlements"' in build_script
+    )

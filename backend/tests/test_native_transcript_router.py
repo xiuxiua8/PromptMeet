@@ -19,6 +19,7 @@ def test_native_transcript_is_dispatched_to_existing_session() -> None:
             "text": "本地识别完成",
             "speaker": "我",
             "source": "microphone",
+            "meeting_time_ms": 1_250,
             "translation_target": "zh",
             "timestamp": "2026-07-24T20:00:00+08:00",
         },
@@ -28,6 +29,8 @@ def test_native_transcript_is_dispatched_to_existing_session() -> None:
     assert received[0][0] == "session-1"
     assert received[0][1]["text"] == "本地识别完成"
     assert received[0][1]["translation_target"] == "zh"
+    assert received[0][1]["source"] == "microphone"
+    assert received[0][1]["meeting_time_ms"] == 1_250
 
 
 def test_native_transcript_rejects_unknown_session_and_blank_text() -> None:

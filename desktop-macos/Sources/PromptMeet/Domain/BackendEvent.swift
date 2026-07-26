@@ -9,7 +9,7 @@ enum BackendEvent: Equatable, Sendable {
     case answerFinal(requestID: UUID?, answer: String)
     case aiFailure(requestID: UUID?, message: String)
     case question(String)
-    case questions([String])
+    case questions(generationID: UUID?, contextRevision: Int?, questions: [String])
     case suggestion(String)
     case summary(MeetingSummaryContent)
     case screenshotInsight(String)
@@ -46,8 +46,19 @@ enum BackendEvent: Equatable, Sendable {
             let identifier = (payload["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
             let speaker = payload["speaker"] as? String ?? "发言人"
             let timestamp = parseDate(payload["timestamp"] as? String)
+            let source = (payload["source"] as? String).flatMap(NativeAudioSource.init(rawValue:))
+            let meetingTime = (payload["meeting_time_ms"] as? NSNumber).map {
+                Duration.milliseconds($0.int64Value)
+            }
             return .transcript(
-                TranscriptLine(id: identifier, speaker: speaker, text: text, timestamp: timestamp)
+                TranscriptLine(
+                    id: identifier,
+                    speaker: speaker,
+                    text: text,
+                    timestamp: timestamp,
+                    source: source,
+                    meetingTime: meetingTime
+                )
             )
         case "answer":
             let requestID = (payload["request_id"] as? String).flatMap(UUID.init(uuidString:))
@@ -74,7 +85,11 @@ enum BackendEvent: Equatable, Sendable {
             let questions = (payload["questions"] as? [[String: Any]] ?? []).compactMap {
                 ($0["question"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             }.filter { !$0.isEmpty }
-            return .questions(questions)
+            return .questions(
+                generationID: (payload["generation_id"] as? String).flatMap(UUID.init(uuidString:)),
+                contextRevision: (payload["context_revision"] as? NSNumber)?.intValue,
+                questions: questions
+            )
         case "summary_generated", "summary":
             guard let summary = (payload["summary_text"] ?? payload["content"]) as? String else {
                 return .ignored

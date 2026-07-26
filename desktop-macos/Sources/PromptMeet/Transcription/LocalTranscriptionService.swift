@@ -5,6 +5,7 @@ struct LocalTranscript: Equatable, Sendable {
     let source: NativeAudioSource
     let text: String
     let timestamp: Date
+    let meetingTime: Duration?
     let translationTarget: String?
 
     init(
@@ -12,12 +13,14 @@ struct LocalTranscript: Equatable, Sendable {
         source: NativeAudioSource,
         text: String,
         timestamp: Date = Date(),
+        meetingTime: Duration? = nil,
         translationTarget: String? = nil
     ) {
         self.id = id
         self.source = source
         self.text = text
         self.timestamp = timestamp
+        self.meetingTime = meetingTime
         self.translationTarget = translationTarget
     }
 
@@ -36,6 +39,7 @@ protocol LocalTranscriptionServicing: Sendable {
         onError: @escaping @Sendable (String) -> Void
     ) async throws
     func consume(_ pcm: CapturedPCM) async
+    func pause() async
     func stop() async
 }
 
@@ -122,6 +126,15 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
         onError = nil
     }
 
+    func pause() async {
+        segmenter.discardBufferedAudio()
+        pendingJobs.removeAll {
+            if case .preview = $0.kind { return true }
+            return false
+        }
+        onPartialTranscript?("")
+    }
+
     private func enqueuePreview(_ segment: PCMTranscriptionSegment) {
         pendingJobs.removeAll {
             if case .preview = $0.kind {
@@ -169,6 +182,8 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
                             LocalTranscript(
                                 source: job.segment.source,
                                 text: text,
+                                timestamp: job.segment.capturedAt,
+                                meetingTime: job.segment.meetingTime,
                                 translationTarget: preferences.translationEnabled
                                     ? preferences.translationTargetLanguage
                                     : nil
@@ -196,5 +211,6 @@ actor NoopLocalTranscriptionService: LocalTranscriptionServicing {
         onError: @escaping @Sendable (String) -> Void
     ) async throws {}
     func consume(_ pcm: CapturedPCM) async {}
+    func pause() async {}
     func stop() async {}
 }

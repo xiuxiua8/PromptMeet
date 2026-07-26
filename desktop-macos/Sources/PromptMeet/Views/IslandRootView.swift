@@ -39,7 +39,7 @@ struct IslandRootView: View {
                             colors: [
                                 auraLeadingColor,
                                 Color.white.opacity(isExpanded ? 0.10 : 0.035),
-                                auraTrailingColor
+                                auraTrailingColor,
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -75,7 +75,7 @@ struct IslandRootView: View {
             } trailing: {
                 quickAskButton
             }
-        case let .failed(message):
+        case .failed(let message):
             notchFlanks {
                 statusOrb(color: VisualTokens.danger)
                     .help(message)
@@ -85,8 +85,13 @@ struct IslandRootView: View {
         case .live:
             VStack(spacing: 0) {
                 notchFlanks {
-                    waveform
+                    if store.state.recordingActivity == .paused {
+                        statusOrb(color: VisualTokens.amber)
+                    } else {
+                        waveform
+                    }
                 } trailing: {
+                    compactPauseResumeButton
                     if store.state.aiReader.isStreaming {
                         ProgressView()
                             .controlSize(.mini)
@@ -105,7 +110,7 @@ struct IslandRootView: View {
                 .padding(.horizontal, 22)
 
                 RollingCaptionView(
-                    text: store.state.activeCaption.isEmpty ? "正在等待第一段转写" : store.state.activeCaption,
+                    text: compactCaption,
                     viewportHeight: 39,
                     topPadding: 4
                 )
@@ -155,6 +160,39 @@ struct IslandRootView: View {
         .help("问 AI")
     }
 
+    @ViewBuilder
+    private var compactPauseResumeButton: some View {
+        switch store.state.recordingActivity {
+        case .pausing, .resuming:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(VisualTokens.amber)
+                .frame(width: 24, height: 24)
+                .accessibilityLabel("正在切换录音状态")
+        case .recording, .paused:
+            let isPaused = store.state.recordingActivity == .paused
+            Button(action: store.togglePauseResume) {
+                Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isPaused ? VisualTokens.live : VisualTokens.amber)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isPaused ? "继续录音" : "暂停录音")
+            .accessibilityLabel(isPaused ? "继续录音" : "暂停录音")
+        default:
+            EmptyView()
+        }
+    }
+
+    private var compactCaption: String {
+        if store.state.recordingActivity == .paused {
+            return "录音已暂停，会议内容和问答仍保留"
+        }
+        return store.state.activeCaption.isEmpty ? "正在等待第一段转写" : store.state.activeCaption
+    }
+
     private var waveform: some View {
         HStack(alignment: .center, spacing: 2) {
             ForEach([5, 11, 7, 13, 6], id: \.self) { height in
@@ -183,7 +221,7 @@ struct IslandRootView: View {
     private var auraLeadingColor: Color {
         switch store.state.phase {
         case .live:
-            VisualTokens.live
+            store.state.recordingActivity == .paused ? VisualTokens.amber : VisualTokens.live
         case .failed:
             VisualTokens.danger
         case .connecting, .stopping:

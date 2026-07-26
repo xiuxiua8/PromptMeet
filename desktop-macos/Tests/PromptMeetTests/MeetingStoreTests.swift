@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import XCTest
+
 @testable import PromptMeet
 
 @MainActor
@@ -134,7 +135,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertTrue(store.state.transcript.isEmpty)
     }
 
-    func testCaptureSetupFailureMarksDurableMeetingIncompleteWithoutStartingRecording() async {
+    func testCaptureSetupFailureRollsBackRecordingAndMarksDurableMeetingIncomplete() async {
         let backend = BackendClientSpy()
         let capture = NativeAudioCaptureSpy(startError: LocalTranscriptionError.modelNotInstalled)
         let store = MeetingStore(backend: backend, capture: capture, companion: CompanionLauncherSpy())
@@ -144,7 +145,10 @@ final class MeetingStoreTests: XCTestCase {
         guard case .failed = store.state.phase else {
             return XCTFail("Expected failed meeting state")
         }
-        XCTAssertEqual(backend.performedActions, ["mark-incomplete"])
+        XCTAssertEqual(
+            backend.performedActions,
+            ["start-native-recording", "stop-native-recording", "mark-incomplete"]
+        )
         XCTAssertEqual(backend.createSessionCount, 1)
         XCTAssertEqual(backend.connectedSessionID, "session-1")
         XCTAssertEqual(capture.stopCount, 1)
@@ -169,6 +173,24 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertTrue(backend.submittedTranscripts.isEmpty)
     }
 
+    func testSourceStatusIsPublishedAndMicrophoneCanRecoverIndependently() async {
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: capture,
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+
+        capture.emitStatus(AudioCaptureSnapshot(microphone: .denied, system: .active))
+        await Task.yield()
+        XCTAssertEqual(store.state.audioCapture.microphone, .denied)
+        XCTAssertEqual(store.state.audioCapture.system, .active)
+
+        await store.retryMicrophoneNow()
+        XCTAssertEqual(capture.retriedSources, [.microphone])
+    }
+
     func testEndingMeetingStoresSessionAndKeepsCompanionContextAvailable() async {
         let backend = BackendClientSpy()
         let store = MeetingStore(
@@ -190,6 +212,70 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(backend.prompts.map(\.prompt), ["会后还可以提问吗？"])
         XCTAssertEqual(store.state.phase, .idle)
         XCTAssertTrue(store.hasMeetingContext)
+    }
+
+    func testPauseResumeKeepsMeetingContextAndStopWhilePausedEndsNormally() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+
+        await store.pauseMeetingNow()
+        XCTAssertEqual(store.state.phase, .live)
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(capture.pauseCount, 1)
+
+        await store.resumeMeetingNow()
+        XCTAssertEqual(store.state.recordingActivity, .recording)
+        XCTAssertEqual(capture.resumeCount, 1)
+
+        await store.pauseMeetingNow()
+        await store.endMeetingNow()
+        XCTAssertEqual(store.state.phase, .idle)
+        XCTAssertEqual(store.state.recordingActivity, .inactive)
+        XCTAssertEqual(
+            backend.performedActions,
+            [
+                "start-native-recording",
+                "pause-native-recording",
+                "resume-native-recording",
+                "pause-native-recording",
+                "stop-native-recording",
+                "store-session",
+            ]
+        )
+    }
+
+    func testResumeRollsBackendBackToPausedWhenLocalSourcesCannotRestart() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy(
+            resumeError: CaptureError.systemAudioRuntimeFailure("restart failed")
+        )
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+        await store.pauseMeetingNow()
+
+        await store.resumeMeetingNow()
+
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(capture.resumeCount, 1)
+        XCTAssertEqual(
+            backend.performedActions,
+            [
+                "start-native-recording",
+                "pause-native-recording",
+                "resume-native-recording",
+                "pause-native-recording",
+            ]
+        )
     }
 
     func testSaveMeetingStoresCurrentBackendSession() async {
@@ -218,8 +304,29 @@ final class MeetingStoreTests: XCTestCase {
 
         await store.requestQuestionsNow()
 
-        XCTAssertEqual(backend.performedActions.last, "generate-questions")
+        XCTAssertEqual(backend.questionRequests.count, 1)
         XCTAssertEqual(store.state.latestInsight, "正在生成值得追问的问题")
+    }
+
+    func testScreenshotRequiresSelectionAndSelectionIsSeparateFromCapture() async {
+        let screenshot = ScreenshotCaptureControllerSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            screenshotController: screenshot
+        )
+        await store.startMeetingNow()
+
+        await store.requestScreenshotNow()
+        XCTAssertEqual(store.state.latestInsight, "请先选择窗口")
+        XCTAssertEqual(screenshot.captureCount, 1)
+        XCTAssertEqual(screenshot.selectionCount, 0)
+
+        await store.selectCaptureTargetNow()
+        XCTAssertEqual(screenshot.selectionCount, 1)
+        XCTAssertEqual(screenshot.captureCount, 1)
+        XCTAssertEqual(store.state.screenshotTarget, .selected(label: "测试窗口"))
     }
 
     func testGeneratedQuestionsAreCollectedWithoutReplacingAIAnswer() async throws {
@@ -247,7 +354,8 @@ final class MeetingStoreTests: XCTestCase {
         let store = MeetingStore(
             backend: backend,
             capture: capture,
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(5)
         )
         await store.startMeetingNow()
 
@@ -257,7 +365,7 @@ final class MeetingStoreTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(40))
 
         XCTAssertEqual(
-            backend.performedActions.filter { $0 == "generate-questions" }.count,
+            backend.questionRequests.count,
             2
         )
     }
@@ -268,7 +376,8 @@ final class MeetingStoreTests: XCTestCase {
         let store = MeetingStore(
             backend: backend,
             capture: capture,
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(5)
         )
         await store.startMeetingNow()
 
@@ -278,19 +387,20 @@ final class MeetingStoreTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(40))
 
         XCTAssertEqual(
-            backend.performedActions.filter { $0 == "generate-questions" }.count,
+            backend.questionRequests.count,
             2
         )
     }
 
     func testSuggestedQuestionRefreshCoalescesTranscriptsArrivingDuringGeneration() async {
         let backend = BackendClientSpy()
-        backend.performDelay = .milliseconds(40)
+        backend.questionDelay = .milliseconds(40)
         let capture = NativeAudioCaptureSpy()
         let store = MeetingStore(
             backend: backend,
             capture: capture,
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(5)
         )
         await store.startMeetingNow()
 
@@ -300,16 +410,86 @@ final class MeetingStoreTests: XCTestCase {
             capture.emit(LocalTranscript(source: .microphone, text: text))
         }
         for _ in 0..<50 {
-            if backend.performedActions.filter({ $0 == "generate-questions" }).count == 2 {
+            if backend.questionRequests.count == 2 {
                 break
             }
             try? await Task.sleep(for: .milliseconds(10))
         }
 
         XCTAssertEqual(
-            backend.performedActions.filter { $0 == "generate-questions" }.count,
+            backend.questionRequests.count,
             2
         )
+    }
+
+    func testOlderSuggestionGenerationCannotOverwriteNewerContext() async throws {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(5)
+        )
+        await store.startMeetingNow()
+
+        capture.emit(LocalTranscript(source: .microphone, text: "第一条"))
+        try await waitUntil { backend.questionRequests.count == 1 }
+        let first = try XCTUnwrap(backend.questionRequests.first)
+        backend.emit(.screenshotInsight("截图显示新的预算"))
+        try await waitUntil { backend.questionRequests.count == 2 }
+        let second = try XCTUnwrap(backend.questionRequests.last)
+
+        backend.emit(
+            .questions(
+                generationID: first.generationID,
+                contextRevision: first.contextRevision,
+                questions: ["旧问题"]
+            )
+        )
+        await Task.yield()
+        XCTAssertFalse(store.state.generatedQuestions.contains("旧问题"))
+
+        backend.emit(
+            .questions(
+                generationID: second.generationID,
+                contextRevision: second.contextRevision,
+                questions: ["新问题"]
+            )
+        )
+        await Task.yield()
+        XCTAssertEqual(store.state.generatedQuestions, ["新问题"])
+    }
+
+    func testScreenshotAndRelevantAnswerTriggerDebouncedSuggestionRefresh() async throws {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(5)
+        )
+        await store.startMeetingNow()
+
+        backend.emit(.screenshotInsight("截图显示风险列表"))
+        try await waitUntil { backend.questionRequests.count == 1 }
+        await store.submitPromptNow("谁负责？")
+        let requestID = try XCTUnwrap(backend.prompts.last?.id)
+        backend.emit(.answerFinal(requestID: requestID, answer: "周岚负责"))
+        try await waitUntil { backend.questionRequests.count == 2 }
+
+        XCTAssertEqual(backend.questionRequests.map(\.contextRevision), [1, 2])
+    }
+
+    private func waitUntil(
+        _ predicate: @escaping @MainActor () -> Bool,
+        attempts: Int = 100
+    ) async throws {
+        for _ in 0..<attempts {
+            if predicate() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Condition did not become true")
     }
 
     func testQuickPromptUsesSharedDraftAndClosesShelfAfterSending() async {
@@ -375,7 +555,34 @@ final class MeetingStoreTests: XCTestCase {
         await store.submitPromptNow("谁负责回滚？")
 
         XCTAssertEqual(backend.historicalQuestions.map(\.meetingID), ["archived-1"])
-        XCTAssertEqual(store.state.conversationTurn(requestID: backend.historicalQuestions[0].requestID)?.answer, "历史回答")
+        XCTAssertEqual(
+            store.state.conversationTurn(requestID: backend.historicalQuestions[0].requestID)?.answer, "历史回答")
+    }
+
+    func testViewingHistoryWhileLiveKeepsQuestionsScopedToArchivedMeeting() async {
+        let backend = BackendClientSpy()
+        backend.history = [
+            StoredMeeting(
+                id: "archived-1",
+                startTime: Date(timeIntervalSince1970: 1_000),
+                transcript: [TranscriptLine(speaker: "会议", text: "历史会议内容")],
+                summary: nil
+            )
+        ]
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+        await store.loadMeetingHistoryNow()
+        store.selectArchivedMeeting("archived-1")
+
+        await store.submitPromptNow("历史会议里谁负责？")
+
+        XCTAssertEqual(backend.historicalQuestions.map(\.meetingID), ["archived-1"])
+        XCTAssertTrue(backend.prompts.isEmpty)
+        XCTAssertEqual(store.state.phase, .live)
     }
 
     func testStartingNewMeetingWhileLiveProtectsCurrentContext() async {
@@ -399,16 +606,23 @@ private final class NativeAudioCaptureSpy: NativeAudioCaptureCoordinating {
     var startedSessionID: String?
     var stopCount = 0
     var backendSessionID: String?
+    var pauseCount = 0
+    var resumeCount = 0
+    var retriedSources: [NativeAudioSource] = []
+    private var statusHandler: (@Sendable (AudioCaptureSnapshot) -> Void)?
     private var transcriptHandler: (@Sendable (LocalTranscript) -> Void)?
     private var partialHandler: (@Sendable (String) -> Void)?
     private let startError: (any Error)?
+    private let resumeError: (any Error)?
 
-    init(startError: (any Error)? = nil) {
+    init(startError: (any Error)? = nil, resumeError: (any Error)? = nil) {
         self.startError = startError
+        self.resumeError = resumeError
     }
 
     func start(
         sessionID: String,
+        onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
         onTranscriptionError: @escaping @Sendable (String) -> Void
@@ -417,6 +631,8 @@ private final class NativeAudioCaptureSpy: NativeAudioCaptureCoordinating {
         startedSessionID = sessionID
         partialHandler = onPartialTranscript
         transcriptHandler = onTranscript
+        statusHandler = onStatus
+        onStatus(AudioCaptureSnapshot(microphone: .active, system: .active))
     }
 
     func stop() async {
@@ -427,6 +643,13 @@ private final class NativeAudioCaptureSpy: NativeAudioCaptureCoordinating {
         backendSessionID = sessionID
     }
 
+    func pause() async { pauseCount += 1 }
+    func resume() async throws {
+        resumeCount += 1
+        if let resumeError { throw resumeError }
+    }
+    func retry(_ source: NativeAudioSource) async throws { retriedSources.append(source) }
+
     func emit(_ transcript: LocalTranscript) {
         transcriptHandler?(transcript)
     }
@@ -434,6 +657,30 @@ private final class NativeAudioCaptureSpy: NativeAudioCaptureCoordinating {
     func emitPartial(_ text: String) {
         partialHandler?(text)
     }
+
+    func emitStatus(_ snapshot: AudioCaptureSnapshot) {
+        statusHandler?(snapshot)
+    }
+}
+
+@MainActor
+private final class ScreenshotCaptureControllerSpy: ScreenshotCaptureControlling {
+    private(set) var targetState: ScreenshotTargetState = .none
+    private(set) var selectionCount = 0
+    private(set) var captureCount = 0
+
+    func selectTarget() async throws -> ScreenshotTargetState {
+        selectionCount += 1
+        targetState = .selected(label: "测试窗口")
+        return targetState
+    }
+
+    func captureSelected(sessionID: String) async throws {
+        captureCount += 1
+        guard targetState != .none else { throw ScreenshotPickerError.noSelectedTarget }
+    }
+
+    func openScreenRecordingSettings() {}
 }
 
 @MainActor
@@ -470,6 +717,12 @@ private final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable
         let question: String
     }
 
+    struct QuestionRequest: Equatable {
+        let sessionID: String
+        let generationID: UUID
+        let contextRevision: Int
+    }
+
     var performedActions: [String] = []
     var connectedSessionID: String?
     var prompts: [Prompt] = []
@@ -477,6 +730,8 @@ private final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable
     var disconnectCount = 0
     var history: [StoredMeeting] = []
     var performDelay: Duration?
+    var questionDelay: Duration?
+    var questionRequests: [QuestionRequest] = []
     var createSessionCount = 0
     var historicalQuestions: [HistoricalQuestion] = []
     private var eventHandler: (@Sendable (BackendEvent) -> Void)?
@@ -493,6 +748,25 @@ private final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable
             try await Task.sleep(for: performDelay)
         }
         await MainActor.run { performedActions.append(action) }
+    }
+
+    func generateQuestions(
+        sessionID: String,
+        generationID: UUID,
+        contextRevision: Int
+    ) async throws {
+        await MainActor.run {
+            questionRequests.append(
+                QuestionRequest(
+                    sessionID: sessionID,
+                    generationID: generationID,
+                    contextRevision: contextRevision
+                )
+            )
+        }
+        if let questionDelay = await MainActor.run(body: { self.questionDelay }) {
+            try await Task.sleep(for: questionDelay)
+        }
     }
 
     func connect(sessionID: String, onEvent: @escaping @Sendable (BackendEvent) -> Void) throws {

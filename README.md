@@ -36,6 +36,8 @@
 
 原生端位于 `desktop-macos`，使用 SwiftUI、AppKit、ScreenCaptureKit 与 AVAudioEngine。系统音频和麦克风直接进入本机 Python/FastAPI companion，不需要 BlackHole，也不会改变腾讯会议、Zoom 等应用的音频设备。
 
+麦克风和系统音频是两条独立的语义通道，转写分别标记为“我”和“会议”。任一来源不可用时，另一来源仍可继续。灵动岛和工作台会分别显示来源状态，并提供麦克风权限恢复、暂停/继续录音和结束会议控制。暂停只停止音频采集，截图、会议历史和问答上下文仍保留。
+
 语音转写默认使用本机 `whisper.cpp`：用户可在“设置 → 采集”中下载并选择 Tiny、Base、Small 或 Large V3 Turbo 模型。模型保存在 `~/Library/Application Support/PromptMeet/whisper-models`，会议音频不会为转写上传到云端。
 
 每场会议使用独立的版本 2 时间线持久化转写、截图、截图分析、问题、回答、摘要、来源和生命周期。结束后可在工作台重新打开历史会议并继续提问。截图原图保存在本机资产目录中，支持视觉的 OpenAI 模型会接收所选原图；DeepSeek 当前按文字能力透明降级，不会把分析文字伪装成模型看过的图片。
@@ -46,7 +48,7 @@ cd desktop-macos
 swift run PromptMeet
 ```
 
-首次开始会议时按系统提示授权屏幕录制与麦克风。AI 提供方、模型和连接状态在“设置 → AI 服务”中管理，密钥只保存到 macOS Keychain。生成应用包：
+首次开始会议时按系统提示授权屏幕录制与麦克风。拒绝麦克风权限不会中断系统音频，可从来源状态旁打开系统隐私设置并重试。先点“选择窗口”保留截图目标，之后每次点“截图”都会立即截取当前窗口，不会重复打开选择器。AI 提供方、模型和连接状态在“设置 → AI 服务”中管理，密钥只保存到 macOS Keychain。生成应用包：
 
 ```bash
 ./scripts/build-macos-app.sh
