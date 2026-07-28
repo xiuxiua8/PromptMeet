@@ -109,14 +109,7 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
             }
             throw error
         } catch {
-            let unavailable = ScreenshotPickerError.selectedTargetUnavailable(
-                selectedTarget.label
-            )
-            targetState = .invalid(
-                label: selectedTarget.label,
-                reason: error.localizedDescription
-            )
-            throw unavailable
+            throw error
         }
         do {
             try await uploader.upload(data, sessionID: sessionID)

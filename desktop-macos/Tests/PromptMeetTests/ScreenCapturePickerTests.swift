@@ -131,6 +131,32 @@ final class ScreenCapturePickerTests: XCTestCase {
         XCTAssertEqual(controller.targetState, .selected(label: "测试窗口"))
     }
 
+    func testCaptureNonPickerErrorPreservesTargetAndPropagatesError() async throws {
+        struct TransientCaptureFailure: Error, Equatable {
+            let detail: String
+        }
+        let capturer = ScreenshotTargetCapturerSpy(
+            stubbedCaptureError: TransientCaptureFailure(detail: "SCK timeout")
+        )
+        let controller = ScreenCaptureController(
+            targetPicker: ScreenshotTargetPickerSpy(),
+            targetCapturer: capturer,
+            uploader: NativeScreenshotUploaderSpy()
+        )
+        _ = try await controller.selectTarget()
+
+        do {
+            try await controller.captureSelected(sessionID: "meeting-1")
+            XCTFail("Expected capture failure")
+        } catch let error as TransientCaptureFailure {
+            XCTAssertEqual(error.detail, "SCK timeout")
+        } catch {
+            XCTFail("Expected TransientCaptureFailure, got \(error)")
+        }
+
+        XCTAssertEqual(controller.targetState, .selected(label: "测试窗口"))
+    }
+
     func testCaptureWithoutSelectionExplainsThatSelectionIsRequired() async {
         let controller = ScreenCaptureController(
             targetPicker: ScreenshotTargetPickerSpy(),
@@ -176,13 +202,16 @@ private final class ScreenshotTargetPickerSpy: ScreenshotTargetPicking {
 private final class ScreenshotTargetCapturerSpy: ScreenshotTargetCapturing {
     private(set) var captureCount = 0
     private let stubbedError: ScreenshotPickerError?
+    private let stubbedCaptureError: (any Error)?
 
-    init(stubbedError: ScreenshotPickerError? = nil) {
+    init(stubbedError: ScreenshotPickerError? = nil, stubbedCaptureError: (any Error)? = nil) {
         self.stubbedError = stubbedError
+        self.stubbedCaptureError = stubbedCaptureError
     }
 
     func capture(_ target: ScreenshotTargetHandle) async throws -> Data {
         captureCount += 1
+        if let stubbedCaptureError { throw stubbedCaptureError }
         if let stubbedError { throw stubbedError }
         return Data([0, 1, 2])
     }

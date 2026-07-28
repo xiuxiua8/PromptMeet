@@ -250,8 +250,8 @@ struct WorkspaceView: View {
             "未选择截图窗口"
         case .selected(let label):
             "截图窗口：\(label)"
-        case .invalid(let label, _):
-            "截图窗口已失效：\(label)"
+        case .invalid(let label, let reason):
+            "截图窗口已失效：\(label)（\(reason)）"
         }
     }
 

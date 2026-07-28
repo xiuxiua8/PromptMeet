@@ -312,7 +312,7 @@ struct HoverMeetingCardView: View {
         switch store.state.screenshotTarget {
         case .none: "未选择窗口"
         case .selected(let label): label
-        case .invalid(let label, _): "\(label) · 已失效"
+        case .invalid(let label, let reason): "\(label) · 已失效（\(reason)）"
         }
     }
 
