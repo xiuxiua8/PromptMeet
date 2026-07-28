@@ -19,6 +19,13 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
         MeetingTimelineProjection.conversation(timeline)
     }
 
+    var suggestions: [String] {
+        timeline.reversed().compactMap { event -> [String]? in
+            guard case .suggestions(let value) = event.payload else { return nil }
+            return value.questions
+        }.first ?? []
+    }
+
     init(
         id: String,
         schemaVersion: Int = 1,
@@ -65,15 +72,16 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
         endTime = record.endedAt
         timeline = sortedTimeline
         transcript = sortedTimeline.compactMap(\.transcript)
-        summary = sortedTimeline.reversed().compactMap { event -> MeetingSummaryContent? in
-            guard case let .summary(value) = event.payload else { return nil }
-            return MeetingSummaryContent(
-                summaryText: value.summaryText,
-                tasks: value.tasks.compactMap(Self.task),
-                keyPoints: value.keyPoints,
-                decisions: value.decisions
-            )
-        }.first
+        summary =
+            sortedTimeline.reversed().compactMap { event -> MeetingSummaryContent? in
+                guard case .summary(let value) = event.payload else { return nil }
+                return MeetingSummaryContent(
+                    summaryText: value.summaryText,
+                    tasks: value.tasks.compactMap(Self.task),
+                    keyPoints: value.keyPoints,
+                    decisions: value.decisions
+                )
+            }.first
     }
 
     private static func task(_ payload: [String: JSONValue]) -> MeetingTask? {
@@ -100,6 +108,10 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
                 speaker: segment["speaker"] as? String ?? "发言人",
                 text: text,
                 timestamp: parseDate(segment["timestamp"] as? String),
+                source: (segment["source"] as? String).flatMap(NativeAudioSource.init(rawValue:)),
+                meetingTime: (segment["meeting_time_ms"] as? NSNumber).map {
+                    .milliseconds($0.int64Value)
+                },
                 translatedText: segment["translated_text"] as? String
             )
         }

@@ -6,6 +6,7 @@ from models.meeting_context import (
     EventProvenance,
     MeetingEvent,
     MeetingStatus,
+    SuggestionPayload,
     SummaryPayload,
     TranscriptPayload,
 )
@@ -56,6 +57,29 @@ def test_records_survive_repository_relaunch_and_finish_atomically(tmp_path) -> 
     assert restored.ended_at == START.replace(hour=11)
     assert restored.events[0].payload.text == "保留内容"
     assert not list((tmp_path / "meetings" / "v2").glob("*.tmp"))
+
+
+def test_accepted_suggestions_survive_repository_relaunch(tmp_path) -> None:
+    repository = MeetingRepository(tmp_path)
+    repository.create("meeting-a", START)
+    repository.append(
+        "meeting-a",
+        MeetingEvent(
+            occurred_at=START,
+            kind=EventKind.SUGGESTIONS,
+            provenance=EventProvenance(source="suggestion_service"),
+            payload=SuggestionPayload(
+                generation_id="22222222-2222-2222-2222-222222222222",
+                context_revision=2,
+                questions=["谁负责上线？"],
+            ),
+        ),
+    )
+
+    restored = MeetingRepository(tmp_path).get("meeting-a")
+
+    assert restored.events[-1].kind == EventKind.SUGGESTIONS
+    assert restored.events[-1].payload.questions == ["谁负责上线？"]
 
 
 def test_legacy_desktop_sessions_are_migrated_without_removing_source(tmp_path) -> None:

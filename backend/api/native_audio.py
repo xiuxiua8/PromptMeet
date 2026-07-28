@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import datetime
 
 from fastapi import APIRouter, Body, Header, HTTPException
 from pydantic import ValidationError
@@ -25,16 +26,27 @@ def build_native_audio_router(
         sample_rate: int = Header(..., alias="X-PromptMeet-Sample-Rate"),
         channels: int = Header(..., alias="X-PromptMeet-Channels"),
         source: str = Header("mixed", alias="X-PromptMeet-Source"),
+        captured_at: datetime | None = Header(None, alias="X-PromptMeet-Captured-At"),
+        meeting_time_ms: int = Header(0, alias="X-PromptMeet-Meeting-Time-Ms"),
     ) -> dict[str, object]:
-        if not session_exists(session_id):
+        session = session_exists(session_id)
+        if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
+        if getattr(session, "is_paused", False):
+            raise HTTPException(status_code=409, detail="录音已暂停")
 
         try:
+            values: dict[str, object] = {
+                "sequence": sequence,
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "source": source,
+                "meeting_time_ms": meeting_time_ms,
+            }
+            if captured_at is not None:
+                values["captured_at"] = captured_at
             metadata = NativeAudioChunk(
-                sequence=sequence,
-                sample_rate=sample_rate,
-                channels=channels,
-                source=source,
+                **values,
             )
             receipt = ingress.accept(session_id, metadata, payload)
         except ValidationError as error:

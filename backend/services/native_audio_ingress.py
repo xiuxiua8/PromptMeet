@@ -43,10 +43,16 @@ class NativeAudioIngress:
             session_dir = self.root / session_id
             session_dir.mkdir(parents=True, exist_ok=True)
             path = session_dir / f"{chunk.sequence:08d}-{chunk.source}.pcm"
+            metadata_path = path.with_suffix(".json")
             path.write_bytes(payload)
+            metadata_path.write_text(chunk.model_dump_json(), encoding="utf-8")
             seen.add(chunk.sequence)
 
-        return NativeAudioReceipt(sequence=chunk.sequence, path=path)
+        return NativeAudioReceipt(
+            sequence=chunk.sequence,
+            path=path,
+            metadata_path=metadata_path,
+        )
 
     def reset(self, session_id: str) -> None:
         with self._lock:

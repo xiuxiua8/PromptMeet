@@ -14,21 +14,25 @@ final class MeetingStore: ObservableObject {
     private let backend: BackendClientProtocol
     private let capture: NativeAudioCaptureCoordinating
     private let companion: CompanionLaunching
-    private let screenshotPicker: ScreenshotSelecting
-    private let questionRefreshStride = 1
-    private var lastQuestionGenerationTranscriptCount = 0
-    private var isQuestionGenerationInFlight = false
+    private let screenshotController: ScreenshotCaptureControlling
+    private let suggestionDebounce: Duration
+    private var suggestionRefreshTask: Task<Void, Never>?
+    private var suggestionContextRevision = 0
+    private var lastRequestedSuggestionRevision = -1
+    private var activeSuggestionGenerationID: UUID?
 
     init(
         backend: BackendClientProtocol = BackendClient(),
         capture: NativeAudioCaptureCoordinating = NativeAudioCaptureCoordinator(),
         companion: CompanionLaunching = CompanionLauncher(),
-        screenshotPicker: ScreenshotSelecting = ScreenCapturePicker()
+        screenshotController: ScreenshotCaptureControlling = ScreenCaptureController(),
+        suggestionDebounce: Duration = .milliseconds(350)
     ) {
         self.backend = backend
         self.capture = capture
         self.companion = companion
-        self.screenshotPicker = screenshotPicker
+        self.screenshotController = screenshotController
+        self.suggestionDebounce = suggestionDebounce
     }
 
     var presentation: IslandPresentation {
@@ -107,6 +111,38 @@ final class MeetingStore: ObservableObject {
         Task { await endMeetingNow() }
     }
 
+    func pauseMeeting() {
+        Task { await pauseMeetingNow() }
+    }
+
+    func resumeMeeting() {
+        Task { await resumeMeetingNow() }
+    }
+
+    func togglePauseResume() {
+        if state.recordingActivity == .paused {
+            resumeMeeting()
+        } else {
+            pauseMeeting()
+        }
+    }
+
+    func retryMicrophone() {
+        Task { await retryMicrophoneNow() }
+    }
+
+    func retryMicrophoneNow() async {
+        do {
+            try await capture.retry(.microphone)
+        } catch {
+            state.reduce(.suggestion("麦克风恢复失败：\(error.localizedDescription)"))
+        }
+    }
+
+    func openMicrophoneSettings() {
+        SystemMicrophonePermission().openSystemSettings()
+    }
+
     func replaceActiveMeeting() {
         Task {
             if state.phase == .live || state.phase == .connecting {
@@ -130,6 +166,10 @@ final class MeetingStore: ObservableObject {
 
     func requestScreenshot() {
         Task { await requestScreenshotNow() }
+    }
+
+    func selectCaptureTarget() {
+        Task { await selectCaptureTargetNow() }
     }
 
     func submitPrompt(_ prompt: String) {
@@ -195,17 +235,26 @@ final class MeetingStore: ObservableObject {
             backend.disconnect()
             backendSessionID = nil
         }
+        suggestionRefreshTask?.cancel()
+        suggestionRefreshTask = nil
+        suggestionContextRevision = 0
+        lastRequestedSuggestionRevision = -1
+        activeSuggestionGenerationID = nil
         state.reduce(.prepareNewMeeting)
         state.reduce(.beginSession)
         let localSessionID = "local-\(UUID().uuidString)"
+        var remoteRecordingStarted = false
         do {
             try await companion.ensureRunning()
             try await backend.healthCheck()
             let remoteSessionID = try await backend.createSession()
-            try backend.connect(sessionID: remoteSessionID) { [weak self] event in
-                Task { @MainActor in self?.receive(event) }
-            }
             backendSessionID = remoteSessionID
+            try backend.connect(sessionID: remoteSessionID) { [weak self] event in
+                Task { @MainActor in
+                    guard self?.backendSessionID == remoteSessionID else { return }
+                    self?.receive(event)
+                }
+            }
             state.reduce(.companionConnected)
         } catch {
             backend.disconnect()
@@ -213,9 +262,30 @@ final class MeetingStore: ObservableObject {
             state.reduce(.companionDisconnected("本地转写可用 · AI 服务连接失败：\(error.localizedDescription)"))
         }
 
+        if let remoteSessionID = backendSessionID {
+            do {
+                try await backend.perform(
+                    sessionID: remoteSessionID,
+                    action: "start-native-recording"
+                )
+                remoteRecordingStarted = true
+                await capture.bindBackendSession(remoteSessionID)
+            } catch {
+                state.reduce(
+                    .companionDisconnected(
+                        "本地转写可用 · 会议服务未开始记录：\(error.localizedDescription)"
+                    )
+                )
+                try? await backend.perform(sessionID: remoteSessionID, action: "mark-incomplete")
+            }
+        }
+
         do {
             try await capture.start(
                 sessionID: localSessionID,
+                onStatus: { [weak self] snapshot in
+                    Task { @MainActor in self?.state.audioCapture = snapshot }
+                },
                 onPartialTranscript: { [weak self] text in
                     Task { @MainActor in
                         self?.state.reduce(.transcriptPartial(text))
@@ -238,26 +308,24 @@ final class MeetingStore: ObservableObject {
             await capture.stop()
             sessionID = nil
             if let backendSessionID {
+                if remoteRecordingStarted {
+                    try? await backend.perform(
+                        sessionID: backendSessionID,
+                        action: "stop-native-recording"
+                    )
+                }
                 try? await backend.perform(sessionID: backendSessionID, action: "mark-incomplete")
             }
             state.reduce(.failure(error.localizedDescription))
             return
         }
-
-        if let remoteSessionID = backendSessionID {
-            await capture.bindBackendSession(remoteSessionID)
-            do {
-                try await backend.perform(sessionID: remoteSessionID, action: "start-native-recording")
-            } catch {
-                state.reduce(.companionDisconnected("本地转写可用 · 会议服务未开始记录：\(error.localizedDescription)"))
-                try? await backend.perform(sessionID: remoteSessionID, action: "mark-incomplete")
-            }
-        }
     }
 
     func endMeetingNow() async {
+        state.recordingActivity = .stopping
+        suggestionRefreshTask?.cancel()
+        suggestionRefreshTask = nil
         await capture.stop()
-        await maybeGenerateQuestions(forceRefresh: true)
         if let backendSessionID {
             try? await backend.perform(sessionID: backendSessionID, action: "stop-native-recording")
             do {
@@ -269,8 +337,51 @@ final class MeetingStore: ObservableObject {
         }
         sessionID = nil
         state.phase = .idle
+        state.recordingActivity = .inactive
         state.activeTranscript = ""
         await loadMeetingHistoryNow()
+    }
+
+    func pauseMeetingNow() async {
+        guard state.phase == .live, state.recordingActivity == .recording else { return }
+        state.recordingActivity = .pausing
+        await capture.pause()
+        if let backendSessionID {
+            do {
+                try await backend.perform(sessionID: backendSessionID, action: "pause-native-recording")
+            } catch {
+                state.reduce(.suggestion("录音已在本机暂停，会议服务状态暂未同步"))
+            }
+        }
+        state.recordingActivity = .paused
+        state.activeTranscript = ""
+    }
+
+    func resumeMeetingNow() async {
+        guard state.phase == .live, state.recordingActivity == .paused else { return }
+        state.recordingActivity = .resuming
+        let remoteSessionID = backendSessionID
+        var backendResumed = false
+        do {
+            if let remoteSessionID {
+                try await backend.perform(
+                    sessionID: remoteSessionID,
+                    action: "resume-native-recording"
+                )
+                backendResumed = true
+            }
+            try await capture.resume()
+            state.recordingActivity = .recording
+        } catch {
+            if backendResumed, let remoteSessionID {
+                try? await backend.perform(
+                    sessionID: remoteSessionID,
+                    action: "pause-native-recording"
+                )
+            }
+            state.recordingActivity = .paused
+            state.reduce(.suggestion("继续录音失败：\(error.localizedDescription)"))
+        }
     }
 
     func saveMeetingNow() async {
@@ -292,7 +403,15 @@ final class MeetingStore: ObservableObject {
             state.reduce(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
             return
         }
-        await generateQuestions(sessionID: backendSessionID, announce: true)
+        suggestionContextRevision = max(
+            suggestionContextRevision + 1,
+            lastRequestedSuggestionRevision + 1
+        )
+        await refreshSuggestedQuestionsNow(
+            sessionID: backendSessionID,
+            revision: suggestionContextRevision,
+            announce: true
+        )
     }
 
     func requestSummaryNow() async {
@@ -313,21 +432,46 @@ final class MeetingStore: ObservableObject {
             state.reduce(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
             return
         }
-        state.reduce(.suggestion("请选择要分析的窗口或屏幕"))
+        state.screenshotOperation = .capturing
         do {
-            try await screenshotPicker.present(sessionID: backendSessionID)
-            state.reduce(.suggestion("正在分析截图"))
-        } catch ScreenshotPickerError.cancelled {
-            state.reduce(.suggestion("截图已取消"))
+            try await screenshotController.captureSelected(sessionID: backendSessionID)
+            state.screenshotTarget = screenshotController.targetState
+            state.screenshotOperation = .succeeded
+            state.reduce(.suggestion("截图已保存，正在分析"))
+        } catch ScreenshotPickerError.noSelectedTarget {
+            state.screenshotOperation = .failed("请先选择窗口")
+            state.reduce(.suggestion("请先选择窗口"))
         } catch {
+            state.screenshotTarget = screenshotController.targetState
+            state.screenshotOperation = .failed(error.localizedDescription)
             state.reduce(.suggestion(error.localizedDescription))
         }
+    }
+
+    func selectCaptureTargetNow() async {
+        state.screenshotOperation = .selecting
+        do {
+            state.screenshotTarget = try await screenshotController.selectTarget()
+            state.screenshotOperation = .idle
+            state.reduce(.suggestion("已选择截图窗口"))
+        } catch ScreenshotPickerError.cancelled {
+            state.screenshotOperation = .idle
+            state.reduce(.suggestion("窗口选择已取消"))
+        } catch {
+            state.screenshotTarget = screenshotController.targetState
+            state.screenshotOperation = .failed(error.localizedDescription)
+            state.reduce(.suggestion(error.localizedDescription))
+        }
+    }
+
+    func openScreenRecordingSettings() {
+        screenshotController.openScreenRecordingSettings()
     }
 
     func submitPromptNow(_ prompt: String) async {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let archivedMeetingID = state.phase == .live ? nil : state.selectedArchivedMeetingID
+        let archivedMeetingID = state.selectedArchivedMeetingID
         guard backendSessionID != nil || archivedMeetingID != nil else {
             state.reduce(.suggestion("AI companion 暂未连接"))
             return
@@ -360,29 +504,50 @@ final class MeetingStore: ObservableObject {
         switch event {
         case .connectionEstablished, .ignored:
             break
-        case let .meetingEvent(event):
+        case .meetingEvent(let event):
+            if case .suggestions(let value) = event.payload {
+                guard UUID(uuidString: value.generationID) == activeSuggestionGenerationID,
+                    value.contextRevision == suggestionContextRevision
+                else { return }
+            }
             state.reduce(.meetingEvent(event))
-        case let .transcript(line):
+            if case .screenshotAnalysis = event.payload {
+                scheduleSuggestionRefresh()
+            } else if case .assistantAnswer = event.payload {
+                scheduleSuggestionRefresh()
+            }
+        case .transcript(let line):
             state.reduce(.transcriptFinal(line))
-        case let .translation(id, text):
+        case .translation(let id, let text):
             state.reduce(.transcriptTranslated(id: id, text: text))
-        case let .answerDelta(requestID, delta):
+        case .answerDelta(let requestID, let delta):
             state.reduce(.answerDelta(requestID: requestID, delta: delta))
-        case let .answerFinal(requestID, answer):
+        case .answerFinal(let requestID, let answer):
             state.reduce(.answerFinal(requestID: requestID, answer: answer))
-        case let .aiFailure(requestID, message):
+            scheduleSuggestionRefresh()
+        case .aiFailure(let requestID, let message):
             state.reduce(.aiFailure(requestID: requestID, message: message))
-        case let .question(question):
+        case .question(let question):
             state.reduce(.questionGenerated(question))
-        case let .questions(questions):
+        case .questions(let generationID, let contextRevision, let questions):
+            if let generationID,
+                generationID != activeSuggestionGenerationID {
+                return
+            }
+            if let contextRevision,
+                contextRevision != suggestionContextRevision {
+                return
+            }
             state.reduce(.questionsGenerated(questions))
-        case let .suggestion(insight):
+            state.suggestionRefresh.phase = .ready
+        case .suggestion(let insight):
             state.reduce(.suggestion(insight))
-        case let .summary(summary):
+        case .summary(let summary):
             state.reduce(.summaryGenerated(summary))
-        case let .screenshotInsight(insight):
+        case .screenshotInsight(let insight):
             state.reduce(.screenshotInsight(insight))
-        case let .failure(message):
+            scheduleSuggestionRefresh()
+        case .failure(let message):
             state.reduce(.failure(message))
         }
     }
@@ -394,7 +559,9 @@ final class MeetingStore: ObservableObject {
                     id: transcript.id,
                     speaker: transcript.speaker,
                     text: transcript.text,
-                    timestamp: transcript.timestamp
+                    timestamp: transcript.timestamp,
+                    source: transcript.source,
+                    meetingTime: transcript.meetingTime
                 )
             )
         )
@@ -405,43 +572,66 @@ final class MeetingStore: ObservableObject {
                 state.reduce(.suggestion("转写已保留在本机，暂未同步到会议服务"))
             }
         }
-        await maybeGenerateQuestions(forceRefresh: false)
+        scheduleSuggestionRefresh()
     }
 
-    private func maybeGenerateQuestions(forceRefresh: Bool) async {
+    private func scheduleSuggestionRefresh() {
         guard let backendSessionID else { return }
-        let transcriptCount = state.transcript.count
-        guard transcriptCount >= questionRefreshStride else { return }
-        guard forceRefresh
-                ? transcriptCount > lastQuestionGenerationTranscriptCount
-                : transcriptCount - lastQuestionGenerationTranscriptCount >= questionRefreshStride
-        else { return }
-        await generateQuestions(sessionID: backendSessionID, announce: false)
+        suggestionContextRevision += 1
+        let revision = suggestionContextRevision
+        state.suggestionRefresh.phase = .loading
+        state.suggestionRefresh.contextRevision = revision
+        suggestionRefreshTask?.cancel()
+        suggestionRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: self?.suggestionDebounce ?? .milliseconds(350))
+            } catch {
+                return
+            }
+            guard let self,
+                self.backendSessionID == backendSessionID,
+                self.suggestionContextRevision == revision
+            else { return }
+            await self.refreshSuggestedQuestionsNow(
+                sessionID: backendSessionID,
+                revision: revision,
+                announce: false
+            )
+        }
     }
 
-    private func generateQuestions(sessionID: String, announce: Bool) async {
-        guard !isQuestionGenerationInFlight else { return }
-        isQuestionGenerationInFlight = true
+    private func refreshSuggestedQuestionsNow(
+        sessionID: String,
+        revision: Int,
+        announce: Bool
+    ) async {
+        guard revision > lastRequestedSuggestionRevision else { return }
+        lastRequestedSuggestionRevision = revision
+        let generationID = UUID()
+        activeSuggestionGenerationID = generationID
+        state.suggestionRefresh = SuggestionRefreshState(
+            phase: .loading,
+            generationID: generationID,
+            contextRevision: revision
+        )
         if announce {
             state.reduce(.suggestion("正在生成值得追问的问题"))
         }
-        defer { isQuestionGenerationInFlight = false }
-        while true {
-            let requestedTranscriptCount = state.transcript.count
-            do {
-                try await backend.perform(sessionID: sessionID, action: "generate-questions")
-                lastQuestionGenerationTranscriptCount = max(
-                    lastQuestionGenerationTranscriptCount,
-                    requestedTranscriptCount
-                )
-            } catch {
-                if announce {
-                    state.reduce(.suggestion(error.localizedDescription))
-                }
-                return
-            }
-            guard state.transcript.count - lastQuestionGenerationTranscriptCount >= questionRefreshStride else {
-                return
+        do {
+            try await backend.generateQuestions(
+                sessionID: sessionID,
+                generationID: generationID,
+                contextRevision: revision
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            guard activeSuggestionGenerationID == generationID,
+                suggestionContextRevision == revision
+            else { return }
+            state.suggestionRefresh.phase = .failed(error.localizedDescription)
+            if announce {
+                state.reduce(.suggestion(error.localizedDescription))
             }
         }
     }
@@ -459,11 +649,15 @@ final class MeetingStore: ObservableObject {
     }
 
     func shutdown() {
+        suggestionRefreshTask?.cancel()
+        suggestionRefreshTask = nil
         backend.disconnect()
         companion.stopOwnedProcess()
     }
 
     func shutdownNow() async {
+        suggestionRefreshTask?.cancel()
+        suggestionRefreshTask = nil
         await capture.stop()
         backend.disconnect()
         companion.stopOwnedProcess()

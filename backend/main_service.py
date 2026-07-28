@@ -12,11 +12,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 import uvicorn
 from dotenv import load_dotenv
 
@@ -45,11 +46,13 @@ from services.meeting_repository import (
 )  # noqa: E402
 from models.meeting_context import (  # noqa: E402
     EventKind,
+    AnswerPayload,
     MeetingEvent,
     MeetingRecord,
     MeetingStatus,
     ScreenshotAnalysisPayload,
     ScreenshotPayload,
+    QuestionPayload,
     SummaryPayload,
     TranscriptPayload,
 )
@@ -140,8 +143,23 @@ class MeetingQuestionRequest(BaseModel):
         return value if info.field_name == "question" else value.strip()
 
 
+class QuestionGenerationRequest(BaseModel):
+    generation_id: str
+    context_revision: int = Field(ge=0)
+
+    @field_validator("generation_id")
+    @classmethod
+    def reject_blank_generation(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("generation_id 不能为空")
+        return value
+
+
 meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
+question_generation_tasks: dict[str, asyncio.Task] = {}
+latest_question_generations: dict[str, tuple[str, int]] = {}
 
 
 def finish_question_task(task: asyncio.Task) -> None:
@@ -173,6 +191,7 @@ async def start_native_recording(session_id: str) -> None:
     if not DESKTOP_MODE:
         await process_manager.start_question_process(session_id)
     session.is_recording = True
+    session.is_paused = False
     session_manager.update_session(session)
     await websocket_manager.broadcast_to_session(
         session_id,
@@ -192,6 +211,7 @@ async def stop_native_recording(session_id: str) -> None:
     if not DESKTOP_MODE:
         await process_manager.stop_question_process(session_id)
     session.is_recording = False
+    session.is_paused = False
     session.end_time = datetime.now()
     session_manager.update_session(session)
     try:
@@ -204,6 +224,44 @@ async def stop_native_recording(session_id: str) -> None:
             "type": MessageType.AUDIO_STOP,
             "data": {"session_id": session_id, "capture": "native"},
             "timestamp": datetime.now(),
+            "session_id": session_id,
+        },
+    )
+
+
+async def pause_native_recording(session_id: str) -> None:
+    session = session_manager.get_session(session_id)
+    if not session or not session.is_recording or session.is_paused:
+        return
+    session.is_paused = True
+    session_manager.update_session(session)
+    event = meeting_ingestion.recording_activity(session_id, "录音已暂停")
+    await broadcast_meeting_event(session_id, event)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": "audio_pause",
+            "data": {"session_id": session_id, "capture": "native"},
+            "timestamp": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
+        },
+    )
+
+
+async def resume_native_recording(session_id: str) -> None:
+    session = session_manager.get_session(session_id)
+    if not session or not session.is_recording or not session.is_paused:
+        return
+    session.is_paused = False
+    session_manager.update_session(session)
+    event = meeting_ingestion.recording_activity(session_id, "录音已恢复")
+    await broadcast_meeting_event(session_id, event)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": "audio_resume",
+            "data": {"session_id": session_id, "capture": "native"},
+            "timestamp": datetime.now(UTC).isoformat(),
             "session_id": session_id,
         },
     )
@@ -346,6 +404,8 @@ app.include_router(
     build_native_recording_router(
         session_manager.get_session,
         start_native_recording,
+        pause_native_recording,
+        resume_native_recording,
         stop_native_recording,
     )
 )
@@ -607,23 +667,71 @@ async def generate_summary(session_id: str):
 
 
 @app.post("/api/sessions/{session_id}/generate-questions")
-async def generate_questions(session_id: str):
+async def generate_questions(
+    session_id: str,
+    request: QuestionGenerationRequest | None = None,
+):
     """生成会议问题"""
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    if not session.transcript_segments:
-        return {"success": False, "message": "没有转录内容可生成问题"}
-
     try:
         if DESKTOP_MODE and desktop_agent_service is not None:
-            questions = await desktop_agent_service.generate_questions(
-                session.transcript_segments
+            context = suggestion_context(session_id, session)
+            if not context:
+                return {"success": False, "message": "没有可生成问题的会议内容"}
+            generation_id = request.generation_id if request else str(uuid.uuid4())
+            context_revision = (
+                request.context_revision
+                if request
+                else len(session.transcript_segments)
             )
-            await on_questions_generated(session_id, {"questions": questions})
+            generation = (generation_id, context_revision)
+            latest_question_generations[session_id] = generation
+            previous = question_generation_tasks.get(session_id)
+            if previous is not None and not previous.done():
+                previous.cancel()
+            generation_task = asyncio.create_task(
+                desktop_agent_service.generate_questions(context),
+                name=f"suggestions-{session_id}-{generation_id}",
+            )
+            question_generation_tasks[session_id] = generation_task
+            try:
+                questions = await generation_task
+            except asyncio.CancelledError:
+                return {"success": True, "superseded": True}
+            finally:
+                if question_generation_tasks.get(session_id) is generation_task:
+                    question_generation_tasks.pop(session_id, None)
+            if latest_question_generations.get(session_id) != generation:
+                return {"success": True, "superseded": True}
+            payload = {"questions": questions}
+            if request is not None:
+                payload.update(
+                    {
+                        "generation_id": generation_id,
+                        "context_revision": context_revision,
+                    }
+                )
+            record = meeting_repository.get(session_id)
+            if record is not None:
+                event = meeting_ingestion.suggestions(
+                    session_id,
+                    generation_id,
+                    context_revision,
+                    [item["question"] for item in questions],
+                )
+                await broadcast_meeting_event(session_id, event)
+            await on_questions_generated(session_id, payload)
             logger.info(f"会话 {session_id} 已生成桌面追问")
-            return {"success": True, "message": "问题已生成"}
+            return {
+                "success": True,
+                "message": "问题已生成",
+                "superseded": False,
+            }
+        if not session.transcript_segments:
+            return {"success": False, "message": "没有转录内容可生成问题"}
         # 启动 Question 生成进程
         await process_manager.start_question_process(session_id)
 
@@ -633,6 +741,48 @@ async def generate_questions(session_id: str):
     except Exception as e:
         logger.error(f"生成问题失败: {e}")
         return {"success": False, "message": f"生成问题失败: {str(e)}"}
+
+
+def suggestion_context(session_id: str, session: SessionState) -> list:
+    record = meeting_repository.get(session_id)
+    if record is None:
+        return list(session.transcript_segments)
+    items = []
+    for event in record.events:
+        payload = event.payload
+        if isinstance(payload, TranscriptPayload):
+            items.append(
+                SimpleNamespace(
+                    speaker=payload.speaker,
+                    text=payload.text,
+                    timestamp=event.occurred_at,
+                )
+            )
+        elif isinstance(payload, ScreenshotAnalysisPayload):
+            items.append(
+                SimpleNamespace(
+                    speaker="截图分析",
+                    text=payload.text,
+                    timestamp=event.occurred_at,
+                )
+            )
+        elif isinstance(payload, QuestionPayload):
+            items.append(
+                SimpleNamespace(
+                    speaker="用户问题",
+                    text=payload.question,
+                    timestamp=event.occurred_at,
+                )
+            )
+        elif isinstance(payload, AnswerPayload) and payload.status == "completed":
+            items.append(
+                SimpleNamespace(
+                    speaker="AI回答",
+                    text=payload.answer,
+                    timestamp=event.occurred_at,
+                )
+            )
+    return items
 
 
 @app.post("/api/sessions/{session_id}/store-session")
@@ -1124,6 +1274,8 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             speaker=transcript_data.get("speaker"),
             start_time=transcript_data.get("start_time"),  # 或者合适的默认值
             end_time=transcript_data.get("end_time"),  # 或者合适的默认值
+            source=transcript_data.get("source"),
+            meeting_time_ms=transcript_data.get("meeting_time_ms"),
         )
         timeline_event = meeting_ingestion.transcript(session_id, transcript_data)
 
@@ -1268,6 +1420,11 @@ async def on_questions_generated(session_id: str, questions_data: dict):
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,
         }
+        if questions_data.get("generation_id") is not None:
+            batch_message["data"]["generation_id"] = questions_data["generation_id"]
+            batch_message["data"]["context_revision"] = questions_data[
+                "context_revision"
+            ]
         await websocket_manager.broadcast_to_session(session_id, batch_message)
 
         # 直接打印问题到终端
@@ -1290,8 +1447,11 @@ async def on_questions_generated(session_id: str, questions_data: dict):
                 "session_id": session_id,
             }
 
-            await websocket_manager.broadcast_to_session(session_id, question_message)
-            print(f"   📤 已发送问题{i}给前端")
+            if questions_data.get("generation_id") is None:
+                await websocket_manager.broadcast_to_session(
+                    session_id, question_message
+                )
+                print(f"   📤 已发送问题{i}给前端")
 
         print("\n" + "=" * 80)
 

@@ -20,6 +20,17 @@ struct WorkspaceView: View {
         store.state.selectedArchivedMeetingID != nil
     }
 
+    private var capturePresentation: CaptureStatusPresentation {
+        CaptureStatusPresentation(snapshot: store.state.audioCapture)
+    }
+
+    private var meetingControls: MeetingControlPresentation {
+        MeetingControlPresentation(
+            phase: store.state.phase,
+            recordingActivity: store.state.recordingActivity
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
@@ -57,65 +68,152 @@ struct WorkspaceView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            toolbarButton(
-                showsHistory ? "隐藏会议历史" : "显示会议历史",
-                icon: "sidebar.left",
-                action: { withAnimation(.easeOut(duration: 0.18)) { showsHistory.toggle() } }
-            )
-
-            Circle()
-                .fill(store.state.phase == .live ? VisualTokens.live : VisualTokens.tertiaryText)
-                .frame(width: 6, height: 6)
-                .shadow(
-                    color: store.state.phase == .live ? VisualTokens.live.opacity(0.55) : .clear,
-                    radius: 7
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                toolbarButton(
+                    showsHistory ? "隐藏会议历史" : "显示会议历史",
+                    icon: "sidebar.left",
+                    action: { withAnimation(.easeOut(duration: 0.18)) { showsHistory.toggle() } }
                 )
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(isViewingHistory ? "历史会议" : "当前会议")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                Text(workspaceStatus)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(store.state.phase == .live ? VisualTokens.live : VisualTokens.secondaryText)
+                Circle()
+                    .fill(workspaceStatusTint)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: workspaceStatusTint.opacity(0.55), radius: 7)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(isViewingHistory ? "历史会议" : "当前会议")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    Text(workspaceStatus)
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(workspaceStatusTint)
+                }
+
+                Spacer(minLength: 18)
+
+                toolbarButton(
+                    "选择窗口",
+                    icon: "rectangle.on.rectangle",
+                    disabled: isViewingHistory || store.state.screenshotOperation == .selecting,
+                    action: store.selectCaptureTarget
+                )
+                toolbarButton(
+                    "截图",
+                    icon: "viewfinder",
+                    disabled: !store.hasMeetingContext
+                        || isViewingHistory
+                        || store.state.screenshotOperation == .selecting
+                        || store.state.screenshotOperation == .capturing,
+                    action: store.requestScreenshot
+                )
+                toolbarButton(
+                    "生成摘要",
+                    icon: "text.alignleft",
+                    disabled: !store.hasMeetingContext || isViewingHistory,
+                    action: store.requestSummary
+                )
+
+                if store.state.phase == .live {
+                    toolbarButton(
+                        meetingControls.pauseResumeTitle,
+                        icon: meetingControls.pauseResumeIcon,
+                        disabled: !meetingControls.canPauseResume,
+                        action: store.togglePauseResume
+                    )
+                    toolbarButton("结束当前会议", icon: "stop.fill", action: store.endMeeting)
+                }
+
+                Button(action: beginNewMeeting) {
+                    Label("开始新会议", systemImage: "plus.circle.fill")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.black.opacity(0.86))
+                        .padding(.horizontal, 15)
+                        .frame(height: 34)
+                        .background(VisualTokens.live)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("创建新的隔离会议上下文")
+
+                toolbarButton("设置", icon: "gearshape", action: openSettings)
+                    .keyboardShortcut(",", modifiers: .command)
             }
+            .frame(height: 58)
 
-            Spacer(minLength: 18)
-
-            toolbarButton(
-                "截图",
-                icon: "viewfinder",
-                disabled: !store.hasMeetingContext || isViewingHistory,
-                action: store.requestScreenshot
-            )
-            toolbarButton(
-                "生成摘要",
-                icon: "text.alignleft",
-                disabled: !store.hasMeetingContext || isViewingHistory,
-                action: store.requestSummary
-            )
-
-            if store.state.phase == .live {
-                toolbarButton("结束当前会议", icon: "stop.fill", action: store.endMeeting)
+            if showsCaptureStrip {
+                captureStatusStrip
+                    .frame(height: 34)
             }
-
-            Button(action: beginNewMeeting) {
-                Label("开始新会议", systemImage: "plus.circle.fill")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.86))
-                .padding(.horizontal, 15)
-                .frame(height: 34)
-                .background(VisualTokens.live)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("创建新的隔离会议上下文")
-
-            toolbarButton("设置", icon: "gearshape", action: openSettings)
-                .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.horizontal, 18)
-        .frame(height: 62)
+        .frame(height: showsCaptureStrip ? 92 : 62)
+    }
+
+    private var showsCaptureStrip: Bool {
+        !isViewingHistory || store.state.phase == .live
+    }
+
+    private var captureStatusStrip: some View {
+        HStack(spacing: 7) {
+            if isViewingHistory {
+                Text("当前会议后台采集")
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VisualTokens.tertiaryText)
+            }
+            captureSourceBadge(capturePresentation.microphone)
+            captureSourceBadge(capturePresentation.system)
+
+            if capturePresentation.showsMicrophoneSettingsAction {
+                toolbarButton("打开麦克风隐私设置", icon: "gearshape", action: store.openMicrophoneSettings)
+                    .accessibilityLabel("打开麦克风隐私设置")
+            }
+            if capturePresentation.showsMicrophoneRetryAction {
+                toolbarButton("重试麦克风采集", icon: "arrow.clockwise", action: store.retryMicrophone)
+                    .accessibilityLabel("重试麦克风采集")
+            }
+
+            Rectangle()
+                .fill(VisualTokens.line)
+                .frame(width: 1, height: 18)
+                .padding(.horizontal, 3)
+
+            Label(screenshotTargetLabel, systemImage: screenshotTargetIcon)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(screenshotStatusTint)
+                .lineLimit(1)
+
+            if store.state.screenshotOperation == .selecting
+                || store.state.screenshotOperation == .capturing {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(VisualTokens.sky)
+            }
+
+            Text(screenshotOperationLabel)
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(screenshotStatusTint)
+                .lineLimit(1)
+
+            if screenshotNeedsSettings {
+                Button("打开屏幕录制设置", action: store.openScreenRecordingSettings)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VisualTokens.amber)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func captureSourceBadge(_ source: CaptureStatusPresentation.Source) -> some View {
+        Label(source.label, systemImage: source.icon)
+            .font(.system(size: 8, weight: .semibold, design: .rounded))
+            .foregroundStyle(source.isActive ? VisualTokens.live : VisualTokens.secondaryText)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(VisualTokens.raised.opacity(0.72))
+            .clipShape(Capsule())
+            .accessibilityLabel(source.label)
     }
 
     private func beginNewMeeting() {
@@ -144,6 +242,49 @@ struct WorkspaceView: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .help(title)
+    }
+
+    private var screenshotTargetLabel: String {
+        switch store.state.screenshotTarget {
+        case .none:
+            "未选择截图窗口"
+        case .selected(let label):
+            "截图窗口：\(label)"
+        case .invalid(let label, let reason):
+            "截图窗口已失效：\(label)（\(reason)）"
+        }
+    }
+
+    private var screenshotTargetIcon: String {
+        switch store.state.screenshotTarget {
+        case .none: "rectangle.dashed"
+        case .selected: "rectangle.on.rectangle"
+        case .invalid: "exclamationmark.rectangle"
+        }
+    }
+
+    private var screenshotOperationLabel: String {
+        switch store.state.screenshotOperation {
+        case .idle: ""
+        case .selecting: "正在选择窗口"
+        case .capturing: "正在截图并上传"
+        case .succeeded: "截图已保存，正在分析"
+        case .failed(let message): message
+        }
+    }
+
+    private var screenshotStatusTint: Color {
+        switch store.state.screenshotOperation {
+        case .succeeded: VisualTokens.live
+        case .failed: VisualTokens.amber
+        case .selecting, .capturing: VisualTokens.sky
+        case .idle: VisualTokens.secondaryText
+        }
+    }
+
+    private var screenshotNeedsSettings: Bool {
+        guard case .failed(let message) = store.state.screenshotOperation else { return false }
+        return message.contains("屏幕录制权限")
     }
 
     private var historyColumn: some View {
@@ -377,6 +518,7 @@ struct WorkspaceView: View {
         case .question: "person.crop.circle"
         case .answer: "sparkles"
         case .summary: "text.alignleft"
+        case .suggestions: "questionmark.bubble"
         }
     }
 
@@ -388,6 +530,7 @@ struct WorkspaceView: View {
         case .screenshotAnalysis, .answer: VisualTokens.sky
         case .question: VisualTokens.primaryText
         case .summary: VisualTokens.cobalt
+        case .suggestions: VisualTokens.sky
         }
     }
 
@@ -487,9 +630,9 @@ struct WorkspaceView: View {
             .frame(width: 46)
 
             VStack(alignment: .leading, spacing: 7) {
-                Text(line.speaker)
+                Text(transcriptSpeakerLabel(line))
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(VisualTokens.live)
+                    .foregroundStyle(transcriptTint(line))
 
                 Text(line.text)
                     .font(.system(size: 14, weight: .regular, design: .rounded))
@@ -508,6 +651,18 @@ struct WorkspaceView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 22)
         }
+    }
+
+    private func transcriptSpeakerLabel(_ line: TranscriptLine) -> String {
+        switch line.source {
+        case .microphone: "我"
+        case .system: "会议"
+        case .mixed, .none: line.speaker
+        }
+    }
+
+    private func transcriptTint(_ line: TranscriptLine) -> Color {
+        line.source == .microphone ? VisualTokens.sky : VisualTokens.live
     }
 
     private var activeTranscriptRow: some View {
@@ -592,8 +747,8 @@ struct WorkspaceView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if !isViewingHistory,
-                       let insight = store.state.latestInsight,
-                       !insight.isEmpty {
+                        let insight = store.state.latestInsight,
+                        !insight.isEmpty {
                         aiSection(icon: "sparkles", title: "当前洞察") {
                             Text(insight)
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -602,7 +757,7 @@ struct WorkspaceView: View {
                         }
                     }
 
-                    if !isViewingHistory {
+                    if !isViewingHistory || !store.state.displayedGeneratedQuestions.isEmpty {
                         suggestionsSection
                     }
 
@@ -727,26 +882,48 @@ struct WorkspaceView: View {
                 Image(systemName: "questionmark.bubble")
                 Text("猜你想问")
                 Spacer()
-                Button(action: store.requestQuestions) {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 24, height: 24)
+                if !isViewingHistory {
+                    Button(action: store.requestQuestions) {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.hasMeetingContext || store.state.suggestionRefresh.phase == .loading)
+                    .help("刷新问题")
                 }
-                .buttonStyle(.plain)
-                .disabled(!store.hasMeetingContext)
-                .help("刷新问题")
             }
             .font(.system(size: 10, weight: .semibold, design: .rounded))
             .foregroundStyle(VisualTokens.sky)
             .padding(.bottom, 8)
 
-            if store.state.generatedQuestions.isEmpty {
-                Text("转写积累后会自动出现值得追问的问题。")
+            if !isViewingHistory, store.state.suggestionRefresh.phase == .loading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini).tint(VisualTokens.sky)
+                    Text("正在根据最新会议内容更新")
+                }
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(VisualTokens.secondaryText)
+                .padding(.vertical, 9)
+            } else if !isViewingHistory,
+                case .failed(let message) = store.state.suggestionRefresh.phase {
+                Button(action: store.requestQuestions) {
+                    Label("更新失败，点此重试", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(VisualTokens.amber)
+                .help(message)
+                .padding(.vertical, 9)
+            } else if store.state.displayedGeneratedQuestions.isEmpty {
+                Text(isViewingHistory ? "这次会议没有保存建议问题。" : "转写积累后会自动出现值得追问的问题。")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(VisualTokens.secondaryText)
                     .padding(.vertical, 8)
             } else {
-                ForEach(store.state.generatedQuestions.prefix(3), id: \.self) { question in
-                    Button { store.setQuickPromptDraft(question) } label: {
+                ForEach(store.state.displayedGeneratedQuestions.prefix(3), id: \.self) { question in
+                    Button {
+                        store.setQuickPromptDraft(question)
+                    } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: "arrow.turn.down.right")
                                 .foregroundStyle(VisualTokens.sky)
@@ -915,10 +1092,37 @@ struct WorkspaceView: View {
         if isViewingHistory {
             return "可回顾并继续提问"
         }
-        if store.state.phase == .live {
-            return "实时转写中"
+        switch store.state.phase {
+        case .live:
+            switch store.state.recordingActivity {
+            case .paused: return "录音已暂停，会议上下文仍保留"
+            case .pausing: return "正在暂停录音"
+            case .resuming: return "正在继续录音"
+            default: return "实时转写中"
+            }
+        case .connecting:
+            return "正在准备音频来源"
+        case .stopping:
+            return "正在保存会议"
+        case .failed:
+            return "录音未启动，请检查音频来源"
+        case .idle:
+            return store.hasMeetingContext ? "可继续整理" : "尚未开始"
         }
-        return store.hasMeetingContext ? "可继续整理" : "尚未开始"
+    }
+
+    private var workspaceStatusTint: Color {
+        if isViewingHistory { return VisualTokens.secondaryText }
+        switch store.state.phase {
+        case .live:
+            return store.state.recordingActivity == .paused ? VisualTokens.amber : VisualTokens.live
+        case .connecting, .stopping:
+            return VisualTokens.amber
+        case .failed:
+            return VisualTokens.danger
+        case .idle:
+            return VisualTokens.tertiaryText
+        }
     }
 
     private func meetingStatus(_ status: StoredMeetingStatus) -> String {

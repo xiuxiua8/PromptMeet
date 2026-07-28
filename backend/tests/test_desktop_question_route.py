@@ -84,3 +84,87 @@ def test_generated_questions_broadcast_a_live_replacement_batch(monkeypatch) -> 
             "session_id": "question-session",
         },
     )
+
+
+def test_new_generation_cancels_stale_model_work_and_broadcasts_only_latest(
+    monkeypatch,
+) -> None:
+    main_service = importlib.import_module("main_service")
+    session = SessionState(
+        session_id="fresh-session",
+        start_time=main_service.datetime.now(),
+        transcript_segments=[
+            TranscriptSegment(
+                id="line-1",
+                text="确认新的发布风险",
+                speaker="会议",
+                timestamp=main_service.datetime.now(),
+            )
+        ],
+    )
+    main_service.session_manager.add_session(session)
+    main_service.question_generation_tasks.clear()
+    main_service.latest_question_generations.clear()
+    broadcasts = []
+
+    class SlowThenFreshAgent:
+        def __init__(self):
+            self.calls = 0
+            self.first_started = asyncio.Event()
+            self.first_cancelled = False
+
+        async def generate_questions(self, transcript):
+            self.calls += 1
+            if self.calls == 1:
+                self.first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.first_cancelled = True
+                    raise
+            return [{"question": "最新问题"}]
+
+    agent = SlowThenFreshAgent()
+
+    async def collect(session_id, payload):
+        broadcasts.append((session_id, payload))
+
+    monkeypatch.setattr(main_service, "desktop_agent_service", agent)
+    monkeypatch.setattr(main_service, "on_questions_generated", collect)
+
+    async def run():
+        first = asyncio.create_task(
+            main_service.generate_questions(
+                "fresh-session",
+                main_service.QuestionGenerationRequest(
+                    generation_id="11111111-1111-1111-1111-111111111111",
+                    context_revision=1,
+                ),
+            )
+        )
+        await agent.first_started.wait()
+        second = await main_service.generate_questions(
+            "fresh-session",
+            main_service.QuestionGenerationRequest(
+                generation_id="22222222-2222-2222-2222-222222222222",
+                context_revision=2,
+            ),
+        )
+        first_result = await first
+        return first_result, second
+
+    first_result, second_result = asyncio.run(run())
+
+    assert first_result["superseded"] is True
+    assert second_result["success"] is True
+    assert agent.first_cancelled is True
+    assert broadcasts == [
+        (
+            "fresh-session",
+            {
+                "questions": [{"question": "最新问题"}],
+                "generation_id": "22222222-2222-2222-2222-222222222222",
+                "context_revision": 2,
+            },
+        )
+    ]

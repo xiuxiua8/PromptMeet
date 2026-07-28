@@ -1,6 +1,6 @@
 import Foundation
 
-enum NativeAudioSource: String, Sendable {
+enum NativeAudioSource: String, Codable, Sendable {
     case system
     case microphone
     case mixed
@@ -11,7 +11,27 @@ struct NativeAudioPacket: Equatable, Sendable {
     let source: NativeAudioSource
     let sampleRate: Int
     let channels: Int
+    let capturedAt: Date
+    let meetingTime: Duration
     let payload: Data
+
+    init(
+        sequence: Int,
+        source: NativeAudioSource,
+        sampleRate: Int,
+        channels: Int,
+        capturedAt: Date = Date(),
+        meetingTime: Duration = .zero,
+        payload: Data
+    ) {
+        self.sequence = sequence
+        self.source = source
+        self.sampleRate = sampleRate
+        self.channels = channels
+        self.capturedAt = capturedAt
+        self.meetingTime = meetingTime
+        self.payload = payload
+    }
 }
 
 struct NativeAudioSequencer {
@@ -21,6 +41,8 @@ struct NativeAudioSequencer {
         source: NativeAudioSource,
         sampleRate: Int,
         channels: Int,
+        capturedAt: Date = Date(),
+        meetingTime: Duration = .zero,
         payload: Data
     ) -> NativeAudioPacket {
         defer { nextSequence += 1 }
@@ -29,6 +51,8 @@ struct NativeAudioSequencer {
             source: source,
             sampleRate: sampleRate,
             channels: channels,
+            capturedAt: capturedAt,
+            meetingTime: meetingTime,
             payload: payload
         )
     }
@@ -76,6 +100,14 @@ struct NativeAudioUploader: Sendable {
         request.setValue(String(packet.sampleRate), forHTTPHeaderField: "X-PromptMeet-Sample-Rate")
         request.setValue(String(packet.channels), forHTTPHeaderField: "X-PromptMeet-Channels")
         request.setValue(packet.source.rawValue, forHTTPHeaderField: "X-PromptMeet-Source")
+        request.setValue(
+            ISO8601DateFormatter().string(from: packet.capturedAt),
+            forHTTPHeaderField: "X-PromptMeet-Captured-At"
+        )
+        request.setValue(
+            String(packet.meetingTime.millisecondsValue),
+            forHTTPHeaderField: "X-PromptMeet-Meeting-Time-Ms"
+        )
         request.httpBody = packet.payload
         return request
     }
@@ -91,13 +123,69 @@ struct CapturedPCM: Sendable {
     let source: NativeAudioSource
     let sampleRate: Int
     let channels: Int
+    let capturedAt: Date
+    let meetingTime: Duration
     let payload: Data
+
+    init(
+        source: NativeAudioSource,
+        sampleRate: Int,
+        channels: Int,
+        capturedAt: Date = Date(),
+        meetingTime: Duration = .zero,
+        payload: Data
+    ) {
+        self.source = source
+        self.sampleRate = sampleRate
+        self.channels = channels
+        self.capturedAt = capturedAt
+        self.meetingTime = meetingTime
+        self.payload = payload
+    }
+
+    func timed(capturedAt: Date, meetingTime: Duration) -> CapturedPCM {
+        CapturedPCM(
+            source: source,
+            sampleRate: sampleRate,
+            channels: channels,
+            capturedAt: capturedAt,
+            meetingTime: meetingTime,
+            payload: payload
+        )
+    }
+}
+
+struct NativeAudioMeetingClock: Sendable {
+    let originNanoseconds: UInt64
+
+    init(originNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        self.originNanoseconds = originNanoseconds
+    }
+
+    func offset(atNanoseconds value: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Duration {
+        guard value >= originNanoseconds else { return .zero }
+        let delta = min(value - originNanoseconds, UInt64(Int64.max))
+        return .nanoseconds(Int64(delta))
+    }
 }
 
 protocol NativeAudioSourceCapture: AnyObject, Sendable {
     var source: NativeAudioSource { get }
     func start(handler: @escaping @Sendable (CapturedPCM) -> Void) async throws
+    func start(
+        handler: @escaping @Sendable (CapturedPCM) -> Void,
+        onFailure: @escaping @Sendable (any Error) -> Void
+    ) async throws
     func stop() async
+}
+
+extension NativeAudioSourceCapture {
+    func start(
+        handler: @escaping @Sendable (CapturedPCM) -> Void,
+        onFailure: @escaping @Sendable (any Error) -> Void
+    ) async throws {
+        try await start(handler: handler)
+    }
 }
 
 actor NativeAudioPacketPump {
@@ -105,6 +193,7 @@ actor NativeAudioPacketPump {
     private let uploader: NativeAudioUploading
     private var sessionID: String?
     private var pendingUpload: Task<Void, any Error>?
+    private var isSuspended = false
 
     init(uploader: NativeAudioUploading, sessionID: String? = nil) {
         self.uploader = uploader
@@ -115,12 +204,23 @@ actor NativeAudioPacketPump {
         self.sessionID = sessionID
     }
 
+    func suspend() async {
+        isSuspended = true
+        _ = try? await pendingUpload?.value
+    }
+
+    func resume() {
+        isSuspended = false
+    }
+
     func consume(_ pcm: CapturedPCM) async throws {
-        guard let sessionID else { return }
+        guard !isSuspended, let sessionID else { return }
         let packet = sequencer.packet(
             source: pcm.source,
             sampleRate: pcm.sampleRate,
             channels: pcm.channels,
+            capturedAt: pcm.capturedAt,
+            meetingTime: pcm.meetingTime,
             payload: pcm.payload
         )
         let previousUpload = pendingUpload

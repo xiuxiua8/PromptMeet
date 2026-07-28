@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import PromptMeet
 
 final class PCMTranscriptionSegmenterTests: XCTestCase {
@@ -65,16 +66,52 @@ final class PCMTranscriptionSegmenterTests: XCTestCase {
         XCTAssertEqual(output[0].sampleRate, 16_000)
     }
 
+    func testSegmentKeepsFirstCaptureTimeAndMeetingOffset() {
+        var segmenter = PCMTranscriptionSegmenter(segmentDuration: 1)
+        let capturedAt = Date(timeIntervalSince1970: 100)
+        let samples = [Int16](repeating: 1_000, count: 16_000)
+
+        let output = segmenter.consume(
+            CapturedPCM(
+                source: .microphone,
+                sampleRate: 16_000,
+                channels: 1,
+                capturedAt: capturedAt,
+                meetingTime: .milliseconds(1_250),
+                payload: samples.data
+            )
+        )
+
+        XCTAssertEqual(output.first?.capturedAt, capturedAt)
+        XCTAssertEqual(output.first?.meetingTime, .milliseconds(1_250))
+    }
+
     func testSegmenterKeepsSourcesSeparateAndFlushesRemainder() {
         var segmenter = PCMTranscriptionSegmenter(segmentDuration: 3, minimumFlushDuration: 0.5)
         let oneSecond = [Int16](repeating: 500, count: 16_000).data
 
-        XCTAssertTrue(segmenter.consume(CapturedPCM(source: .system, sampleRate: 16_000, channels: 1, payload: oneSecond)).isEmpty)
-        XCTAssertTrue(segmenter.consume(CapturedPCM(source: .microphone, sampleRate: 16_000, channels: 1, payload: oneSecond)).isEmpty)
+        XCTAssertTrue(
+            segmenter.consume(CapturedPCM(source: .system, sampleRate: 16_000, channels: 1, payload: oneSecond)).isEmpty
+        )
+        XCTAssertTrue(
+            segmenter.consume(CapturedPCM(source: .microphone, sampleRate: 16_000, channels: 1, payload: oneSecond))
+                .isEmpty)
 
         let flushed = segmenter.flush()
         XCTAssertEqual(Set(flushed.map(\.source)), Set([.system, .microphone]))
         XCTAssertEqual(flushed.map(\.samples.count).sorted(), [16_000, 16_000])
+    }
+
+    func testPauseBoundaryDiscardsBufferedAudioInsteadOfReplayingIt() {
+        var segmenter = PCMTranscriptionSegmenter(segmentDuration: 3, minimumFlushDuration: 0.5)
+        let oneSecond = [Int16](repeating: 500, count: 16_000).data
+        _ = segmenter.consume(
+            CapturedPCM(source: .system, sampleRate: 16_000, channels: 1, payload: oneSecond)
+        )
+
+        segmenter.discardBufferedAudio()
+
+        XCTAssertTrue(segmenter.flush().isEmpty)
     }
 
     func testSegmenterResamples48kHzInput() {
@@ -120,6 +157,6 @@ final class PCMTranscriptionSegmenterTests: XCTestCase {
     }
 }
 
-private extension Array where Element == Int16 {
-    var data: Data { withUnsafeBytes { Data($0) } }
+extension Array where Element == Int16 {
+    fileprivate var data: Data { withUnsafeBytes { Data($0) } }
 }

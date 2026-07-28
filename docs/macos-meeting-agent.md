@@ -8,10 +8,12 @@ The expected journey is:
 
 1. Launch the native app and its local companion.
 2. Start a meeting and receive transcript content.
-3. Capture a window or display screenshot.
-4. Ask a meeting-scoped question and receive a streamed answer with evidence sources.
-5. End the meeting and quit the app.
-6. Relaunch, open the retained meeting, and ask a follow-up whose answer is appended to that meeting.
+3. Confirm the independent “我” microphone and “会议” system-audio source states.
+4. Select a screenshot window once, then capture it without reopening the picker.
+5. Pause and resume recording without ending the meeting.
+6. Ask a meeting-scoped question and receive a streamed answer with evidence sources.
+7. End the meeting and quit the app.
+8. Relaunch, open the retained meeting, and ask a follow-up whose answer is appended to that meeting.
 
 The pre-change native path showed a live capture state before it had created a backend meeting. The observed evidence was:
 
@@ -46,6 +48,7 @@ Each record has `schema_version: 2`, a meeting ID, lifecycle status, start and e
 - `user_question`
 - `assistant_answer`
 - `summary`
+- `suggestions`
 
 Every event includes provenance. Provider-backed events may also include provider, model, and request ID metadata. Answer events contain stable evidence references such as `M12`, vision-degradation state, and an inline failure state when generation fails.
 
@@ -67,15 +70,35 @@ OpenAI models listed in the native provider catalog accept selected screenshot p
 
 Each question has its own request ID, immutable meeting snapshot, streaming state, and durable answer event. Rapid questions can finish in any order without overwriting one another. Selecting another meeting changes which durable record is assembled, preventing cross-meeting evidence leakage.
 
+## Native audio capture and recording activity
+
+`CaptureState.swift` keeps meeting phase separate from recording activity and exposes the microphone and system-audio lifecycle independently. Microphone authorization distinguishes not determined, authorized, denied, restricted, unavailable hardware, and runtime failure. Permission is requested only when the user starts or explicitly retries capture. Denied and restricted states provide a route to the matching System Settings privacy pane.
+
+The app bundle supplies both `NSMicrophoneUsageDescription` and the hardened-runtime `com.apple.security.device.audio-input` entitlement. `scripts/check-macos-package-inputs.sh` treats the entitlement file as a required package input, and `scripts/build-macos-app.sh` applies it during signing.
+
+Microphone PCM is always semantic source `microphone` and renders as `我`. System audio is source `system` and renders as `会议`. The coordinator never mixes the streams. Every source-tagged chunk carries capture time and a monotonic meeting-relative millisecond offset through HTTP headers. The companion writes a separate `.pcm` file and JSON metadata sidecar per chunk. Transcripts retain the same source and meeting offset through live WebSocket events, version 2 persistence, history replay, evidence labels, and question context.
+
+After the backend meeting is created and connected, the app marks native recording active and prebinds the transport before starting protected native sources. This prevents an active system source from producing unbound chunks while microphone permission is pending. If every native source fails, recording is stopped again and the durable attempt is marked incomplete.
+
+One source may remain active when the other is denied, unavailable, or fails at runtime. Pausing stops every currently active native source, suspends transport, discards unfinished preview audio, and appends a durable lifecycle event while the meeting stays active. Resume first restores the companion state, then restarts previously active sources. If native restart fails, the companion is rolled back to paused. Stop is valid while paused. After app relaunch, prior meeting data remains durable, but protected audio capture is inactive until a new explicit user action.
+
 ## Native screenshot flow
 
-1. The workspace requests the macOS 14 ScreenCaptureKit content-sharing picker.
-2. The user selects one window or display. Cancellation and picker failure remain inline UI states.
-3. The app captures a PNG without the cursor and uploads it to the active meeting.
-4. The backend validates the media signature and size, saves the asset locally, and immediately appends and broadcasts a screenshot event.
-5. A retained background task performs multimodal analysis. It appends either `completed`, `unsupported`, or `failed` analysis as a separate event.
-6. The workspace shows a thumbnail or a missing-file placeholder, analysis state, and the screenshot at its chronological position.
-7. Later live or historical questions may select both the raw asset and its analysis as meeting evidence.
+1. `选择窗口` requests the macOS 14 ScreenCaptureKit content-sharing picker and permits a single window target.
+2. The selected filter is retained with a visible selected or invalid state. Selection does not capture or upload pixels.
+3. `截图` never presents the picker. It immediately captures the retained target as a cursor-free PNG and uploads it to the active meeting.
+4. Repeated screenshot actions reuse the target. No selection produces `请先选择窗口`; a disappeared target remains visibly invalid until reselection.
+5. Screen Recording authorization is requested only from the explicit selection or capture action. Denial provides a System Settings recovery action.
+6. The backend validates the media signature and size, saves the asset locally, and immediately appends and broadcasts a screenshot event.
+7. A retained background task performs multimodal analysis. It appends either `completed`, `unsupported`, or `failed` analysis as a separate event.
+8. The workspace shows capture progress, a thumbnail or missing-file placeholder, analysis state, and the screenshot at its chronological position.
+9. Later live or historical questions may select both the raw asset and its analysis as meeting evidence.
+
+## Suggested-question freshness
+
+`猜你想问` refresh is event-driven after final transcript, screenshot analysis, and completed answer context. Swift applies a 350 millisecond debounce, increments a meeting-scoped context revision, and cancels any pending debounce before requesting the next generation. Each request includes a generation UUID and revision.
+
+The companion cancels the prior in-flight model task for that meeting and checks the latest generation before broadcasting or persisting a result. Swift performs the same generation and revision check before reducing an event, so an older response cannot replace newer suggestions. Accepted suggestions are version 2 timeline events and restore with their historical meeting. Loading, failure, and explicit retry states remain scoped to the active meeting.
 
 ## Provider settings and secrets
 
@@ -108,8 +131,9 @@ swift test
 swift build -c release
 
 cd ..
-./build-app.sh
+./scripts/build-macos-app.sh
 codesign --verify --deep --strict dist/PromptMeet.app
+codesign -d --entitlements :- dist/PromptMeet.app
 ```
 
 For deterministic UI inspection without capture permissions or model credentials, launch a workspace projection:
@@ -122,6 +146,10 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 The release package check in `scripts/check-macos-package-inputs.sh` fails early when the desktop requirements, Info.plist, or third-party notices are absent.
 
 ### Native walkthrough evidence and limits
+
+The capture-controls build was packaged and ad-hoc signed from the isolated worktree, then launched by its full bundle path in the real macOS session at 1100 by 750 points. The final workspace visibly separated `选择窗口` and `截图`, showed `我 · 正在准备` and `会议 · 采集中`, rendered the live system transcript as `会议`, and moved `猜你想问` into loading immediately after that transcript. The companion reported `is_recording=true` while microphone authorization was pending. The resulting version 2 record contained a `system` transcript at meeting offset 72,405 ms and a durable suggestions event with generation ID and context revision 1. The record was stopped and completed without retaining any test asset in the repository.
+
+Computer Use could initiate the real microphone authorization request and ScreenCaptureKit window picker, but macOS omitted both protected overlays from the accessibility tree and captured pixels. Keyboard and coordinate attempts could not resolve the microphone dialog, so actual microphone authorization, picker choice, repeated real screenshots, and UI-driven pause/resume were not claimed. The workspace did expose `正在选择窗口` while the protected picker was active. Focused Swift tests cover every permission result, independent-source continuation, prebound first chunk, repeated screenshot reuse, pause/resume rollback, rapid toggles, and stop while paused. Backend tests cover truthful invalid transition responses, lifecycle persistence, paused chunk rejection, source attribution, and generation supersession.
 
 The packaged app was exercised with a lane-local home directory and fake OpenAI-compatible provider through the real 1100 by 720 workspace. The walkthrough verified meeting creation before capture, transcript event display, screenshot thumbnail and text-only capability warning, live streaming answer, durable stop, app relaunch, history selection, chronological replay, and a durable historical follow-up. Provider settings were inspected in the real native window and showed masked Keychain state plus truthful model capabilities.
 

@@ -12,8 +12,10 @@ class NativeAudioChunk(BaseModel):
     source: Literal["system", "microphone", "mixed"] = "mixed"
     sample_format: Literal["pcm_s16le"] = "pcm_s16le"
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    meeting_time_ms: int = Field(default=0, ge=0)
 
 
 class NativeAudioReceipt(BaseModel):
     sequence: int
     path: Path
+    metadata_path: Path

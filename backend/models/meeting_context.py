@@ -23,6 +23,7 @@ class EventKind(StrEnum):
     USER_QUESTION = "user_question"
     ASSISTANT_ANSWER = "assistant_answer"
     SUMMARY = "summary"
+    SUGGESTIONS = "suggestions"
 
 
 class EventProvenance(BaseModel):
@@ -59,6 +60,7 @@ class TranscriptPayload(BaseModel):
     speaker: str = "发言人"
     source: str | None = None
     translated_text: str | None = None
+    meeting_time_ms: int | None = Field(default=None, ge=0)
 
 
 class ScreenshotPayload(BaseModel):
@@ -117,6 +119,15 @@ class SummaryPayload(BaseModel):
     derived: bool = False
 
 
+class SuggestionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["suggestions"] = "suggestions"
+    generation_id: str
+    context_revision: int = Field(ge=0)
+    questions: list[str] = Field(default_factory=list)
+
+
 EventPayload = Annotated[
     LifecyclePayload
     | TranscriptPayload
@@ -124,7 +135,8 @@ EventPayload = Annotated[
     | ScreenshotAnalysisPayload
     | QuestionPayload
     | AnswerPayload
-    | SummaryPayload,
+    | SummaryPayload
+    | SuggestionPayload,
     Field(discriminator="type"),
 ]
 

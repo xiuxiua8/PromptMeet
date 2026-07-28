@@ -16,6 +16,7 @@ from models.meeting_context import (
     ScreenshotAnalysisPayload,
     ScreenshotPayload,
     SummaryPayload,
+    SuggestionPayload,
     TranscriptPayload,
 )
 
@@ -61,6 +62,7 @@ class MeetingContextBuilder:
             for event in record.events
             if event.event_id not in excluded
             and self._belongs_to_thread(event, thread_id)
+            and event.kind != EventKind.SUGGESTIONS
             and (event.kind != EventKind.LIFECYCLE or include_lifecycle)
         ]
         available = budget.evidence_tokens
@@ -131,7 +133,8 @@ class MeetingContextBuilder:
     def render_event(event: MeetingEvent) -> str:
         payload = event.payload
         if isinstance(payload, TranscriptPayload):
-            return f"{payload.speaker}：{payload.text}"
+            speaker = MeetingContextBuilder._transcript_speaker(payload)
+            return f"{speaker}：{payload.text}"
         if isinstance(payload, ScreenshotPayload):
             return f"截图资产 {payload.asset_id} ({payload.mime_type})"
         if isinstance(payload, ScreenshotAnalysisPayload):
@@ -142,6 +145,8 @@ class MeetingContextBuilder:
             return f"AI 回答：{payload.answer}"
         if isinstance(payload, SummaryPayload):
             return f"会议摘要：{payload.summary_text}"
+        if isinstance(payload, SuggestionPayload):
+            return "建议问题：" + "；".join(payload.questions)
         detail = getattr(payload, "detail", None)
         return f"会议状态：{getattr(payload, 'status', '')} {detail or ''}".strip()
 
@@ -162,6 +167,7 @@ class MeetingContextBuilder:
         recency = event.sequence / max(1, event_count)
         kind_weight = {
             EventKind.SUMMARY: 28,
+            EventKind.SUGGESTIONS: 0,
             EventKind.SCREENSHOT_ANALYSIS: 24,
             EventKind.SCREENSHOT: 20,
             EventKind.ASSISTANT_ANSWER: 14,
@@ -202,17 +208,33 @@ class MeetingContextBuilder:
 
     @staticmethod
     def _source_label(event: MeetingEvent) -> str:
-        label = {
-            EventKind.LIFECYCLE: "会议状态",
-            EventKind.TRANSCRIPT: "会议转写",
-            EventKind.SCREENSHOT: "会议截图",
-            EventKind.SCREENSHOT_ANALYSIS: "截图分析",
-            EventKind.USER_QUESTION: "历史问题",
-            EventKind.ASSISTANT_ANSWER: "历史回答",
-            EventKind.SUMMARY: "会议摘要",
-        }[event.kind]
+        if isinstance(event.payload, TranscriptPayload):
+            if event.payload.source in {"microphone", "system"}:
+                label = (
+                    f"{MeetingContextBuilder._transcript_speaker(event.payload)}转写"
+                )
+            else:
+                label = "会议转写"
+        else:
+            label = {
+                EventKind.LIFECYCLE: "会议状态",
+                EventKind.SCREENSHOT: "会议截图",
+                EventKind.SCREENSHOT_ANALYSIS: "截图分析",
+                EventKind.USER_QUESTION: "历史问题",
+                EventKind.ASSISTANT_ANSWER: "历史回答",
+                EventKind.SUMMARY: "会议摘要",
+                EventKind.SUGGESTIONS: "建议问题",
+            }[event.kind]
         timestamp = event.occurred_at.astimezone(UTC).strftime("%m-%d %H:%M UTC")
         return f"{label} · {timestamp}"
+
+    @staticmethod
+    def _transcript_speaker(payload: TranscriptPayload) -> str:
+        if payload.source == "microphone":
+            return "我（麦克风）"
+        if payload.source == "system":
+            return "会议（系统音频）"
+        return payload.speaker
 
     @classmethod
     def _lifecycle_query(cls, question: str) -> bool:

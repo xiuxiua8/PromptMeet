@@ -4,7 +4,7 @@
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -55,6 +55,10 @@ class TranscriptSegment(BaseModel):
     speaker: Optional[str] = Field(None, description="说话人标识")
     start_time: Optional[float] = Field(None, description="音频开始时间(秒)")
     end_time: Optional[float] = Field(None, description="音频结束时间(秒)")
+    source: Optional[Literal["system", "microphone", "mixed"]] = Field(
+        None, description="语义音频来源"
+    )
+    meeting_time_ms: Optional[int] = Field(None, ge=0, description="会议相对时间")
 
 
 class TaskItem(BaseModel):
@@ -84,6 +88,7 @@ class SessionState(BaseModel):
 
     session_id: str = Field(..., description="会话唯一标识")
     is_recording: bool = Field(False, description="是否正在录音")
+    is_paused: bool = Field(False, description="原生会议录音是否已暂停")
     start_time: datetime = Field(..., description="会话开始时间")
     end_time: Optional[datetime] = Field(None, description="会话结束时间")
     transcript_segments: List[TranscriptSegment] = Field(

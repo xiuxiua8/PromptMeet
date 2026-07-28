@@ -6,6 +6,7 @@ ROOT="${PROMPTMEET_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 REQUIRED=(
   "backend/requirements-desktop.txt"
   "desktop-macos/Resources/Info.plist"
+  "desktop-macos/Resources/PromptMeet.entitlements"
   "desktop-macos/THIRD_PARTY_NOTICES.md"
 )
 missing=0
