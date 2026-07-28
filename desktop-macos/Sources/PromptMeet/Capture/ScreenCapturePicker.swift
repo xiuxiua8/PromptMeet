@@ -108,8 +108,6 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
                 )
             }
             throw error
-        } catch {
-            throw error
         }
         do {
             try await uploader.upload(data, sessionID: sessionID)
@@ -253,10 +251,8 @@ final class SystemScreenshotTargetCapturer: ScreenshotTargetCapturing {
                 throw ScreenshotPickerError.encodingFailed
             }
             return data
-        } catch let error as ScreenshotPickerError {
-            throw error
         } catch {
-            throw ScreenshotPickerError.selectedTargetUnavailable(target.label)
+            throw error
         }
     }
 }
