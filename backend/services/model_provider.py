@@ -1,6 +1,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import SplitResult, urlsplit, urlunsplit
+
+
+def normalize_openai_base_url(value: str) -> str:
+    raw_value = value.strip()
+    try:
+        parsed = urlsplit(raw_value)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("请输入有效的 OpenAI 兼容 Base URL") from error
+    scheme = parsed.scheme.casefold()
+    hostname = (parsed.hostname or "").casefold()
+    if (
+        scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("请输入有效的 OpenAI 兼容 Base URL")
+    if scheme == "http" and hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("非本机 OpenAI 兼容服务必须使用 HTTPS")
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = f"{host}:{port}" if port is not None else host
+    path = parsed.path.rstrip("/")
+    normalized = SplitResult(scheme, netloc, path, "", "")
+    return urlunsplit(normalized)
 
 
 @dataclass(frozen=True)
@@ -42,9 +70,12 @@ class ProviderConfiguration:
                     if purpose == "questions"
                     else environment.get("OPENAI_CHAT_MODEL", "gpt-4o")
                 ),
+            ).strip()
+            if not model:
+                raise ValueError("请输入 OpenAI 兼容模型标识")
+            base = normalize_openai_base_url(
+                environment.get("OPENAI_API_BASE", "https://api.openai.com/v1")
             )
-            if not cls._openai_model(model):
-                raise ValueError(f"OpenAI 不支持所选模型：{model}")
             capabilities = ProviderCapabilities(
                 provider="openai",
                 model=model,
@@ -54,7 +85,7 @@ class ProviderConfiguration:
             return cls(
                 provider="openai",
                 model=model,
-                endpoint="https://api.openai.com/v1/chat/completions",
+                endpoint=f"{base}/chat/completions",
                 capabilities=capabilities,
                 api_key=key,
             )
@@ -98,9 +129,5 @@ class ProviderConfiguration:
         }
 
     @staticmethod
-    def _openai_model(model: str) -> bool:
-        return model.startswith(("gpt-4o", "gpt-4.1", "gpt-5"))
-
-    @staticmethod
     def _openai_vision_model(model: str) -> bool:
-        return model.startswith(("gpt-4o", "gpt-4.1", "gpt-5"))
+        return True

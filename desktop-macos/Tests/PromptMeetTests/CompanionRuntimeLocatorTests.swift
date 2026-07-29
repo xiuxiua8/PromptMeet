@@ -3,6 +3,23 @@ import XCTest
 @testable import PromptMeet
 
 final class CompanionRuntimeLocatorTests: XCTestCase {
+    func testOpenAICompatibleRuntimeEnvironmentUsesPersistedEndpointAndModelEverywhere() throws {
+        let suiteName = "CompanionRuntimePreferencesTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("http://localhost:52251/v1/", forKey: AIProviderPreferenceKey.openAIBaseURL)
+        defaults.set("captain-proxy-model", forKey: AIProviderPreferenceKey.openAIModel)
+        let preferences = AIProviderPreferences(defaults: defaults)
+
+        let environment = try preferences.runtimeEnvironment(providerID: "openai")
+
+        XCTAssertEqual(environment["PROMPTMEET_AI_PROVIDER"], "openai")
+        XCTAssertEqual(environment["OPENAI_API_BASE"], "http://localhost:52251/v1")
+        XCTAssertEqual(environment["OPENAI_ANSWER_MODEL"], "captain-proxy-model")
+        XCTAssertEqual(environment["OPENAI_QUESTION_MODEL"], "captain-proxy-model")
+        XCTAssertFalse(environment.keys.contains("OPENAI_API_KEY"))
+    }
+
     func testLocatorPrefersBundledDesktopCompanionAndPython() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let resources = root.appendingPathComponent("Resources")

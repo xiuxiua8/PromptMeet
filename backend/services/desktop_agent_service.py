@@ -2,7 +2,7 @@ import json
 import os
 import base64
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -127,14 +127,57 @@ class DesktopAgentService:
             question,
             configuration.capabilities,
         )
-        messages = [
-            {"role": message.role, "content": self._provider_content(message.content)}
-            for message in prompt_request.messages
-        ]
         search_enabled = (
             search_web
             and self.environment.get("PROMPTMEET_WEB_SEARCH_ENABLED", "1") != "0"
         )
+        try:
+            answer, web_sources = await self._run_meeting_prompt(
+                configuration,
+                prompt_request,
+                emit,
+                search_enabled=search_enabled,
+            )
+        except httpx.HTTPStatusError as error:
+            if not self._is_image_rejection(error, prompt_request):
+                raise
+            prompt_request = MeetingPromptBuilder().build(
+                selection,
+                question,
+                replace(configuration.capabilities, supports_vision=False),
+            )
+            answer, web_sources = await self._run_meeting_prompt(
+                configuration,
+                prompt_request,
+                emit,
+                search_enabled=search_enabled,
+            )
+
+        source_block = self._source_block(web_sources)
+        answer += source_block
+        if source_block:
+            await emit({"data": {"delta": source_block}})
+        await emit({"data": {"content": answer}})
+        return MeetingAnswerResult(
+            answer=answer,
+            sources=selection.sources,
+            degraded_vision=prompt_request.degraded_vision,
+            provider=configuration.provider,
+            model=configuration.model,
+        )
+
+    async def _run_meeting_prompt(
+        self,
+        configuration: ProviderConfiguration,
+        prompt_request,
+        emit: Callable[[dict], Awaitable[None]],
+        *,
+        search_enabled: bool,
+    ) -> tuple[str, list[dict[str, str]]]:
+        messages = [
+            {"role": message.role, "content": self._provider_content(message.content)}
+            for message in prompt_request.messages
+        ]
         web_sources: list[dict[str, str]] = []
         headers = {"Authorization": f"Bearer {configuration.api_key}"}
         async with httpx.AsyncClient(timeout=90) as client:
@@ -188,18 +231,21 @@ class DesktopAgentService:
                 if not message.get("content"):
                     await emit({"data": {"delta": answer}})
                 break
+        return answer, web_sources
 
-        source_block = self._source_block(web_sources)
-        answer += source_block
-        if source_block:
-            await emit({"data": {"delta": source_block}})
-        await emit({"data": {"content": answer}})
-        return MeetingAnswerResult(
-            answer=answer,
-            sources=selection.sources,
-            degraded_vision=prompt_request.degraded_vision,
-            provider=configuration.provider,
-            model=configuration.model,
+    @staticmethod
+    def _is_image_rejection(error, prompt_request) -> bool:
+        has_image = any(
+            isinstance(message.content, list)
+            and any(part.type == "image_asset" for part in message.content)
+            for message in prompt_request.messages
+        )
+        if not has_image or error.response.status_code not in {400, 415, 422}:
+            return False
+        response_text = error.response.text.casefold()
+        return any(
+            marker in response_text
+            for marker in ("image", "vision", "multimodal", "image_url")
         )
 
     async def analyze_screenshot(
@@ -229,6 +275,17 @@ class DesktopAgentService:
             ignore,
             search_web=False,
         )
+        if result.degraded_vision:
+            return ScreenshotAnalysisResult(
+                status="unsupported",
+                text=(
+                    f"{result.provider} 的当前端点或模型 {result.model} 拒绝了图像输入。"
+                    "截图已保留，但模型没有看到截图像素。"
+                ),
+                vision_used=False,
+                provider=result.provider,
+                model=result.model,
+            )
         return ScreenshotAnalysisResult(
             status="completed",
             text=result.answer,
@@ -742,63 +799,26 @@ class DesktopAgentService:
         return payload["choices"][0]["message"]["content"].strip()
 
     def _provider(self, purpose: str = "answer") -> tuple[str, str, str]:
-        preferred_provider = self.environment.get("PROMPTMEET_AI_PROVIDER", "").lower()
-        deepseek_key = self.environment.get("DEEPSEEK_API_KEY")
-        openai_key = self.environment.get("OPENAI_API_KEY")
-        if preferred_provider == "openai" and openai_key:
-            model = (
-                self.environment.get("OPENAI_QUESTION_MODEL", "gpt-4o-mini")
-                if purpose == "questions"
-                else self.environment.get(
-                    "OPENAI_ANSWER_MODEL",
-                    self.environment.get("OPENAI_CHAT_MODEL", "gpt-4o"),
-                )
-            )
-            return (
-                "https://api.openai.com/v1/chat/completions",
-                openai_key,
-                model,
-            )
-        if deepseek_key:
-            base = self.environment.get(
-                "DEEPSEEK_API_BASE", "https://api.deepseek.com"
-            ).rstrip("/")
-            model = (
-                self.environment.get("DEEPSEEK_QUESTION_MODEL", "deepseek-v4-flash")
-                if purpose == "questions"
-                else self.environment.get(
-                    "DEEPSEEK_ANSWER_MODEL",
-                    self.environment.get("DEEPSEEK_MODEL", "deepseek-v4-pro"),
-                )
-            )
-            return f"{base}/chat/completions", deepseek_key, model
-        if openai_key:
-            model = (
-                self.environment.get("OPENAI_QUESTION_MODEL", "gpt-4o-mini")
-                if purpose == "questions"
-                else self.environment.get(
-                    "OPENAI_ANSWER_MODEL",
-                    self.environment.get("OPENAI_CHAT_MODEL", "gpt-4o"),
-                )
-            )
-            return (
-                "https://api.openai.com/v1/chat/completions",
-                openai_key,
-                model,
-            )
-        raise RuntimeError("请先在 PromptMeet 设置中将 AI Key 存入 Keychain")
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment),
+            purpose=purpose,
+        )
+        return configuration.endpoint, configuration.api_key, configuration.model
 
     def provider_status(self) -> dict[str, object]:
         try:
-            endpoint, _, answer_model = self._provider("answer")
-            _, _, question_model = self._provider("questions")
-        except RuntimeError:
+            answer = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="answer"
+            )
+            questions = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="questions"
+            )
+        except (RuntimeError, ValueError):
             return {"configured": False, "provider": None, "model": None}
-        provider = "openai" if "api.openai.com" in endpoint else "deepseek"
         return {
             "configured": True,
-            "provider": provider,
-            "model": answer_model,
-            "answer_model": answer_model,
-            "question_model": question_model,
+            "provider": answer.provider,
+            "model": answer.model,
+            "answer_model": answer.model,
+            "question_model": questions.model,
         }

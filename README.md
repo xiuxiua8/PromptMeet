@@ -50,6 +50,8 @@ swift run PromptMeet
 
 首次开始会议时按系统提示授权屏幕录制与麦克风。拒绝麦克风权限不会中断系统音频，可从来源状态旁打开系统隐私设置并重试。先点“选择窗口”保留截图目标，之后每次点“截图”都会立即截取当前窗口，不会重复打开选择器。AI 提供方、模型和连接状态在“设置 → AI 服务”中管理，密钥只保存到 macOS Keychain。生成应用包：
 
+OpenAI 也可指向兼容服务。在“设置 → AI 服务 → OpenAI 兼容”中填写 Base URL 和模型标识，例如 `http://localhost:52251/v1` 与代理提供的模型名。未设置时继续使用官方默认值 `https://api.openai.com/v1` 和 `gpt-4o`。HTTP 只允许 `localhost`、`127.0.0.1`、`::1`，其他主机必须使用 HTTPS。Base URL 和模型保存在本机偏好设置中，API Key 仍只保存在 Keychain。验证连接和实际文字、建议问题、截图请求都会使用同一配置，不会回退到官方 OpenAI；若兼容端点或模型拒绝图片，PromptMeet 会在同一端点透明改用文字上下文并标明模型没有看到截图像素。
+
 ```bash
 ./scripts/build-macos-app.sh
 open dist/PromptMeet.app

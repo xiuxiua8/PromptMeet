@@ -80,6 +80,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Version 2 meeting records use atomic sibling-file writes. Malformed records are kept as `recovery_required`; legacy `desktop-sessions.json` is migrated on read, never deleted.
 - Context assembly is per-question with a budget (default 8k tokens, 2k reserved for answer). Prompts use separate system, developer, and user roles.
 - DeepSeek models are text-only. When selected context contains screenshot pixels, the prompt and answer metadata disclose the degradation truthfully.
+- OpenAI-compatible Base URL and model preferences are typed and non-secret; API keys remain in Keychain. HTTP is loopback-only, request paths derive exactly from the configured base, and image rejection may retry text-only only on that same endpoint and model with truthful degradation metadata.
 - Each question gets its own request ID, immutable snapshot, and streaming state. Rapid concurrent questions finish independently without overwriting.
 - `开始新会议` requires explicit confirmation when a meeting is active. Backend meeting creation precedes capture startup.
 - Microphone and system audio remain independent source-tagged streams with meeting-relative timing. Permission or runtime failure in one source must not stop or relabel the other.
