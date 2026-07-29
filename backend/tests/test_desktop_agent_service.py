@@ -2,11 +2,15 @@ import asyncio
 import json
 from datetime import UTC, datetime
 
+import httpx
+import pytest
+
 from models.meeting_context import (
     EventKind,
     EventProvenance,
     MeetingEvent,
     MeetingRecord,
+    ScreenshotPayload,
     TranscriptPayload,
 )
 from services.desktop_agent_service import DesktopAgentService
@@ -188,6 +192,45 @@ class FakeAgentClient:
     def stream(self, *args, **kwargs) -> FakeAgentStreamResponse:
         type(self).payloads.append(kwargs["json"])
         return FakeAgentStreamResponse(type(self).responses.pop(0))
+
+
+class ImageRejectingStreamResponse(FakeAgentStreamResponse):
+    def __init__(self, endpoint: str):
+        super().__init__({})
+        self.endpoint = endpoint
+
+    def raise_for_status(self) -> None:
+        request = httpx.Request("POST", self.endpoint)
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"message": "image_url input is not supported"}},
+        )
+        raise httpx.HTTPStatusError(
+            "image input rejected",
+            request=request,
+            response=response,
+        )
+
+
+class ImageFallbackClient:
+    endpoints: list[str] = []
+    payloads: list[dict] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    def stream(self, method: str, endpoint: str, **kwargs):
+        type(self).endpoints.append(endpoint)
+        type(self).payloads.append(kwargs["json"])
+        if len(type(self).payloads) == 1:
+            return ImageRejectingStreamResponse(endpoint)
+        return FakeAgentStreamResponse(
+            {"role": "assistant", "content": "已基于文字上下文回答。"}
+        )
 
 
 def test_answer_lets_model_decide_when_no_search_is_needed(monkeypatch) -> None:
@@ -478,6 +521,177 @@ def test_answer_and_question_generation_use_different_models() -> None:
 
     assert service._provider("answer")[2] == "deepseek-v4-pro"
     assert service._provider("questions")[2] == "deepseek-v4-flash"
+
+
+def test_openai_compatible_requests_use_configured_endpoint_and_model_consistently() -> (
+    None
+):
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "openai",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1/",
+            "OPENAI_ANSWER_MODEL": "proxy-model",
+            "OPENAI_QUESTION_MODEL": "proxy-model",
+            "DEEPSEEK_API_KEY": "deepseek-placeholder",
+        }
+    )
+
+    assert service._provider("answer") == (
+        "http://localhost:52251/v1/chat/completions",
+        "placeholder-key",
+        "proxy-model",
+    )
+    assert service._provider("questions") == (
+        "http://localhost:52251/v1/chat/completions",
+        "placeholder-key",
+        "proxy-model",
+    )
+    assert service.provider_status() == {
+        "configured": True,
+        "provider": "openai",
+        "model": "proxy-model",
+        "answer_model": "proxy-model",
+        "question_model": "proxy-model",
+    }
+
+
+def test_selected_openai_compatible_provider_never_falls_back_to_deepseek() -> None:
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "openai",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "DEEPSEEK_API_KEY": "deepseek-placeholder",
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="OpenAI API Key"):
+        service._provider("answer")
+    assert service.provider_status() == {
+        "configured": False,
+        "provider": None,
+        "model": None,
+    }
+
+
+def test_openai_compatible_image_rejection_retries_text_only_on_same_route(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-proxy/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"placeholder-image-bytes")
+    record = MeetingRecord(
+        meeting_id="meeting-proxy",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[
+            MeetingEvent(
+                event_id="screen-event",
+                meeting_id="meeting-proxy",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+                kind=EventKind.SCREENSHOT,
+                provenance=EventProvenance(source="native_screenshot"),
+                payload=ScreenshotPayload(
+                    asset_id="screen",
+                    relative_path="assets/meeting-proxy/screen.png",
+                    mime_type="image/png",
+                    sha256="placeholder",
+                ),
+            )
+        ],
+    )
+    ImageFallbackClient.endpoints = []
+    ImageFallbackClient.payloads = []
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: ImageFallbackClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "openai",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1/",
+            "OPENAI_ANSWER_MODEL": "proxy-vision-model",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    result = asyncio.run(service.answer_meeting(record, "图上是什么？", collect))
+
+    expected_endpoint = "http://localhost:52251/v1/chat/completions"
+    assert ImageFallbackClient.endpoints == [expected_endpoint, expected_endpoint]
+    assert [payload["model"] for payload in ImageFallbackClient.payloads] == [
+        "proxy-vision-model",
+        "proxy-vision-model",
+    ]
+    first_developer_content = ImageFallbackClient.payloads[0]["messages"][1]["content"]
+    assert any(part.get("type") == "image_url" for part in first_developer_content)
+    second_developer_content = ImageFallbackClient.payloads[1]["messages"][1]["content"]
+    assert isinstance(second_developer_content, str)
+    assert "模型没有看到截图像素" in second_developer_content
+    assert result.degraded_vision is True
+    assert result.provider == "openai"
+    assert result.model == "proxy-vision-model"
+    assert result.answer == "已基于文字上下文回答。"
+
+
+def test_screenshot_analysis_reports_proxy_image_rejection_truthfully(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-proxy/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"placeholder-image-bytes")
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-proxy",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-proxy/screen.png",
+            mime_type="image/png",
+            sha256="placeholder",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-proxy",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    ImageFallbackClient.endpoints = []
+    ImageFallbackClient.payloads = []
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: ImageFallbackClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "openai",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "OPENAI_ANSWER_MODEL": "proxy-vision-model",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert result.status == "unsupported"
+    assert result.vision_used is False
+    assert "拒绝了图像输入" in result.text
+    assert "没有看到截图像素" in result.text
+    assert result.provider == "openai"
+    assert result.model == "proxy-vision-model"
 
 
 def test_meeting_answer_uses_typed_budgeted_context_and_exact_question(

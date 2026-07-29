@@ -3,6 +3,11 @@ import XCTest
 
 @MainActor
 final class SettingsWindowControllerTests: XCTestCase {
+    func testSettingsInputTextUsesReadableColorOnNativeWhiteFields() {
+        XCTAssertEqual(SettingsInputAppearance.textColor, .black)
+        XCTAssertEqual(SettingsInputAppearance.colorScheme, .light)
+    }
+
     func testSettingsControllerCreatesReusableNativeWindow() {
         let controller = SettingsWindowController()
 

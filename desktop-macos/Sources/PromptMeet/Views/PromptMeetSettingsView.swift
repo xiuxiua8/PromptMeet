@@ -2,6 +2,11 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
+enum SettingsInputAppearance {
+    static let textColor = NSColor.black
+    static let colorScheme: ColorScheme = .light
+}
+
 struct PromptMeetSettingsView: View {
     var onAIConfigurationChanged: () -> Void = {}
     private enum Pane: String, CaseIterable, Identifiable {
@@ -30,15 +35,17 @@ struct PromptMeetSettingsView: View {
     @State private var aiFeedback = ""
     @State private var aiFeedbackIsSuccess = false
     @State private var isValidatingAI = false
+    @State private var openAIBaseURLDraft = OpenAICompatibleConfiguration.defaultBaseURL
+    @State private var openAIModelDraft = OpenAICompatibleConfiguration.defaultModelID
     @State private var saveStatus = ""
     @StateObject private var modelLibrary = WhisperModelLibrary()
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("interfaceLanguage") private var interfaceLanguage = "简体中文"
     @AppStorage("targetDisplay") private var targetDisplay = "主显示器"
-    @AppStorage("aiProvider") private var aiProvider = "deepseek"
-    @AppStorage("deepSeekAnswerModel") private var deepSeekAnswerModel = "deepseek-v4-pro"
-    @AppStorage("openAIAnswerModel") private var openAIAnswerModel = "gpt-4o"
+    @AppStorage(AIProviderPreferenceKey.provider) private var aiProvider = "deepseek"
+    @AppStorage(AIProviderPreferenceKey.deepSeekAnswerModel) private var deepSeekAnswerModel = "deepseek-v4-pro"
     private let secretManager = AIProviderSecretManager()
+    private let providerPreferences = AIProviderPreferences()
     private let providerValidator = AIProviderConnectionValidator()
 
     var body: some View {
@@ -84,12 +91,17 @@ struct PromptMeetSettingsView: View {
         .frame(width: 650, height: 540)
         .background(Color(red: 0.035, green: 0.038, blue: 0.045))
         .foregroundStyle(VisualTokens.primaryText)
-        .task { loadKeyStatus() }
+        .task {
+            loadOpenAICompatiblePreferences()
+            loadKeyStatus()
+        }
         .onChange(of: aiProvider) { _, _ in
             secretDraft = ""
             aiFeedback = ""
             loadKeyStatus()
-            normalizeSelectedModel()
+            if aiProvider == "deepseek" {
+                normalizeSelectedModel()
+            }
         }
     }
 
@@ -245,7 +257,11 @@ struct PromptMeetSettingsView: View {
                                         .foregroundStyle(VisualTokens.live)
                                 }
                             }
-                            Text(provider.models.contains(where: \.supportsVision) ? "支持原始截图" : "文字上下文")
+                            Text(
+                                provider.id == "openai"
+                                    ? "可配置兼容端点"
+                                    : "文字上下文"
+                            )
                                 .font(.system(size: 9, weight: .medium, design: .rounded))
                                 .foregroundStyle(VisualTokens.secondaryText)
                         }
@@ -274,24 +290,54 @@ struct PromptMeetSettingsView: View {
 
             if let provider = selectedProvider {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("回答模型")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(VisualTokens.secondaryText)
-                    Picker("回答模型", selection: selectedModelBinding) {
-                        ForEach(provider.models) { model in
-                            Text(model.displayName).tag(model.id)
+                    if provider.id == "openai" {
+                        Text("OpenAI 兼容配置")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(VisualTokens.secondaryText)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Base URL")
+                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .foregroundStyle(VisualTokens.secondaryText)
+                            TextField("https://api.openai.com/v1", text: $openAIBaseURLDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .foregroundStyle(Color(nsColor: SettingsInputAppearance.textColor))
+                                .environment(\.colorScheme, SettingsInputAppearance.colorScheme)
+                                .font(.system(size: 11, design: .monospaced))
+                            Text("模型标识")
+                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .foregroundStyle(VisualTokens.secondaryText)
+                            TextField("gpt-4o", text: $openAIModelDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .foregroundStyle(Color(nsColor: SettingsInputAppearance.textColor))
+                                .environment(\.colorScheme, SettingsInputAppearance.colorScheme)
+                                .font(.system(size: 11, design: .monospaced))
                         }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 260)
-
-                    if let model = selectedModel {
                         Label(
-                            model.detail,
-                            systemImage: model.supportsVision ? "eye" : "text.alignleft"
+                            "仅 localhost、127.0.0.1 和 ::1 可使用 HTTP，其他地址必须使用 HTTPS",
+                            systemImage: "lock.shield"
                         )
                         .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(model.supportsVision ? VisualTokens.live : VisualTokens.amber)
+                        .foregroundStyle(VisualTokens.secondaryText)
+                    } else {
+                        Text("回答模型")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(VisualTokens.secondaryText)
+                        Picker("回答模型", selection: selectedModelBinding) {
+                            ForEach(provider.models) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 260)
+
+                        if let model = selectedModel {
+                            Label(
+                                model.detail,
+                                systemImage: model.supportsVision ? "eye" : "text.alignleft"
+                            )
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .foregroundStyle(model.supportsVision ? VisualTokens.live : VisualTokens.amber)
+                        }
                     }
 
                     Text(provider.capabilitySummary)
@@ -318,6 +364,8 @@ struct PromptMeetSettingsView: View {
 
                     SecureField("输入新的 \(provider.displayName) API Key", text: $secretDraft)
                         .textFieldStyle(.roundedBorder)
+                        .foregroundStyle(Color(nsColor: SettingsInputAppearance.textColor))
+                        .environment(\.colorScheme, SettingsInputAppearance.colorScheme)
 
                     HStack(spacing: 10) {
                         if isValidatingAI {
@@ -336,13 +384,17 @@ struct PromptMeetSettingsView: View {
                         }
                         Button("验证连接", action: validateSelectedKey)
                             .disabled(
-                                secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                (secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    && credentialStatus != .configured)
                                     || isValidatingAI
                             )
                         Button("保存并应用", action: saveSelectedKey)
                             .buttonStyle(.borderedProminent)
                             .tint(VisualTokens.cobalt)
-                            .disabled(secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(
+                                secretDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    && credentialStatus != .configured
+                            )
                     }
                 }
                 .padding(14)
@@ -426,7 +478,7 @@ struct PromptMeetSettingsView: View {
     }
 
     private var selectedModelID: String {
-        aiProvider == "openai" ? openAIAnswerModel : deepSeekAnswerModel
+        aiProvider == "openai" ? openAIModelDraft : deepSeekAnswerModel
     }
 
     private var selectedModel: AIModelDescriptor? {
@@ -438,7 +490,7 @@ struct PromptMeetSettingsView: View {
             get: { selectedModelID },
             set: { value in
                 if aiProvider == "openai" {
-                    openAIAnswerModel = value
+                    openAIModelDraft = value
                 } else {
                     deepSeekAnswerModel = value
                 }
@@ -457,11 +509,36 @@ struct PromptMeetSettingsView: View {
 
     private func saveSelectedKey() {
         do {
-            _ = try AIProviderCatalog.validated(providerID: aiProvider, modelID: selectedModelID)
-            try secretManager.save(providerID: aiProvider, secret: secretDraft)
+            let trimmedSecret = secretDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedSecret.isEmpty && credentialStatus != .configured {
+                throw AIProviderConfigurationError.emptySecret
+            }
+            let openAIConfiguration: OpenAICompatibleConfiguration?
+            if aiProvider == "openai" {
+                openAIConfiguration = try OpenAICompatibleConfiguration(
+                    baseURL: openAIBaseURLDraft,
+                    modelID: openAIModelDraft
+                )
+            } else {
+                _ = try AIProviderCatalog.validated(
+                    providerID: aiProvider,
+                    modelID: selectedModelID
+                )
+                openAIConfiguration = nil
+            }
+            if !trimmedSecret.isEmpty {
+                try secretManager.save(providerID: aiProvider, secret: trimmedSecret)
+                credentialStatus = .configured
+            }
+            if let openAIConfiguration {
+                providerPreferences.saveOpenAICompatible(openAIConfiguration)
+                openAIBaseURLDraft = openAIConfiguration.baseURL.absoluteString
+                openAIModelDraft = openAIConfiguration.modelID
+            }
             secretDraft = ""
-            credentialStatus = .configured
-            aiFeedback = "已安全保存到 macOS Keychain，正在应用配置"
+            aiFeedback = trimmedSecret.isEmpty
+                ? "兼容端点与模型已保存，正在应用配置"
+                : "API Key 已安全保存到 macOS Keychain，正在应用配置"
             aiFeedbackIsSuccess = true
             onAIConfigurationChanged()
         } catch {
@@ -480,21 +557,50 @@ struct PromptMeetSettingsView: View {
         }
     }
 
+    private func loadOpenAICompatiblePreferences() {
+        do {
+            let configuration = try providerPreferences.loadOpenAICompatible()
+            openAIBaseURLDraft = configuration.baseURL.absoluteString
+            openAIModelDraft = configuration.modelID
+        } catch {
+            openAIBaseURLDraft = OpenAICompatibleConfiguration.defaultBaseURL
+            openAIModelDraft = OpenAICompatibleConfiguration.defaultModelID
+            aiFeedback = error.localizedDescription
+            aiFeedbackIsSuccess = false
+        }
+    }
+
     private func validateSelectedKey() {
-        let draft = secretDraft
-        isValidatingAI = true
-        aiFeedback = "正在验证连接"
-        Task {
-            let result = await providerValidator.validate(
-                providerID: aiProvider,
-                modelID: selectedModelID,
-                secret: draft
-            )
-            await MainActor.run {
-                isValidatingAI = false
-                aiFeedback = result.message
-                aiFeedbackIsSuccess = result.isValid
+        do {
+            let draft = secretDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            let credential = draft.isEmpty
+                ? try secretManager.credential(providerID: aiProvider)
+                : draft
+            guard let credential, !credential.isEmpty else {
+                throw AIProviderConfigurationError.emptySecret
             }
+            let providerID = aiProvider
+            let modelID = selectedModelID
+            let baseURL = providerID == "openai" ? openAIBaseURLDraft : nil
+            isValidatingAI = true
+            aiFeedback = "正在验证连接"
+            Task {
+                let result = await providerValidator.validate(
+                    providerID: providerID,
+                    modelID: modelID,
+                    baseURL: baseURL,
+                    secret: credential
+                )
+                await MainActor.run {
+                    isValidatingAI = false
+                    aiFeedback = result.message
+                    aiFeedbackIsSuccess = result.isValid
+                }
+            }
+        } catch {
+            isValidatingAI = false
+            aiFeedback = error.localizedDescription
+            aiFeedbackIsSuccess = false
         }
     }
 

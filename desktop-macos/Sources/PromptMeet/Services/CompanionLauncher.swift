@@ -192,13 +192,10 @@ final class CompanionLauncher: CompanionLaunching {
             processEnvironment["DEEPSEEK_API_KEY"] = deepSeekKey
         }
         let defaults = UserDefaults.standard
-        let provider = defaults.string(forKey: "aiProvider") ?? "deepseek"
-        processEnvironment["PROMPTMEET_AI_PROVIDER"] = provider
-        processEnvironment["DEEPSEEK_ANSWER_MODEL"] =
-            defaults.string(forKey: "deepSeekAnswerModel") ?? "deepseek-v4-pro"
-        processEnvironment["DEEPSEEK_QUESTION_MODEL"] = "deepseek-v4-flash"
-        processEnvironment["OPENAI_ANSWER_MODEL"] = defaults.string(forKey: "openAIAnswerModel") ?? "gpt-4o"
-        processEnvironment["OPENAI_QUESTION_MODEL"] = "gpt-4o-mini"
+        let provider = defaults.string(forKey: AIProviderPreferenceKey.provider) ?? "deepseek"
+        let providerEnvironment = try AIProviderPreferences(defaults: defaults)
+            .runtimeEnvironment(providerID: provider)
+        processEnvironment.merge(providerEnvironment) { _, configured in configured }
         process.environment = processEnvironment
         try process.run()
         return process
