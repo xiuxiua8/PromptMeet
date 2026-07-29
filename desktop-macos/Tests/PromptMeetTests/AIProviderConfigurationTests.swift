@@ -155,7 +155,7 @@ final class AIProviderConfigurationTests: XCTestCase {
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
             )!
-            return (response, #"{"choices":[{"message":{"content":"OK"}}]}"#.data(using: .utf8)!)
+            return (response, Data(#"{"choices":[{"message":{"content":"OK"}}]}"#.utf8))
         }
         let validator = AIProviderConnectionValidator(
             session: URLSession(configuration: sessionConfiguration)
@@ -312,8 +312,8 @@ private final class AIProviderValidationURLProtocol: URLProtocol, @unchecked Sen
     nonisolated(unsafe) static var lastRequest: URLRequest?
     nonisolated(unsafe) static var lastBodyData: Data?
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override static func canInit(with request: URLRequest) -> Bool { true }
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         Self.lastRequest = request
