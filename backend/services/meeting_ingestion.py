@@ -197,16 +197,37 @@ class MeetingIngestionService:
         )
         return self.repository.append(meeting_id, event).events[-1]
 
-    def summary(self, meeting_id: str, summary: dict) -> MeetingEvent:
+    def summary(
+        self,
+        meeting_id: str,
+        summary: dict,
+        *,
+        revision: int = 1,
+        source_event_ids: list[str] | None = None,
+        source_revision: int = 0,
+        trigger: str = "legacy",
+        active_minutes: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> MeetingEvent:
         event = MeetingEvent(
             occurred_at=datetime.now(UTC),
             kind=EventKind.SUMMARY,
-            provenance=EventProvenance(source="summary_service"),
+            provenance=EventProvenance(
+                source="summary_service",
+                provider=provider,
+                model=model,
+            ),
             payload=SummaryPayload(
                 summary_text=str(summary.get("summary_text") or ""),
                 tasks=list(summary.get("tasks") or []),
                 key_points=list(summary.get("key_points") or []),
                 decisions=list(summary.get("decisions") or []),
+                revision=revision,
+                source_event_ids=source_event_ids or [],
+                source_revision=source_revision,
+                trigger=trigger,
+                active_minutes=active_minutes,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]

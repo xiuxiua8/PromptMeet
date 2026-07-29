@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def summary_model_name(environment: dict[str, str] | None = None) -> str:
     values = os.environ if environment is None else environment
-    return values.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    return values.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 
 def summary_result_path() -> Path:

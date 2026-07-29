@@ -6,6 +6,39 @@ import XCTest
 
 @MainActor
 final class ScreenCapturePickerTests: XCTestCase {
+    func testPresentationLifecycleReturnsToReusableIdleAfterCancellation() throws {
+        var lifecycle = PickerPresentationLifecycle()
+        let first = try lifecycle.begin()
+
+        XCTAssertTrue(lifecycle.isPresenting)
+        XCTAssertTrue(lifecycle.finish(generation: first))
+        XCTAssertFalse(lifecycle.isPresenting)
+
+        let second = try lifecycle.begin()
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(lifecycle.isPresenting)
+    }
+
+    func testPresentationLifecycleRejectsDuplicatePresentation() throws {
+        var lifecycle = PickerPresentationLifecycle()
+        _ = try lifecycle.begin()
+
+        XCTAssertThrowsError(try lifecycle.begin()) { error in
+            XCTAssertEqual(error as? ScreenshotPickerError, .selectionInProgress)
+        }
+    }
+
+    func testStalePickerCallbackCannotFinishNewPresentation() throws {
+        var lifecycle = PickerPresentationLifecycle()
+        let stale = try lifecycle.begin()
+        XCTAssertTrue(lifecycle.finish(generation: stale))
+        let current = try lifecycle.begin()
+
+        XCTAssertFalse(lifecycle.finish(generation: stale))
+        XCTAssertTrue(lifecycle.isPresenting)
+        XCTAssertEqual(lifecycle.activeGeneration, current)
+    }
+
     func testPickerIsActivatedBeforeNativeWindowIsPresented() {
         let contentPicker = ContentSharingPickerSpy()
         let picker = SystemContentSharingTargetPicker(contentPicker: contentPicker)

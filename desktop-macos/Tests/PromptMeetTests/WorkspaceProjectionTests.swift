@@ -3,18 +3,40 @@ import XCTest
 @testable import PromptMeet
 
 final class WorkspaceProjectionTests: XCTestCase {
-    func testMixedTimelineKeepsBackendSequenceAndConversationSources() throws {
-        let data = Data(
-            #"[{"schema_version":2,"meeting_id":"meeting-1","status":"completed","started_at":"2026-07-25T10:00:00Z","ended_at":null,"events":[{"event_id":"event-1","meeting_id":"meeting-1","sequence":1,"occurred_at":"2026-07-25T10:01:00Z","kind":"transcript","provenance":{"source":"native_transcript"},"payload":{"type":"transcript","segment_id":"4E2CB506-925E-4A6E-BB68-E5006AB09BDF","text":"范围冻结","speaker":"林晨","source":"microphone","translated_text":null}},{"event_id":"event-2","meeting_id":"meeting-1","sequence":2,"occurred_at":"2026-07-25T10:02:00Z","kind":"user_question","provenance":{"source":"user","request_id":"11111111-1111-1111-1111-111111111111"},"payload":{"type":"user_question","request_id":"11111111-1111-1111-1111-111111111111","thread_id":"main","question":"风险？"}},{"event_id":"event-3","meeting_id":"meeting-1","sequence":3,"occurred_at":"2026-07-25T10:03:00Z","kind":"assistant_answer","provenance":{"source":"meeting_agent","provider":"openai","model":"gpt-4o","request_id":"11111111-1111-1111-1111-111111111111"},"payload":{"type":"assistant_answer","request_id":"11111111-1111-1111-1111-111111111111","thread_id":"main","answer":"范围漂移 [M1]","sources":[{"source_id":"M1","event_id":"event-1","label":"会议转写"}],"degraded_vision":false,"status":"completed","error_message":null}}]}]"#.utf8
+    func testMixedTimelineProjectsInputLeftAndConversationRight() throws {
+        let meeting = projectionMeeting(
+            timeline: [transcriptEvent(), questionEvent(sequence: 2), answerEvent(sequence: 3)]
         )
-        let meeting = try XCTUnwrap(StoredMeeting.parseList(data).first)
 
         let projection = WorkspaceProjection(meeting: meeting)
 
-        XCTAssertEqual(projection.items.map(\.sequence), [1, 2, 3])
-        XCTAssertEqual(projection.items.map(\.kind), [.transcript, .question, .answer])
+        XCTAssertEqual(projection.items.map(\.sequence), [1])
+        XCTAssertEqual(projection.items.map(\.kind), [.transcript])
         XCTAssertEqual(projection.conversation.first?.sources.first?.sourceID, "M1")
         XCTAssertFalse(projection.isEmpty)
+    }
+
+    func testSuggestionsAndDiscussionNeverBecomeInputItems() throws {
+        let suggestions = timelineEvent(
+            sequence: 1,
+            kind: .suggestions,
+            payload: .suggestions(
+                TimelineSuggestionPayload(
+                    generationID: "gen-1",
+                    contextRevision: 1,
+                    questions: ["问题一", "问题二", "问题三"]
+                )
+            )
+        )
+        let meeting = projectionMeeting(
+            timeline: [suggestions, questionEvent(sequence: 2), answerEvent(sequence: 3)]
+        )
+
+        let projection = WorkspaceProjection(meeting: meeting)
+
+        XCTAssertTrue(projection.items.isEmpty)
+        XCTAssertEqual(projection.conversation.map(\.question), ["风险？"])
+        XCTAssertEqual(projection.conversation.map(\.answer), ["范围漂移"])
     }
 
     func testEmptyAndFailedConversationStatesAreExplicit() {
@@ -36,4 +58,87 @@ final class WorkspaceProjectionTests: XCTestCase {
         XCTAssertTrue(empty.isEmpty)
         XCTAssertTrue(WorkspaceProjection.retryableTurns([failed]).contains("request-1"))
     }
+}
+
+private let projectionRequestID = "11111111-1111-1111-1111-111111111111"
+
+private func projectionMeeting(timeline: [MeetingTimelineEvent]) -> StoredMeeting {
+    StoredMeeting(
+        id: "meeting-1",
+        schemaVersion: 2,
+        startTime: Date(timeIntervalSince1970: 1_000),
+        timeline: timeline,
+        transcript: [],
+        summary: nil
+    )
+}
+
+private func timelineEvent(
+    sequence: Int,
+    kind: MeetingTimelineKind,
+    payload: MeetingTimelinePayload
+) -> MeetingTimelineEvent {
+    MeetingTimelineEvent(
+        eventID: "event-\(sequence)",
+        meetingID: "meeting-1",
+        sequence: sequence,
+        occurredAt: Date(timeIntervalSince1970: TimeInterval(1_000 + sequence)),
+        kind: kind,
+        provenance: TimelineProvenance(
+            source: "test",
+            provider: nil,
+            model: nil,
+            requestID: projectionRequestID
+        ),
+        payload: payload
+    )
+}
+
+private func transcriptEvent() -> MeetingTimelineEvent {
+    timelineEvent(
+        sequence: 1,
+        kind: .transcript,
+        payload: .transcript(
+            TimelineTranscriptPayload(
+                segmentID: "4E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+                text: "范围冻结",
+                speaker: "林晨",
+                source: "microphone",
+                translatedText: nil,
+                meetingTimeMilliseconds: nil
+            )
+        )
+    )
+}
+
+private func questionEvent(sequence: Int) -> MeetingTimelineEvent {
+    timelineEvent(
+        sequence: sequence,
+        kind: .userQuestion,
+        payload: .userQuestion(
+            TimelineQuestionPayload(
+                requestID: projectionRequestID,
+                threadID: "main",
+                question: "风险？"
+            )
+        )
+    )
+}
+
+private func answerEvent(sequence: Int) -> MeetingTimelineEvent {
+    timelineEvent(
+        sequence: sequence,
+        kind: .assistantAnswer,
+        payload: .assistantAnswer(
+            TimelineAnswerPayload(
+                requestID: projectionRequestID,
+                threadID: "main",
+                answer: "范围漂移",
+                sources: [EvidenceSource(sourceID: "M1", eventID: "event-1", label: "会议转写")],
+                degradedVision: false,
+                status: "completed",
+                errorMessage: nil
+            )
+        )
+    )
 }

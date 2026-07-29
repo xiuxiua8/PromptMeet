@@ -26,6 +26,35 @@ enum BackendClientError: LocalizedError {
     }
 }
 
+enum SummaryGenerationTrigger: String, Codable, Equatable, Sendable {
+    case manual
+    case milestone
+}
+
+struct SummaryGenerationRequest: Codable, Equatable, Sendable {
+    let trigger: SummaryGenerationTrigger
+    let activeMinutes: Int?
+    let clientInputRevision: Int
+
+    enum CodingKeys: String, CodingKey {
+        case trigger
+        case activeMinutes = "active_minutes"
+        case clientInputRevision = "client_input_revision"
+    }
+}
+
+enum SummaryGenerationStatus: String, Codable, Equatable, Sendable {
+    case generated
+    case noAction = "no_action"
+    case failed
+}
+
+struct SummaryGenerationResponse: Decodable, Equatable, Sendable {
+    let success: Bool
+    let status: SummaryGenerationStatus
+    let message: String
+}
+
 protocol BackendClientProtocol: AnyObject, Sendable {
     func healthCheck() async throws
     func createSession() async throws -> String
@@ -35,6 +64,10 @@ protocol BackendClientProtocol: AnyObject, Sendable {
         generationID: UUID,
         contextRevision: Int
     ) async throws
+    func generateSummary(
+        sessionID: String,
+        request: SummaryGenerationRequest
+    ) async throws -> SummaryGenerationResponse
     func connect(sessionID: String, onEvent: @escaping @Sendable (BackendEvent) -> Void) throws
     func sendPrompt(_ prompt: String, requestID: UUID) async throws
     func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws
@@ -49,20 +82,20 @@ protocol BackendClientProtocol: AnyObject, Sendable {
     func disconnect()
 }
 
+private struct BackendActionResponse: Decodable {
+    let success: Bool
+    let message: String?
+}
+
+private struct BackendCreateSessionResponse: Decodable {
+    let sessionID: String
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+    }
+}
+
 final class BackendClient: BackendClientProtocol, @unchecked Sendable {
-    private struct ActionResponse: Decodable {
-        let success: Bool
-        let message: String?
-    }
-
-    private struct CreateSessionResponse: Decodable {
-        let sessionID: String
-
-        enum CodingKeys: String, CodingKey {
-            case sessionID = "session_id"
-        }
-    }
-
     private let environment: BackendEnvironment
     private let session: URLSession
     private var socket: URLSessionWebSocketTask?
@@ -83,7 +116,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             for: environment.request(path: "/api/sessions", method: "POST")
         )
         try validate(response)
-        guard let result = try? JSONDecoder().decode(CreateSessionResponse.self, from: data) else {
+        guard let result = try? JSONDecoder().decode(BackendCreateSessionResponse.self, from: data) else {
             throw BackendClientError.missingSessionID
         }
         return result.sessionID
@@ -94,7 +127,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             for: environment.sessionActionRequest(sessionID: sessionID, action: action)
         )
         try validate(response)
-        if let result = try? JSONDecoder().decode(ActionResponse.self, from: data), !result.success {
+        if let result = try? JSONDecoder().decode(BackendActionResponse.self, from: data), !result.success {
             throw BackendClientError.serviceMessage(result.message ?? "操作未完成")
         }
     }
@@ -117,9 +150,27 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         )
         let (data, response) = try await session.data(for: request)
         try validate(response)
-        if let result = try? JSONDecoder().decode(ActionResponse.self, from: data), !result.success {
+        if let result = try? JSONDecoder().decode(BackendActionResponse.self, from: data), !result.success {
             throw BackendClientError.serviceMessage(result.message ?? "问题生成未完成")
         }
+    }
+
+    func generateSummary(
+        sessionID: String,
+        request summaryRequest: SummaryGenerationRequest
+    ) async throws -> SummaryGenerationResponse {
+        var request = environment.sessionActionRequest(
+            sessionID: sessionID,
+            action: "generate-summary"
+        )
+        request.httpBody = try JSONEncoder().encode(summaryRequest)
+        let (data, response) = try await session.data(for: request)
+        try validate(response)
+        let result = try JSONDecoder().decode(SummaryGenerationResponse.self, from: data)
+        guard result.success else {
+            throw BackendClientError.serviceMessage(result.message)
+        }
+        return result
     }
 
     func connect(

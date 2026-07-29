@@ -68,6 +68,20 @@ enum IslandGeometry {
         )
     }
 
+    static func interactiveRect(
+        for presentation: IslandPresentation,
+        inHost hostSize: CGSize,
+        topChromeWidth: CGFloat = 200,
+        topChromeHeight: CGFloat = 34
+    ) -> CGRect {
+        visibleRect(
+            for: presentation,
+            inHost: hostSize,
+            topChromeWidth: topChromeWidth,
+            topChromeHeight: topChromeHeight
+        )
+    }
+
     static func hostFrame(in screen: CGRect) -> CGRect {
         let width = min(hostSize.width, screen.width)
         let height = min(hostSize.height, screen.height)

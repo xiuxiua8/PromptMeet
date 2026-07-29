@@ -36,7 +36,10 @@ final class NativeAudioPipelineTests: XCTestCase {
 
         await coordinator.bindBackendSession("remote-session")
         try await coordinator.start(
-            sessionID: "local-session",
+            request: NativeAudioCaptureRequest(
+                sessionID: "local-session",
+                includeLocalMicrophone: true
+            ),
             onStatus: { _ in },
             onPartialTranscript: { _ in },
             onTranscript: { _ in },
@@ -151,6 +154,40 @@ final class NativeAudioPipelineTests: XCTestCase {
     }
 
     @MainActor
+    func testCoordinatorDoesNotStartOrReportMicrophoneWhenPreferenceIsDisabled() async throws {
+        let system = NativeAudioSourceCaptureSpy(source: .system)
+        let microphone = NativeAudioSourceCaptureSpy(
+            source: .microphone,
+            error: CaptureError.microphoneDenied
+        )
+        let coordinator = NativeAudioCaptureCoordinator(
+            sources: [system, microphone],
+            uploader: NativeAudioUploaderSpy(),
+            transcription: LocalTranscriptionServiceSpy()
+        )
+        let snapshots = CaptureSnapshotRecorder()
+        let warnings = WarningRecorder()
+
+        try await coordinator.start(
+            request: NativeAudioCaptureRequest(
+                sessionID: "local-1",
+                includeLocalMicrophone: false
+            ),
+            onStatus: { snapshots.append($0) },
+            onPartialTranscript: { _ in },
+            onTranscript: { _ in },
+            onTranscriptionError: { warnings.append($0) }
+        )
+
+        XCTAssertEqual(system.startCount, 1)
+        XCTAssertEqual(microphone.startCount, 0)
+        XCTAssertEqual(microphone.stopCount, 0)
+        XCTAssertEqual(snapshots.last?.microphone, .idle)
+        XCTAssertEqual(warnings.count, 0)
+        await coordinator.stop()
+    }
+
+    @MainActor
     func testCoordinatorFailsOnlyWhenEveryAudioSourceFails() async {
         let system = NativeAudioSourceCaptureSpy(source: .system, error: CaptureError.noDisplay)
         let microphone = NativeAudioSourceCaptureSpy(source: .microphone, error: CaptureError.microphoneDenied)
@@ -189,7 +226,10 @@ final class NativeAudioPipelineTests: XCTestCase {
         let snapshots = CaptureSnapshotRecorder()
 
         try await coordinator.start(
-            sessionID: "local-1",
+            request: NativeAudioCaptureRequest(
+                sessionID: "local-1",
+                includeLocalMicrophone: true
+            ),
             onStatus: { snapshots.append($0) },
             onPartialTranscript: { _ in },
             onTranscript: { _ in },
@@ -206,90 +246,9 @@ final class NativeAudioPipelineTests: XCTestCase {
         XCTAssertEqual(snapshots.last?.microphone, .denied)
     }
 
-    @MainActor
-    func testRapidPauseAndResumeAreIdempotent() async throws {
-        let system = NativeAudioSourceCaptureSpy(source: .system)
-        let coordinator = NativeAudioCaptureCoordinator(
-            sources: [system],
-            uploader: NativeAudioUploaderSpy(),
-            transcription: LocalTranscriptionServiceSpy()
-        )
-        try await coordinator.start(
-            sessionID: "local-1",
-            onStatus: { _ in },
-            onPartialTranscript: { _ in },
-            onTranscript: { _ in },
-            onTranscriptionError: { _ in }
-        )
-
-        await coordinator.pause()
-        await coordinator.pause()
-        try await coordinator.resume()
-        try await coordinator.resume()
-
-        XCTAssertEqual(system.stopCount, 1)
-        XCTAssertEqual(system.startCount, 2)
-    }
-
-    @MainActor
-    func testFailedResumeRemainsPausedAndCanRetryAllPreviousSources() async throws {
-        let system = FailOnRestartCaptureSpy(source: .system)
-        let coordinator = NativeAudioCaptureCoordinator(
-            sources: [system],
-            uploader: NativeAudioUploaderSpy(),
-            transcription: LocalTranscriptionServiceSpy()
-        )
-        try await coordinator.start(
-            sessionID: "local-1",
-            onStatus: { _ in },
-            onPartialTranscript: { _ in },
-            onTranscript: { _ in },
-            onTranscriptionError: { _ in }
-        )
-        await coordinator.pause()
-
-        do {
-            try await coordinator.resume()
-            XCTFail("Expected first resume to fail")
-        } catch {}
-        do {
-            try await coordinator.resume()
-            XCTFail("Expected second resume to retry and fail")
-        } catch {}
-
-        XCTAssertEqual(system.startCount, 3)
-    }
-
-    @MainActor
-    func testRuntimeFailureMarksOnlyFailedSourceAndKeepsOtherSourceActive() async throws {
-        let system = NativeAudioSourceCaptureSpy(source: .system)
-        let microphone = NativeAudioSourceCaptureSpy(source: .microphone)
-        let coordinator = NativeAudioCaptureCoordinator(
-            sources: [system, microphone],
-            uploader: NativeAudioUploaderSpy(),
-            transcription: LocalTranscriptionServiceSpy()
-        )
-        let snapshots = CaptureSnapshotRecorder()
-        try await coordinator.start(
-            sessionID: "local-1",
-            onStatus: { snapshots.append($0) },
-            onPartialTranscript: { _ in },
-            onTranscript: { _ in },
-            onTranscriptionError: { _ in }
-        )
-
-        system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
-        for _ in 0..<20 where snapshots.last?.system == .active {
-            await Task.yield()
-        }
-
-        XCTAssertEqual(snapshots.last?.system, .failed("系统音频采集失败：stream stopped"))
-        XCTAssertEqual(snapshots.last?.microphone, .active)
-        XCTAssertEqual(microphone.stopCount, 0)
-    }
 }
 
-private final class NativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
+final class NativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
     let source: NativeAudioSource
     let error: (any Error)?
     private(set) var startCount = 0
@@ -323,7 +282,7 @@ private final class NativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unch
     }
 }
 
-private final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
+final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
     let source: NativeAudioSource
 
     init(source: NativeAudioSource) {
@@ -344,7 +303,7 @@ private final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCaptur
     func stop() async {}
 }
 
-private final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
+final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
     let source: NativeAudioSource
     private(set) var startCount = 0
 
@@ -362,11 +321,11 @@ private final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecke
     func stop() async {}
 }
 
-private struct NativeAudioUploaderSpy: NativeAudioUploading {
+struct NativeAudioUploaderSpy: NativeAudioUploading {
     func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {}
 }
 
-private actor RecordingNativeAudioUploader: NativeAudioUploading {
+actor RecordingNativeAudioUploader: NativeAudioUploading {
     private(set) var sessionIDs: [String] = []
 
     func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
@@ -374,7 +333,7 @@ private actor RecordingNativeAudioUploader: NativeAudioUploading {
     }
 }
 
-private actor DelayedNativeAudioUploader: NativeAudioUploading {
+actor DelayedNativeAudioUploader: NativeAudioUploading {
     private(set) var completedSequences: [Int] = []
 
     func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
@@ -385,7 +344,7 @@ private actor DelayedNativeAudioUploader: NativeAudioUploading {
     }
 }
 
-private actor LocalTranscriptionServiceSpy: LocalTranscriptionServicing {
+actor LocalTranscriptionServiceSpy: LocalTranscriptionServicing {
     private(set) var pauseCount = 0
     func start(
         onPartialTranscript: @escaping @Sendable (String) -> Void,
@@ -398,7 +357,7 @@ private actor LocalTranscriptionServiceSpy: LocalTranscriptionServicing {
     func stop() async {}
 }
 
-private final class WarningRecorder: @unchecked Sendable {
+final class WarningRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String] = []
 
@@ -409,7 +368,7 @@ private final class WarningRecorder: @unchecked Sendable {
     }
 }
 
-private final class CaptureSnapshotRecorder: @unchecked Sendable {
+final class CaptureSnapshotRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [AudioCaptureSnapshot] = []
 

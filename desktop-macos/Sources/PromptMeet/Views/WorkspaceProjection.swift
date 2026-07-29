@@ -5,10 +5,7 @@ enum WorkspaceTimelineItemKind: Equatable, Sendable {
     case transcript
     case screenshot
     case screenshotAnalysis
-    case question
-    case answer
     case summary
-    case suggestions
 }
 
 struct WorkspaceTimelineItem: Identifiable, Equatable, Sendable {
@@ -43,7 +40,7 @@ struct WorkspaceProjection: Equatable, Sendable {
         items = events.sorted {
             if $0.sequence != $1.sequence { return $0.sequence < $1.sequence }
             return $0.occurredAt < $1.occurredAt
-        }.map { event in
+        }.compactMap { event in
             switch event.payload {
             case .lifecycle(let value):
                 return Self.item(
@@ -70,26 +67,10 @@ struct WorkspaceProjection: Equatable, Sendable {
                     value.text,
                     isFailure: value.status == "failed"
                 )
-            case .userQuestion(let value):
-                return Self.item(event, .question, "你问", value.question)
-            case .assistantAnswer(let value):
-                return Self.item(
-                    event,
-                    .answer,
-                    "AI 回答",
-                    value.status == "failed" ? (value.errorMessage ?? "回答失败") : value.answer,
-                    sources: value.sources,
-                    isFailure: value.status == "failed"
-                )
+            case .userQuestion, .assistantAnswer, .suggestions:
+                return nil
             case .summary(let value):
                 return Self.item(event, .summary, "会议摘要", value.summaryText)
-            case .suggestions(let value):
-                return Self.item(
-                    event,
-                    .suggestions,
-                    "猜你想问",
-                    value.questions.joined(separator: "\n")
-                )
             }
         }
         self.conversation = conversation

@@ -117,6 +117,11 @@ class SummaryPayload(BaseModel):
     key_points: list[str] = Field(default_factory=list)
     decisions: list[str] = Field(default_factory=list)
     derived: bool = False
+    revision: int = Field(default=1, ge=1)
+    source_event_ids: list[str] = Field(default_factory=list)
+    source_revision: int = Field(default=0, ge=0)
+    trigger: Literal["manual", "milestone", "legacy"] = "legacy"
+    active_minutes: int | None = Field(default=None, ge=0)
 
 
 class SuggestionPayload(BaseModel):

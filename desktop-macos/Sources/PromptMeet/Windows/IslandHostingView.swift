@@ -19,7 +19,7 @@ final class IslandHostingView: NSHostingView<IslandRootView> {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let visible = IslandGeometry.visibleRect(
+        let visible = IslandGeometry.interactiveRect(
             for: store.presentation,
             inHost: bounds.size,
             topChromeWidth: store.topChromeWidth,

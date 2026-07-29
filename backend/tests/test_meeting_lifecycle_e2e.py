@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from models.meeting_context import EventKind, EvidenceSource
-from services.desktop_agent_service import MeetingAnswerResult
+from services.desktop_agent_service import MeetingAnswerResult, MeetingSummaryResult
 from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
 from services.meeting_repository import MeetingRepository
 from services.desktop_storage import HybridSessionStorage
@@ -14,6 +14,15 @@ PNG = b"\x89PNG\r\n\x1a\nPromptMeet screenshot"
 
 
 class FakeMeetingAgent:
+    questions = [
+        {"question": "谁负责上线？"},
+        {"question": "何时冻结范围？"},
+        {"question": "回滚标准是什么？"},
+    ]
+
+    async def generate_questions(self, context):
+        return list(self.questions)
+
     async def analyze_screenshot(self, record, screenshot_event):
         return ScreenshotAnalysisResult(
             status="completed",
@@ -225,3 +234,170 @@ def test_rapid_questions_keep_request_scoped_snapshots_and_answers(
         ("request-2", "问题二的回答"),
         ("request-1", "问题一的回答"),
     ]
+
+
+def test_unsuccessful_suggestion_generation_never_overwrites_last_good_set(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    root = tmp_path / "meeting-data"
+    configure(main_service, root, monkeypatch)
+    agent = FakeMeetingAgent()
+    monkeypatch.setattr(main_service, "desktop_agent_service", agent)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    client.post(
+        f"/api/sessions/{meeting_id}/native-transcript",
+        json={
+            "id": "4E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "周岚负责上线，周五冻结范围并完成回滚演练",
+            "speaker": "林晨",
+            "source": "microphone",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+
+    good = client.post(
+        f"/api/sessions/{meeting_id}/generate-questions",
+        json={"generation_id": "generation-good", "context_revision": 1},
+    )
+    assert good.status_code == 200
+    agent.questions = []
+    empty = client.post(
+        f"/api/sessions/{meeting_id}/generate-questions",
+        json={"generation_id": "generation-empty", "context_revision": 2},
+    )
+    assert empty.status_code == 200
+
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+    suggestion_events = [
+        event for event in record["events"] if event["kind"] == "suggestions"
+    ]
+    assert len(suggestion_events) == 1
+    assert suggestion_events[0]["payload"]["questions"] == [
+        "谁负责上线？",
+        "何时冻结范围？",
+        "回滚标准是什么？",
+    ]
+
+
+def test_summary_milestones_store_revision_and_source_coverage_without_double_fire(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    root = tmp_path / "meeting-data"
+    configure(main_service, root, monkeypatch)
+
+    class SummaryAgent(FakeMeetingAgent):
+        async def summarize_meeting(self, record, source_events):
+            revision = 1 + len(
+                [event for event in record.events if event.kind == EventKind.SUMMARY]
+            )
+            return MeetingSummaryResult(
+                summary={
+                    "summary_text": f"第 {revision} 版摘要",
+                    "tasks": [{"task": "完成回滚演练", "status": "pending"}],
+                    "key_points": ["冻结范围"],
+                    "decisions": ["周五发布"],
+                },
+                provider="openai",
+                model="summary-model",
+            )
+
+    monkeypatch.setattr(main_service, "desktop_agent_service", SummaryAgent())
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+
+    def transcript(segment_id: str, text: str) -> None:
+        response = client.post(
+            f"/api/sessions/{meeting_id}/native-transcript",
+            json={
+                "id": segment_id,
+                "text": text,
+                "speaker": "林晨",
+                "source": "microphone",
+                "timestamp": "2026-07-25T10:00:00+00:00",
+            },
+        )
+        assert response.status_code == 200
+
+    transcript("4E2CB506-925E-4A6E-BB68-E5006AB09BDF", "冻结范围")
+    first = client.post(
+        f"/api/sessions/{meeting_id}/generate-summary",
+        json={"trigger": "milestone", "active_minutes": 5, "client_input_revision": 1},
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "generated"
+
+    duplicate = client.post(
+        f"/api/sessions/{meeting_id}/generate-summary",
+        json={"trigger": "milestone", "active_minutes": 10, "client_input_revision": 1},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "no_action"
+
+    transcript("5E2CB506-925E-4A6E-BB68-E5006AB09BDF", "完成回滚演练")
+    second = client.post(
+        f"/api/sessions/{meeting_id}/generate-summary",
+        json={"trigger": "milestone", "active_minutes": 15, "client_input_revision": 2},
+    )
+    assert second.status_code == 200
+    assert second.json()["status"] == "generated"
+
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+    summaries = [event for event in record["events"] if event["kind"] == "summary"]
+    assert len(summaries) == 2
+    assert [event["payload"]["revision"] for event in summaries] == [1, 2]
+    assert summaries[0]["payload"]["active_minutes"] == 5
+    assert summaries[1]["payload"]["active_minutes"] == 15
+    assert (
+        summaries[1]["payload"]["source_revision"]
+        > summaries[0]["payload"]["source_revision"]
+    )
+    assert len(summaries[0]["payload"]["source_event_ids"]) == 1
+    assert len(summaries[1]["payload"]["source_event_ids"]) == 2
+    assert summaries[1]["provenance"]["provider"] == "openai"
+    assert summaries[1]["provenance"]["model"] == "summary-model"
+
+
+def test_summary_generation_accepts_screenshot_only_meeting_input(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    root = tmp_path / "meeting-data"
+    configure(main_service, root, monkeypatch)
+
+    class SummaryAgent(FakeMeetingAgent):
+        async def summarize_meeting(self, record, source_events):
+            return MeetingSummaryResult(
+                summary={
+                    "summary_text": "截图会议摘要",
+                    "tasks": [],
+                    "key_points": ["截图证据"],
+                    "decisions": [],
+                },
+                provider="openai",
+                model="vision-summary-model",
+            )
+
+    monkeypatch.setattr(main_service, "desktop_agent_service", SummaryAgent())
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    screenshot = client.post(
+        f"/api/sessions/{meeting_id}/native-screenshot",
+        headers={"Content-Type": "image/png"},
+        content=PNG,
+    )
+    assert screenshot.status_code == 200
+
+    response = client.post(
+        f"/api/sessions/{meeting_id}/generate-summary",
+        json={"trigger": "milestone", "active_minutes": 5, "client_input_revision": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "generated"
+    assert response.json()["event"]["payload"]["source_event_ids"]

@@ -50,7 +50,7 @@ Each record has `schema_version: 2`, a meeting ID, lifecycle status, start and e
 - `summary`
 - `suggestions`
 
-Every event includes provenance. Provider-backed events may also include provider, model, and request ID metadata. Answer events contain stable evidence references such as `M12`, vision-degradation state, and an inline failure state when generation fails.
+Every event includes provenance. Provider-backed events may also include provider, model, and request ID metadata. Answer events contain stable evidence references such as `M12`, vision-degradation state, and an inline failure state when generation fails. Summary events are append-only revisions with the source event IDs, highest covered source revision, trigger, and active-minute milestone so the latest result is clear without erasing audit history.
 
 Writes use a temporary sibling file followed by atomic replacement. A malformed version 2 file remains on disk and appears as a `recovery_required` item instead of being silently deleted. Missing screenshot bytes produce an unavailable preview and a 404 asset response while the timeline event and any analysis remain visible.
 
@@ -74,6 +74,8 @@ Each question has its own request ID, immutable meeting snapshot, streaming stat
 
 `CaptureState.swift` keeps meeting phase separate from recording activity and exposes the microphone and system-audio lifecycle independently. Microphone authorization distinguishes not determined, authorized, denied, restricted, unavailable hardware, and runtime failure. Permission is requested only when the user starts or explicitly retries capture. Denied and restricted states provide a route to the matching System Settings privacy pane.
 
+`设置 → 采集` persists whether future meetings include the local microphone. The meeting-start surface shows the effective choice. When disabled, the coordinator excludes the microphone source before permission resolution, so it does not request permission, start `AVAudioEngine`, or publish a microphone failure. The setting does not alter existing source-tagged evidence and does not affect system audio, screenshots, AI conversation, summaries, or tasks.
+
 The app bundle supplies both `NSMicrophoneUsageDescription` and the hardened-runtime `com.apple.security.device.audio-input` entitlement. `scripts/check-macos-package-inputs.sh` treats the entitlement file as a required package input, and `scripts/build-macos-app.sh` applies it during signing.
 
 Microphone PCM is always semantic source `microphone` and renders as `我`. System audio is source `system` and renders as `会议`. The coordinator never mixes the streams. Every source-tagged chunk carries capture time and a monotonic meeting-relative millisecond offset through HTTP headers. The companion writes a separate `.pcm` file and JSON metadata sidecar per chunk. Transcripts retain the same source and meeting offset through live WebSocket events, version 2 persistence, history replay, evidence labels, and question context.
@@ -96,17 +98,31 @@ One source may remain active when the other is denied, unavailable, or fails at 
 
 ## Suggested-question freshness
 
-`猜你想问` refresh is event-driven after final transcript, screenshot analysis, and completed answer context. Swift applies a 350 millisecond debounce, increments a meeting-scoped context revision, and cancels any pending debounce before requesting the next generation. Each request includes a generation UUID and revision.
+`猜你想问` refresh is event-driven after meaningful transcript, screenshot analysis, summary, task, and completed-answer context. Swift applies a 350 millisecond debounce, deduplicates semantic context tokens, increments a meeting-scoped context revision, and cancels any pending debounce before requesting the next generation. Each request includes a generation UUID and revision.
 
-The companion cancels the prior in-flight model task for that meeting and checks the latest generation before broadcasting or persisting a result. Swift performs the same generation and revision check before reducing an event, so an older response cannot replace newer suggestions. Accepted suggestions are version 2 timeline events and restore with their historical meeting. Loading, failure, and explicit retry states remain scoped to the active meeting.
+The companion cancels the prior in-flight model task for that meeting and checks the latest generation before broadcasting or persisting a result. Swift performs the same generation and revision check before reducing an event, so an older response cannot replace newer suggestions. Only exactly three unique non-empty questions are accepted atomically. Loading, cancellation, empty or partial results, transient failure, and view refresh never erase the last accepted set. Accepted suggestions are version 2 timeline events and restore with their historical meeting.
+
+## Workspace projection and Markdown
+
+The workspace projects chronological meeting evidence on the left: source-attributed transcript, screenshots, screenshot analysis or failure, and generated summary or task evidence. User questions and assistant answers are excluded from that input projection and remain durably paired on the right conversation surface. The removed `参与讨论` item is not a meeting input event.
+
+Assistant answers and generated narrative evidence use the native Markdown renderer in `MarkdownDocument.swift` and `MarkdownTextView.swift`. It supports headings, emphasis, ordered and unordered lists, quotes, inline and fenced code, and safe HTTP(S) links. Partial streaming fences render as stable code blocks, unsafe link destinations are stripped while preserving text, and the AppKit text view keeps selection, copy, wrapping, accessibility, and dark-theme contrast.
+
+## Active-time summary and task milestones
+
+`MeetingAutomationScheduler.swift` uses active recording time, not wall-clock polling. The default cadence fires at 5 minutes, 10 minutes, and every 5 active minutes thereafter. Settings persist off, 3, 5, or 10-minute cadence choices. Pause time does not count, a long suspension advances to only the latest crossed milestone, and each milestone fires at most once. A model request is skipped when no meaningful meeting input revision has changed.
+
+Each accepted generation produces both a structured summary and actionable tasks in one append-only summary event. Capture continues while the workspace reports waiting, generating, completed, no-action, failed, and manual retry states.
 
 ## Provider settings and secrets
 
-Provider, Base URL, and model identifiers are non-secret preferences. Existing installations with no OpenAI-compatible endpoint preference use `https://api.openai.com/v1` and retain the saved `openAIAnswerModel` value, defaulting to `gpt-4o`. The normalized Base URL and model are stored in UserDefaults and exported to the companion as `OPENAI_API_BASE`, `OPENAI_ANSWER_MODEL`, and `OPENAI_QUESTION_MODEL`. Both OpenAI model variables receive the same configured model so text questions, suggested questions, and multimodal requests stay consistent.
+Provider, Base URL, model identifier, and explicit vision capability are typed non-secret preferences. The configuration inventories five token-spending workflows independently: conversation answers, suggested questions, summaries and tasks, screenshot analysis, and live translation. Each workflow selects DeepSeek or OpenAI-compatible plus a manual non-empty model identifier. Existing single-provider settings migrate into workflow selections without changing Keychain credentials. New DeepSeek selections use the project's established `deepseek-chat` default. Validation does not impose a model-name prefix, so provider-scoped future or custom identifiers remain valid.
+
+OpenAI-compatible and DeepSeek endpoints are shared by their provider workflows. The companion receives purpose-specific `PROMPTMEET_ANSWER_*`, `PROMPTMEET_QUESTION_*`, `PROMPTMEET_SUMMARY_*`, `PROMPTMEET_SCREENSHOT_*`, and `PROMPTMEET_TRANSLATION_*` environment values plus the two provider Base URLs. These values never include credentials. A workflow selected as text-only states the exact degradation: conversation can use transcript and prior analysis text without raw pixels, while screenshot analysis records `unsupported` and retains the image without inventing a visual conclusion.
 
 API keys are added, updated, checked for presence, and removed through macOS Keychain service `com.promptmeet.desktop`. The settings UI uses Keychain metadata to display only configured or not configured. It reads a stored key only for an explicit validation request or companion launch and never renders the value.
 
-The OpenAI-compatible boundary accepts HTTPS endpoints and plain HTTP only for exact loopback hosts `localhost`, `127.0.0.1`, and `::1`. It removes trailing slashes and derives exactly `<base>/chat/completions`; it never adds a second `/v1` segment. Connection validation posts a minimal request with the configured model to that exact endpoint and surfaces a bounded provider error message after removing the credential. It never falls back to the official OpenAI endpoint or to DeepSeek. The local companion reads the selected key from Keychain only when constructing its child-process environment. Raw keys are excluded from ordinary app state, serialized meeting data, backend events, descriptions, feedback, and logs.
+The OpenAI-compatible boundary accepts HTTPS endpoints and plain HTTP only for exact loopback hosts `localhost`, `127.0.0.1`, and `::1`. DeepSeek endpoints require HTTPS. Both remove trailing slashes and derive exactly `<base>/chat/completions`. Connection validation posts a minimal request with the selected workflow model to that exact endpoint. Validation and runtime configuration errors identify workflow, provider, and model after removing the credential. Routing never falls back to another provider or endpoint. The local companion reads the selected key from Keychain only when constructing its child-process environment. Raw keys are excluded from ordinary app state, serialized meeting data, backend events, descriptions, feedback, and logs.
 
 ## Tests and local validation
 

@@ -131,12 +131,22 @@ struct TimelineSummaryPayload: Codable, Equatable, Sendable {
     let tasks: [[String: JSONValue]]
     let keyPoints: [String]
     let decisions: [String]
+    let revision: Int?
+    let sourceEventIDs: [String]?
+    let sourceRevision: Int?
+    let trigger: String?
+    let activeMinutes: Int?
 
     enum CodingKeys: String, CodingKey {
         case summaryText = "summary_text"
         case tasks
         case keyPoints = "key_points"
         case decisions
+        case revision
+        case sourceEventIDs = "source_event_ids"
+        case sourceRevision = "source_revision"
+        case trigger
+        case activeMinutes = "active_minutes"
     }
 }
 
@@ -273,156 +283,6 @@ struct MeetingTimelineEvent: Identifiable, Equatable, Decodable, Sendable {
             capturedAt: occurredAt,
             analysis: nil
         )
-    }
-}
-
-struct ScreenshotAnalysis: Equatable, Sendable {
-    let status: String
-    let text: String
-    let visionUsed: Bool
-    let provider: String?
-    let model: String?
-}
-
-struct ScreenshotAsset: Identifiable, Equatable, Sendable {
-    let id: String
-    let relativePath: String
-    let mimeType: String
-    let width: Int?
-    let height: Int?
-    let capturedAt: Date
-    var analysis: ScreenshotAnalysis?
-
-    func availableFileURL(dataRoot: URL = Self.defaultDataRoot) -> URL? {
-        let url = dataRoot.appendingPathComponent(relativePath)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
-    static var defaultDataRoot: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PromptMeet", isDirectory: true)
-    }
-}
-
-enum ConversationTurnPhase: Equatable, Sendable {
-    case submitting
-    case streaming
-    case completed
-    case failed
-}
-
-struct ConversationTurn: Identifiable, Equatable, Sendable {
-    let id: String
-    let requestID: String
-    let threadID: String
-    var meetingID: String?
-    var question: String
-    var answer: String
-    var phase: ConversationTurnPhase
-    var errorMessage: String?
-    var sources: [EvidenceSource]
-    var degradedVision: Bool
-    let askedAt: Date
-    var answeredAt: Date?
-}
-
-struct HistoricalMeetingAnswer: Equatable, Decodable, Sendable {
-    let requestID: UUID
-    let answer: String
-    let sources: [EvidenceSource]
-    let degradedVision: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case requestID = "request_id"
-        case answer, sources
-        case degradedVision = "degraded_vision"
-    }
-}
-
-enum MeetingTimelineProjection {
-    static func screenshots(_ events: [MeetingTimelineEvent]) -> [ScreenshotAsset] {
-        var assets: [ScreenshotAsset] = []
-        for event in events.sorted(by: eventOrder) {
-            if let screenshot = event.screenshot {
-                assets.append(screenshot)
-                continue
-            }
-            guard case .screenshotAnalysis(let value) = event.payload,
-                let index = assets.firstIndex(where: { $0.id == value.assetID })
-            else { continue }
-            assets[index].analysis = ScreenshotAnalysis(
-                status: value.status,
-                text: value.text,
-                visionUsed: value.visionUsed,
-                provider: event.provenance.provider,
-                model: event.provenance.model
-            )
-        }
-        return assets
-    }
-
-    static func conversation(_ events: [MeetingTimelineEvent]) -> [ConversationTurn] {
-        var turns: [ConversationTurn] = []
-        for event in events.sorted(by: eventOrder) {
-            switch event.payload {
-            case .userQuestion(let value):
-                if !turns.contains(where: { $0.requestID == value.requestID }) {
-                    turns.append(
-                        ConversationTurn(
-                            id: value.requestID,
-                            requestID: value.requestID,
-                            threadID: value.threadID,
-                            meetingID: event.meetingID,
-                            question: value.question,
-                            answer: "",
-                            phase: .submitting,
-                            errorMessage: nil,
-                            sources: [],
-                            degradedVision: false,
-                            askedAt: event.occurredAt,
-                            answeredAt: nil
-                        )
-                    )
-                }
-            case .assistantAnswer(let value):
-                let index: Int
-                if let existing = turns.firstIndex(where: { $0.requestID == value.requestID }) {
-                    index = existing
-                } else {
-                    turns.append(
-                        ConversationTurn(
-                            id: value.requestID,
-                            requestID: value.requestID,
-                            threadID: value.threadID,
-                            meetingID: event.meetingID,
-                            question: "历史问题",
-                            answer: "",
-                            phase: .submitting,
-                            errorMessage: nil,
-                            sources: [],
-                            degradedVision: false,
-                            askedAt: event.occurredAt,
-                            answeredAt: nil
-                        )
-                    )
-                    index = turns.count - 1
-                }
-                turns[index].answer = value.answer
-                turns[index].phase = value.status == "failed" ? .failed : .completed
-                turns[index].errorMessage = value.errorMessage
-                turns[index].sources = value.sources
-                turns[index].degradedVision = value.degradedVision
-                turns[index].answeredAt = event.occurredAt
-            default:
-                break
-            }
-        }
-        return turns
-    }
-
-    private static func eventOrder(_ lhs: MeetingTimelineEvent, _ rhs: MeetingTimelineEvent) -> Bool {
-        if lhs.sequence != rhs.sequence { return lhs.sequence < rhs.sequence }
-        return lhs.occurredAt < rhs.occurredAt
     }
 }
 

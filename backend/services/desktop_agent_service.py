@@ -25,6 +25,13 @@ class MeetingAnswerResult:
     model: str
 
 
+@dataclass(frozen=True)
+class MeetingSummaryResult:
+    summary: dict
+    provider: str
+    model: str
+
+
 class _DuckDuckGoResultParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -108,8 +115,11 @@ class DesktopAgentService:
         budget: ContextBudget | None = None,
         exclude_event_ids: set[str] | None = None,
         search_web: bool = True,
+        purpose: str = "answer",
     ) -> MeetingAnswerResult:
-        configuration = ProviderConfiguration.from_environment(dict(self.environment))
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose=purpose
+        )
         context_budget = budget or ContextBudget(
             total_tokens=min(configuration.capabilities.max_context_tokens, 8_000),
             answer_reserve=2_000,
@@ -140,18 +150,23 @@ class DesktopAgentService:
             )
         except httpx.HTTPStatusError as error:
             if not self._is_image_rejection(error, prompt_request):
-                raise
+                raise self._runtime_failure(configuration, purpose, error) from error
             prompt_request = MeetingPromptBuilder().build(
                 selection,
                 question,
                 replace(configuration.capabilities, supports_vision=False),
             )
-            answer, web_sources = await self._run_meeting_prompt(
-                configuration,
-                prompt_request,
-                emit,
-                search_enabled=search_enabled,
-            )
+            try:
+                answer, web_sources = await self._run_meeting_prompt(
+                    configuration,
+                    prompt_request,
+                    emit,
+                    search_enabled=search_enabled,
+                )
+            except httpx.HTTPError as fallback_error:
+                raise self._runtime_failure(
+                    configuration, purpose, fallback_error
+                ) from fallback_error
 
         source_block = self._source_block(web_sources)
         answer += source_block
@@ -253,7 +268,9 @@ class DesktopAgentService:
         record: MeetingRecord,
         screenshot_event,
     ) -> ScreenshotAnalysisResult:
-        configuration = ProviderConfiguration.from_environment(dict(self.environment))
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="screenshot"
+        )
         if not configuration.capabilities.supports_vision:
             return ScreenshotAnalysisResult(
                 status="unsupported",
@@ -274,6 +291,7 @@ class DesktopAgentService:
             "请客观描述最新会议截图中的关键信息、数字、决定和待办。不要推测看不清的内容。",
             ignore,
             search_web=False,
+            purpose="screenshot",
         )
         if result.degraded_vision:
             return ScreenshotAnalysisResult(
@@ -485,23 +503,99 @@ class DesktopAgentService:
         except Exception:
             return text if len(text) <= 600 else f"{text[:600]}…"
 
+    async def summarize_meeting(
+        self,
+        record: MeetingRecord,
+        source_events: list,
+    ) -> MeetingSummaryResult:
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="summary"
+        )
+        context_lines = []
+        for event in source_events:
+            payload = event.payload
+            if hasattr(payload, "text") and payload.text:
+                speaker = getattr(payload, "speaker", None) or event.kind.value
+                context_lines.append(f"[{event.sequence}] {speaker}：{payload.text}")
+            elif isinstance(payload, ScreenshotPayload):
+                context_lines.append(
+                    f"[{event.sequence}] 截图资产 {payload.asset_id}，类型 {payload.mime_type}"
+                )
+        response_content = ""
+        try:
+            async with httpx.AsyncClient(timeout=90) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你是会议总结助手。只输出 JSON 对象，字段为 summary_text、tasks、"
+                                    "key_points、decisions。tasks 每项包含 task、describe、priority、"
+                                    "assignee、deadline、status。没有行动项时 tasks 为空数组，不得编造。"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": "\n".join(context_lines),
+                            },
+                        ],
+                        "stream": False,
+                        "temperature": 0.1,
+                    },
+                )
+                response.raise_for_status()
+                response_content = response.json()["choices"][0]["message"][
+                    "content"
+                ].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "summary", error) from error
+        if response_content.startswith("```"):
+            response_content = (
+                response_content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            )
+        summary = json.loads(response_content)
+        if (
+            not isinstance(summary, dict)
+            or not str(summary.get("summary_text") or "").strip()
+        ):
+            raise ValueError("摘要模型返回了无效结构")
+        return MeetingSummaryResult(
+            summary={
+                "summary_text": str(summary["summary_text"]).strip(),
+                "tasks": list(summary.get("tasks") or []),
+                "key_points": [str(item) for item in summary.get("key_points") or []],
+                "decisions": [str(item) for item in summary.get("decisions") or []],
+            },
+            provider=configuration.provider,
+            model=configuration.model,
+        )
+
     async def generate_questions(self, transcript: list) -> list[dict]:
-        endpoint, api_key, model = self._provider("questions")
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="questions"
+        )
         recent_transcript = transcript[-50:]
         context = self._format_context(recent_transcript)
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": self._question_messages(context),
-                    "stream": False,
-                    "temperature": 0.2,
-                },
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"].strip()
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": self._question_messages(context),
+                        "stream": False,
+                        "temperature": 0.2,
+                    },
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "questions", error) from error
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         questions = json.loads(content)
@@ -518,7 +612,15 @@ class DesktopAgentService:
             and item["evidence"].strip()
             and self._normalized_text(item["evidence"]) in normalized_context
         ]
-        return grounded_questions[:3]
+        unique_questions = []
+        seen = set()
+        for question in grounded_questions:
+            normalized = self._normalized_text(question["question"])
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_questions.append(question)
+        return unique_questions if len(unique_questions) == 3 else []
 
     def _answer_messages(
         self,
@@ -562,13 +664,14 @@ class DesktopAgentService:
     @staticmethod
     def _question_messages(context: str) -> list[dict[str, str]]:
         system_prompt = (
-            "从实时会议中捕捉0到3个最新出现、尚未解决且适合立即交给AI回答的问题。\n"
+            "从实时会议中生成恰好3个最新、具体且适合立即交给AI回答的问题。\n"
             "重点识别：参会者明确提出的问题、大家都没有思路的共同疑问、面试官要求说明的思路、"
             "需要完成的编程任务，以及阻碍讨论继续的知识缺口。优先最近的会议片段；"
             "旧问题只有在仍未解决且仍与当前议题相关时才保留。\n"
             "问题必须基于会议内容，并附上一段连续原文作为 evidence；答案不需要出现在会议记录中，"
-            "后续回答器会使用模型知识和联网搜索。不要生成已经被明确回答的问题，也不要生成泛泛的主题复述。"
-            "如果没有合格问题，输出[]。\n"
+            "后续回答器会使用模型知识和联网搜索。优先尚未解决的问题；如果原文没有三个明确疑问，"
+            "可围绕原文中的决定、风险和下一步生成澄清问题，但不得编造原文没有的事实。"
+            "不要生成已经被明确回答的问题，也不要生成泛泛的主题复述。\n"
             "只输出JSON数组，每项格式为"
             '{"question":"可直接交给AI回答的问题","evidence":"会议原文中的连续短句"}。'
         )
@@ -769,7 +872,9 @@ class DesktopAgentService:
         return f"\n\n参考来源：\n{'\n'.join(sources)}" if sources else ""
 
     async def translate(self, text: str, target_language: str) -> str:
-        endpoint, api_key, model = self._provider("answer")
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="translation"
+        )
         language_names = {
             "zh": "简体中文",
             "en": "English",
@@ -777,26 +882,45 @@ class DesktopAgentService:
             "ko": "한국어",
         }
         target = language_names.get(target_language, target_language)
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": f"将用户文本准确翻译为{target}。只输出译文，不解释。",
-                        },
-                        {"role": "user", "content": text},
-                    ],
-                    "stream": False,
-                    "temperature": 0,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": f"将用户文本准确翻译为{target}。只输出译文，不解释。",
+                            },
+                            {"role": "user", "content": text},
+                        ],
+                        "stream": False,
+                        "temperature": 0,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "translation", error) from error
         return payload["choices"][0]["message"]["content"].strip()
+
+    @staticmethod
+    def _runtime_failure(
+        configuration: ProviderConfiguration,
+        purpose: str,
+        error: httpx.HTTPError,
+    ) -> RuntimeError:
+        status = (
+            f"，HTTP {error.response.status_code}"
+            if isinstance(error, httpx.HTTPStatusError)
+            else ""
+        )
+        return RuntimeError(
+            f"AI 工作流 {purpose} · {configuration.provider} · "
+            f"{configuration.model} 请求失败{status}"
+        )
 
     def _provider(self, purpose: str = "answer") -> tuple[str, str, str]:
         configuration = ProviderConfiguration.from_environment(
@@ -813,6 +937,15 @@ class DesktopAgentService:
             questions = ProviderConfiguration.from_environment(
                 dict(self.environment), purpose="questions"
             )
+            summary = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="summary"
+            )
+            screenshot = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="screenshot"
+            )
+            translation = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="translation"
+            )
         except (RuntimeError, ValueError):
             return {"configured": False, "provider": None, "model": None}
         return {
@@ -821,4 +954,11 @@ class DesktopAgentService:
             "model": answer.model,
             "answer_model": answer.model,
             "question_model": questions.model,
+            "summary_provider": summary.provider,
+            "summary_model": summary.model,
+            "screenshot_provider": screenshot.provider,
+            "screenshot_model": screenshot.model,
+            "screenshot_supports_vision": screenshot.capabilities.supports_vision,
+            "translation_provider": translation.provider,
+            "translation_model": translation.model,
         }

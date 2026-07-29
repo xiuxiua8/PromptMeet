@@ -69,6 +69,44 @@ final class IslandGeometryTests: XCTestCase {
         XCTAssertTrue(expanded.contains(triggerPoint))
     }
 
+    func testInteractiveRectExactlyMatchesVisibleRectAtRealisticHostSizes() {
+        for host in [
+            CGSize(width: 1_184, height: 640),
+            CGSize(width: 1_440, height: 640),
+            CGSize(width: 1_920, height: 1_080)
+        ] {
+            for presentation in [IslandPresentation.idle, .live, .hoverIdle, .hoverLive] {
+                XCTAssertEqual(
+                    IslandGeometry.interactiveRect(
+                        for: presentation,
+                        inHost: host,
+                        topChromeWidth: 184,
+                        topChromeHeight: 32
+                    ),
+                    IslandGeometry.visibleRect(
+                        for: presentation,
+                        inHost: host,
+                        topChromeWidth: 184,
+                        topChromeHeight: 32
+                    )
+                )
+            }
+        }
+    }
+
+    func testLargeExpandedIslandControlsRemainInsideInteractiveRect() {
+        let host = CGSize(width: 1_184, height: 640)
+        let interactive = IslandGeometry.interactiveRect(
+            for: .hoverLive,
+            inHost: host,
+            topChromeWidth: 184,
+            topChromeHeight: 32
+        )
+
+        XCTAssertTrue(interactive.contains(CGPoint(x: interactive.maxX - 18, y: interactive.maxY - 18)))
+        XCTAssertTrue(interactive.contains(CGPoint(x: interactive.minX + 18, y: interactive.minY + 18)))
+    }
+
     func testHoverModeKeepsIdleCardCompact() {
         XCTAssertEqual(
             IslandGeometry.size(for: .hoverIdle),

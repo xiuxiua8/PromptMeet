@@ -154,6 +154,19 @@ final class CompanionLauncher: CompanionLaunching {
         process.arguments = [configuration.scriptURL.path]
         process.currentDirectoryURL = configuration.workingDirectory
 
+        let logHandle = try companionLogHandle(fileManager: fileManager)
+        ownedLogHandle = logHandle
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        process.environment = try companionEnvironment(
+            configuration: configuration,
+            fileManager: fileManager
+        )
+        try process.run()
+        return process
+    }
+
+    private func companionLogHandle(fileManager: FileManager) throws -> FileHandle {
         let logsDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PromptMeet/logs", isDirectory: true)
         try fileManager.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
@@ -163,10 +176,13 @@ final class CompanionLauncher: CompanionLaunching {
         }
         let logHandle = try FileHandle(forWritingTo: logURL)
         try logHandle.seekToEnd()
-        ownedLogHandle = logHandle
-        process.standardOutput = logHandle
-        process.standardError = logHandle
+        return logHandle
+    }
 
+    private func companionEnvironment(
+        configuration: CompanionLaunchConfiguration,
+        fileManager: FileManager
+    ) throws -> [String: String] {
         var processEnvironment = ProcessInfo.processInfo.environment
         processEnvironment["PYTHONUNBUFFERED"] = "1"
         processEnvironment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -192,12 +208,9 @@ final class CompanionLauncher: CompanionLaunching {
             processEnvironment["DEEPSEEK_API_KEY"] = deepSeekKey
         }
         let defaults = UserDefaults.standard
-        let provider = defaults.string(forKey: AIProviderPreferenceKey.provider) ?? "deepseek"
         let providerEnvironment = try AIProviderPreferences(defaults: defaults)
-            .runtimeEnvironment(providerID: provider)
+            .runtimeEnvironment()
         processEnvironment.merge(providerEnvironment) { _, configured in configured }
-        process.environment = processEnvironment
-        try process.run()
-        return process
+        return processEnvironment
     }
 }

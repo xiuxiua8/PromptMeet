@@ -3,11 +3,11 @@ import XCTest
 @testable import PromptMeet
 
 final class MeetingStateTests: XCTestCase {
-    func testAuraPreviewIncludesInsightAndTwoSuggestedQuestions() {
+    func testAuraPreviewIncludesInsightAndExactlyThreeSuggestedQuestions() {
         let state = MeetingState.previewAura
 
         XCTAssertNotNil(state.latestInsight)
-        XCTAssertEqual(state.generatedQuestions.count, 2)
+        XCTAssertEqual(state.generatedQuestions.count, 3)
         XCTAssertEqual(state.transcript.count, 3)
     }
 
@@ -145,58 +145,8 @@ final class MeetingStateTests: XCTestCase {
         let requestID = UUID()
         let askedAt = Date()
         state.reduce(.userPromptSubmitted(id: requestID, prompt: "谁负责发布？"))
-        state.reduce(
-            .meetingEvent(
-                MeetingTimelineEvent(
-                    eventID: "question-event",
-                    meetingID: "active-meeting",
-                    sequence: 1,
-                    occurredAt: askedAt,
-                    kind: .userQuestion,
-                    provenance: TimelineProvenance(
-                        source: "user",
-                        provider: nil,
-                        model: nil,
-                        requestID: requestID.uuidString
-                    ),
-                    payload: .userQuestion(
-                        TimelineQuestionPayload(
-                            requestID: requestID.uuidString,
-                            threadID: "main",
-                            question: "谁负责发布？"
-                        )
-                    )
-                )
-            )
-        )
-        state.reduce(
-            .meetingEvent(
-                MeetingTimelineEvent(
-                    eventID: "answer-event",
-                    meetingID: "active-meeting",
-                    sequence: 2,
-                    occurredAt: askedAt.addingTimeInterval(1),
-                    kind: .assistantAnswer,
-                    provenance: TimelineProvenance(
-                        source: "meeting_agent",
-                        provider: "fake",
-                        model: "fake-chat",
-                        requestID: requestID.uuidString
-                    ),
-                    payload: .assistantAnswer(
-                        TimelineAnswerPayload(
-                            requestID: requestID.uuidString,
-                            threadID: "main",
-                            answer: "林晨负责发布。",
-                            sources: [],
-                            degradedVision: false,
-                            status: "completed",
-                            errorMessage: nil
-                        )
-                    )
-                )
-            )
-        )
+        state.reduce(.meetingEvent(durableQuestionEvent(requestID: requestID, at: askedAt)))
+        state.reduce(.meetingEvent(durableAnswerEvent(requestID: requestID, at: askedAt)))
 
         XCTAssertEqual(state.displayedConversation.count, 1)
         XCTAssertEqual(state.displayedConversation.first?.meetingID, "active-meeting")
@@ -282,7 +232,7 @@ final class MeetingStateTests: XCTestCase {
 
     func testNewQuestionBatchReplacesStaleSuggestions() {
         var state = MeetingState.previewLive
-        state.reduce(.questionsGenerated(["旧问题一", "旧问题二"]))
+        state.reduce(.questionsGenerated(["旧问题一", "旧问题二", "旧问题三"]))
 
         state.reduce(.questionsGenerated(["新问题一", "新问题二", "新问题三"]))
 
@@ -290,13 +240,15 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(state.latestInsight, "新问题一")
     }
 
-    func testEmptyQuestionBatchClearsStaleSuggestions() {
-        var state = MeetingState.previewLive
-        state.reduce(.questionsGenerated(["已经过时的问题"]))
+    func testUnsuccessfulQuestionBatchesKeepLastGoodSuggestions() {
+        var state = MeetingState.previewAura
+        let previous = state.generatedQuestions
 
         state.reduce(.questionsGenerated([]))
+        state.reduce(.questionsGenerated(["只有一个问题"]))
+        state.reduce(.questionsGenerated(["重复问题", "重复问题", "第三个问题"]))
 
-        XCTAssertTrue(state.generatedQuestions.isEmpty)
+        XCTAssertEqual(state.generatedQuestions, previous)
     }
 
     func testQuickAskPresentationAndDraftAreSharedState() {
@@ -310,4 +262,54 @@ final class MeetingStateTests: XCTestCase {
         XCTAssertEqual(state.islandPresentation(isHovered: false), .hoverLive)
         XCTAssertEqual(state.islandPresentation(isHovered: true), .hoverLive)
     }
+}
+
+private func durableQuestionEvent(requestID: UUID, at date: Date) -> MeetingTimelineEvent {
+    MeetingTimelineEvent(
+        eventID: "question-event",
+        meetingID: "active-meeting",
+        sequence: 1,
+        occurredAt: date,
+        kind: .userQuestion,
+        provenance: TimelineProvenance(
+            source: "user",
+            provider: nil,
+            model: nil,
+            requestID: requestID.uuidString
+        ),
+        payload: .userQuestion(
+            TimelineQuestionPayload(
+                requestID: requestID.uuidString,
+                threadID: "main",
+                question: "谁负责发布？"
+            )
+        )
+    )
+}
+
+private func durableAnswerEvent(requestID: UUID, at date: Date) -> MeetingTimelineEvent {
+    MeetingTimelineEvent(
+        eventID: "answer-event",
+        meetingID: "active-meeting",
+        sequence: 2,
+        occurredAt: date.addingTimeInterval(1),
+        kind: .assistantAnswer,
+        provenance: TimelineProvenance(
+            source: "meeting_agent",
+            provider: "fake",
+            model: "fake-chat",
+            requestID: requestID.uuidString
+        ),
+        payload: .assistantAnswer(
+            TimelineAnswerPayload(
+                requestID: requestID.uuidString,
+                threadID: "main",
+                answer: "林晨负责发布。",
+                sources: [],
+                degradedVision: false,
+                status: "completed",
+                errorMessage: nil
+            )
+        )
+    )
 }

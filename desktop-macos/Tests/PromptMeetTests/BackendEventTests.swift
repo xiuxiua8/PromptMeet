@@ -5,7 +5,8 @@ import XCTest
 final class BackendEventTests: XCTestCase {
     func testTranscriptDecodesFromExistingWebSocketShape() throws {
         let event = try BackendEvent.decode(
-            #"{"type":"audio_transcript","data":{"id":"line-1","speaker":"林晨","text":"确认范围","timestamp":"2026-07-24T09:30:00+08:00"}}"#
+            #"{"type":"audio_transcript","data":{"id":"line-1","speaker":"林晨","text":"确认范围","#
+                + #""timestamp":"2026-07-24T09:30:00+08:00"}}"#
         )
 
         guard case .transcript(let line) = event else {
@@ -17,7 +18,9 @@ final class BackendEventTests: XCTestCase {
 
     func testTranscriptDecodesSemanticSourceAndMeetingTime() throws {
         let event = try BackendEvent.decode(
-            #"{"type":"audio_transcript","data":{"id":"08f0900a-a756-48db-bf38-d3040ddcd986","text":"我会负责回滚","speaker":"我","source":"microphone","meeting_time_ms":1250,"timestamp":"2026-07-26T10:00:00Z"}}"#
+            #"{"type":"audio_transcript","data":{"id":"08f0900a-a756-48db-bf38-d3040ddcd986","#
+                + #""text":"我会负责回滚","speaker":"我","source":"microphone","meeting_time_ms":1250,"#
+                + #""timestamp":"2026-07-26T10:00:00Z"}}"#
         )
 
         guard case .transcript(let line) = event else {
@@ -82,7 +85,8 @@ final class BackendEventTests: XCTestCase {
         let generationID = UUID()
         XCTAssertEqual(
             try BackendEvent.decode(
-                #"{"type":"questions","data":{"generation_id":"\#(generationID.uuidString)","context_revision":4,"questions":[{"question":"负责人是谁？"}]}}"#
+                #"{"type":"questions","data":{"generation_id":"\#(generationID.uuidString)","#
+                    + #""context_revision":4,"questions":[{"question":"负责人是谁？"}]}}"#
             ),
             .questions(
                 generationID: generationID,
@@ -94,7 +98,9 @@ final class BackendEventTests: XCTestCase {
 
     func testStructuredSummaryKeepsTasksKeyPointsAndDecisions() throws {
         let event = try BackendEvent.decode(
-            #"{"type":"summary_generated","data":{"summary_text":"已确认上线范围","tasks":[{"task":"准备发布","deadline":"明天","assignee":"林晨","priority":"high","status":"pending"}],"key_points":["范围冻结"],"decisions":["周五上线"]}}"#
+            #"{"type":"summary_generated","data":{"summary_text":"已确认上线范围","tasks":[{"task":"准备发布","#
+                + #""deadline":"明天","assignee":"林晨","priority":"high","status":"pending"}],"#
+                + #""key_points":["范围冻结"],"decisions":["周五上线"]}}"#
         )
 
         guard case .summary(let summary) = event else {
@@ -133,7 +139,11 @@ final class BackendEventTests: XCTestCase {
 
     func testTypedMeetingEventDecodesForTimelineProjection() throws {
         let event = try BackendEvent.decode(
-            #"{"type":"meeting_event","data":{"event_id":"event-1","meeting_id":"meeting-1","sequence":1,"occurred_at":"2026-07-25T10:01:00Z","kind":"screenshot","provenance":{"source":"native_screenshot"},"payload":{"type":"screenshot","asset_id":"asset-1","relative_path":"assets/meeting-1/slide.png","mime_type":"image/png","sha256":"abc","capture_status":"available"}}}"#
+            #"{"type":"meeting_event","data":{"event_id":"event-1","meeting_id":"meeting-1","sequence":1,"#
+                + #""occurred_at":"2026-07-25T10:01:00Z","kind":"screenshot","#
+                + #""provenance":{"source":"native_screenshot"},"payload":{"type":"screenshot","asset_id":"asset-1","#
+                + #""relative_path":"assets/meeting-1/slide.png","mime_type":"image/png","sha256":"abc","#
+                + #""capture_status":"available"}}}"#
         )
 
         guard case .meetingEvent(let timelineEvent) = event else {

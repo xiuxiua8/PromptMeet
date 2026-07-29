@@ -67,6 +67,25 @@ enum ScreenshotPickerError: LocalizedError, Equatable {
     }
 }
 
+struct PickerPresentationLifecycle: Equatable, Sendable {
+    private(set) var activeGeneration: UUID?
+
+    var isPresenting: Bool { activeGeneration != nil }
+
+    mutating func begin() throws -> UUID {
+        guard activeGeneration == nil else { throw ScreenshotPickerError.selectionInProgress }
+        let generation = UUID()
+        activeGeneration = generation
+        return generation
+    }
+
+    mutating func finish(generation: UUID) -> Bool {
+        guard activeGeneration == generation else { return false }
+        activeGeneration = nil
+        return true
+    }
+}
+
 @MainActor
 final class ScreenCaptureController: ScreenshotCaptureControlling {
     private let targetPicker: any ScreenshotTargetPicking
@@ -127,6 +146,8 @@ final class SystemContentSharingTargetPicker: NSObject, ScreenshotTargetPicking 
     private let contentPicker: any ContentSharingPickerPresenting
     private let permission: any ScreenRecordingPermissionProviding
     private var continuation: CheckedContinuation<ScreenshotTargetHandle, Error>?
+    private var lifecycle = PickerPresentationLifecycle()
+    private var observer: PickerSelectionObserver?
 
     init(
         contentPicker: any ContentSharingPickerPresenting = SCContentSharingPicker.shared,
@@ -138,33 +159,75 @@ final class SystemContentSharingTargetPicker: NSObject, ScreenshotTargetPicking 
 
     func pickTarget() async throws -> ScreenshotTargetHandle {
         guard #available(macOS 14.0, *) else { throw ScreenshotPickerError.requiresMacOS14 }
-        guard continuation == nil else { throw ScreenshotPickerError.selectionInProgress }
+        let generation = try lifecycle.begin()
         guard
             await ScreenRecordingPermissionResolver(
                 permission: permission
             ).resolveForUserAction()
         else {
+            _ = lifecycle.finish(generation: generation)
             throw ScreenshotPickerError.screenRecordingDenied
         }
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            beginPickerPresentation()
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self, self.lifecycle.activeGeneration == generation else { return }
+                self.beginPickerPresentation(generation: generation)
+            }
         }
     }
 
     func beginPickerPresentation() {
+        let generation: UUID
+        if let activeGeneration = lifecycle.activeGeneration {
+            generation = activeGeneration
+        } else if let created = try? lifecycle.begin() {
+            generation = created
+        } else {
+            return
+        }
+        beginPickerPresentation(generation: generation)
+    }
+
+    private func beginPickerPresentation(generation: UUID) {
+        guard lifecycle.activeGeneration == generation else { return }
         var configuration = SCContentSharingPickerConfiguration()
         configuration.allowedPickerModes = [.singleWindow]
         contentPicker.configuration = configuration
-        contentPicker.add(self)
+        let observer = PickerSelectionObserver(owner: self, generation: generation)
+        self.observer = observer
+        contentPicker.add(observer)
         contentPicker.isActive = true
-        NSApplication.shared.activate(ignoringOtherApps: true)
         contentPicker.present()
     }
 
-    private func finish() {
-        contentPicker.remove(self)
+    fileprivate func didCancel(generation: UUID) {
+        complete(generation: generation, result: .failure(ScreenshotPickerError.cancelled))
+    }
+
+    fileprivate func didSelect(generation: UUID, filter: SCContentFilter) {
+        let target = ScreenshotTargetHandle(label: Self.label(for: filter), filter: filter)
+        complete(generation: generation, result: .success(target))
+    }
+
+    fileprivate func didFail(generation: UUID, error: any Error) {
+        complete(generation: generation, result: .failure(error))
+    }
+
+    private func complete(
+        generation: UUID,
+        result: Result<ScreenshotTargetHandle, any Error>
+    ) {
+        guard lifecycle.finish(generation: generation) else { return }
+        let continuation = self.continuation
+        self.continuation = nil
+        if let observer {
+            contentPicker.remove(observer)
+        }
+        observer = nil
         contentPicker.isActive = false
+        continuation?.resume(with: result)
     }
 
     private static func label(for filter: SCContentFilter) -> String {
@@ -186,15 +249,22 @@ final class SystemContentSharingTargetPicker: NSObject, ScreenshotTargetPicking 
 }
 
 @available(macOS 14.0, *)
-extension SystemContentSharingTargetPicker: SCContentSharingPickerObserver {
+private final class PickerSelectionObserver: NSObject, SCContentSharingPickerObserver, @unchecked Sendable {
+    private weak var owner: SystemContentSharingTargetPicker?
+    private let generation: UUID
+
+    init(owner: SystemContentSharingTargetPicker, generation: UUID) {
+        self.owner = owner
+        self.generation = generation
+    }
+
     nonisolated func contentSharingPicker(
         _ picker: SCContentSharingPicker,
         didCancelFor stream: SCStream?
     ) {
-        Task { @MainActor in
-            finish()
-            continuation?.resume(throwing: ScreenshotPickerError.cancelled)
-            continuation = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            owner?.didCancel(generation: generation)
         }
     }
 
@@ -203,19 +273,16 @@ extension SystemContentSharingTargetPicker: SCContentSharingPickerObserver {
         didUpdateWith filter: SCContentFilter,
         for stream: SCStream?
     ) {
-        Task { @MainActor in
-            let target = ScreenshotTargetHandle(label: Self.label(for: filter), filter: filter)
-            finish()
-            continuation?.resume(returning: target)
-            continuation = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            owner?.didSelect(generation: generation, filter: filter)
         }
     }
 
     nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
-        Task { @MainActor in
-            finish()
-            continuation?.resume(throwing: error)
-            continuation = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            owner?.didFail(generation: generation, error: error)
         }
     }
 }

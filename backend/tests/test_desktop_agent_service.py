@@ -25,7 +25,8 @@ class FakeResponse:
 [
   {"question":"如何实现一个线程安全的 LRU 缓存？","evidence":"请实现一个线程安全的 LRU 缓存"},
   {"question":"项目预算是多少？","evidence":"预算是 100 万元"},
-  {"question":"谁负责上线？","evidence":""}
+  {"question":"谁负责上线？","evidence":"周岚负责上线"},
+  {"question":"无依据的问题？","evidence":"不存在的原文"}
 ]
 ```"""}}]}
 
@@ -44,6 +45,60 @@ class FakeClient:
         return FakeResponse()
 
 
+class RuntimeFailureResponse:
+    def raise_for_status(self) -> None:
+        request = httpx.Request("POST", "https://proxy.example/v1/chat/completions")
+        response = httpx.Response(503, request=request, text="secret-runtime-key")
+        raise httpx.HTTPStatusError(
+            "secret-runtime-key upstream failure",
+            request=request,
+            response=response,
+        )
+
+
+class RuntimeFailureClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, *args, **kwargs) -> RuntimeFailureResponse:
+        return RuntimeFailureResponse()
+
+
+def test_summary_runtime_failure_names_workflow_provider_model_without_credential(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: RuntimeFailureClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SUMMARY_PROVIDER": "openai",
+            "PROMPTMEET_SUMMARY_MODEL": "summary-model",
+            "OPENAI_API_KEY": "secret-runtime-key",
+            "OPENAI_API_BASE": "https://proxy.example/v1",
+        }
+    )
+    record = MeetingRecord(
+        meeting_id="runtime-failure",
+        started_at=datetime(2026, 7, 29, tzinfo=UTC),
+        events=[],
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        asyncio.run(service.summarize_meeting(record, []))
+
+    message = str(captured.value)
+    assert "summary" in message
+    assert "openai" in message
+    assert "summary-model" in message
+    assert "503" in message
+    assert "secret-runtime-key" not in message
+
+
 def test_generate_questions_returns_structured_desktop_questions(monkeypatch) -> None:
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
@@ -55,13 +110,19 @@ def test_generate_questions_returns_structured_desktop_questions(monkeypatch) ->
             "Segment",
             (),
             {"speaker": "面试官", "text": "请实现一个线程安全的 LRU 缓存"},
-        )()
+        )(),
+        type("Segment", (), {"speaker": "产品", "text": "预算是 100 万元"})(),
+        type("Segment", (), {"speaker": "项目", "text": "周岚负责上线"})(),
     ]
 
     questions = asyncio.run(service.generate_questions(transcript))
 
-    assert questions == [{"question": "如何实现一个线程安全的 LRU 缓存？"}]
-    assert FakeClient.last_payload["model"] == "deepseek-v4-flash"
+    assert questions == [
+        {"question": "如何实现一个线程安全的 LRU 缓存？"},
+        {"question": "项目预算是多少？"},
+        {"question": "谁负责上线？"},
+    ]
+    assert FakeClient.last_payload["model"] == "deepseek-chat"
 
 
 def test_question_prompt_captures_unresolved_questions_from_latest_context(
@@ -84,7 +145,7 @@ def test_question_prompt_captures_unresolved_questions_from_latest_context(
     assert "共同疑问" in system_prompt
     assert "编程任务" in system_prompt
     assert "答案不需要出现在会议记录中" in system_prompt
-    assert "输出[]" in system_prompt.replace(" ", "")
+    assert "恰好3个" in system_prompt.replace(" ", "")
     assert '"evidence"' in system_prompt
 
 
@@ -493,8 +554,8 @@ def test_provider_status_reports_configuration_without_exposing_key() -> None:
         environment={
             "PROMPTMEET_AI_PROVIDER": "deepseek",
             "DEEPSEEK_API_KEY": "secret-key",
-            "DEEPSEEK_ANSWER_MODEL": "deepseek-v4-pro",
-            "DEEPSEEK_QUESTION_MODEL": "deepseek-v4-flash",
+            "DEEPSEEK_ANSWER_MODEL": "custom-answer-id",
+            "DEEPSEEK_QUESTION_MODEL": "custom-question-id",
         }
     ).provider_status()
     missing = DesktopAgentService(environment={}).provider_status()
@@ -502,9 +563,16 @@ def test_provider_status_reports_configuration_without_exposing_key() -> None:
     assert configured == {
         "configured": True,
         "provider": "deepseek",
-        "model": "deepseek-v4-pro",
-        "answer_model": "deepseek-v4-pro",
-        "question_model": "deepseek-v4-flash",
+        "model": "custom-answer-id",
+        "answer_model": "custom-answer-id",
+        "question_model": "custom-question-id",
+        "summary_provider": "deepseek",
+        "summary_model": "custom-answer-id",
+        "screenshot_provider": "deepseek",
+        "screenshot_model": "custom-answer-id",
+        "screenshot_supports_vision": False,
+        "translation_provider": "deepseek",
+        "translation_model": "custom-answer-id",
     }
     assert missing == {"configured": False, "provider": None, "model": None}
     assert "secret-key" not in str(configured)
@@ -514,13 +582,13 @@ def test_answer_and_question_generation_use_different_models() -> None:
     service = DesktopAgentService(
         environment={
             "DEEPSEEK_API_KEY": "test-key",
-            "DEEPSEEK_ANSWER_MODEL": "deepseek-v4-pro",
-            "DEEPSEEK_QUESTION_MODEL": "deepseek-v4-flash",
+            "DEEPSEEK_ANSWER_MODEL": "custom-answer-id",
+            "DEEPSEEK_QUESTION_MODEL": "custom-question-id",
         }
     )
 
-    assert service._provider("answer")[2] == "deepseek-v4-pro"
-    assert service._provider("questions")[2] == "deepseek-v4-flash"
+    assert service._provider("answer")[2] == "custom-answer-id"
+    assert service._provider("questions")[2] == "custom-question-id"
 
 
 def test_openai_compatible_requests_use_configured_endpoint_and_model_consistently() -> (
@@ -553,6 +621,13 @@ def test_openai_compatible_requests_use_configured_endpoint_and_model_consistent
         "model": "proxy-model",
         "answer_model": "proxy-model",
         "question_model": "proxy-model",
+        "summary_provider": "openai",
+        "summary_model": "proxy-model",
+        "screenshot_provider": "openai",
+        "screenshot_model": "proxy-model",
+        "screenshot_supports_vision": False,
+        "translation_provider": "openai",
+        "translation_model": "proxy-model",
     }
 
 
@@ -613,6 +688,7 @@ def test_openai_compatible_image_rejection_retries_text_only_on_same_route(
             "OPENAI_API_KEY": "placeholder-key",
             "OPENAI_API_BASE": "http://localhost:52251/v1/",
             "OPENAI_ANSWER_MODEL": "proxy-vision-model",
+            "PROMPTMEET_ANSWER_SUPPORTS_VISION": "1",
             "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
         },
         assets_root=tmp_path,
@@ -679,6 +755,7 @@ def test_screenshot_analysis_reports_proxy_image_rejection_truthfully(
             "OPENAI_API_KEY": "placeholder-key",
             "OPENAI_API_BASE": "http://localhost:52251/v1",
             "OPENAI_ANSWER_MODEL": "proxy-vision-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "1",
             "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
         },
         assets_root=tmp_path,

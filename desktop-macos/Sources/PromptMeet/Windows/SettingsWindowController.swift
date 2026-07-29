@@ -22,6 +22,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
             created.title = "PromptMeet 设置"
+            created.appearance = NSAppearance(named: .darkAqua)
             created.contentViewController = NSHostingController(
                 rootView: PromptMeetSettingsView(
                     onAIConfigurationChanged: onAIConfigurationChanged

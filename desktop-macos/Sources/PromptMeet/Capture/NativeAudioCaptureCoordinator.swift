@@ -1,9 +1,14 @@
 import Foundation
 
+struct NativeAudioCaptureRequest: Equatable, Sendable {
+    let sessionID: String
+    let includeLocalMicrophone: Bool
+}
+
 @MainActor
 protocol NativeAudioCaptureCoordinating: AnyObject {
     func start(
-        sessionID: String,
+        request: NativeAudioCaptureRequest,
         onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
@@ -43,12 +48,16 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
 
     func start(
         sessionID: String,
+        includeLocalMicrophone: Bool = true,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
         onTranscriptionError: @escaping @Sendable (String) -> Void
     ) async throws {
         try await start(
-            sessionID: sessionID,
+            request: NativeAudioCaptureRequest(
+                sessionID: sessionID,
+                includeLocalMicrophone: includeLocalMicrophone
+            ),
             onStatus: { _ in },
             onPartialTranscript: onPartialTranscript,
             onTranscript: onTranscript,
@@ -57,7 +66,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     }
 
     func start(
-        sessionID: String,
+        request: NativeAudioCaptureRequest,
         onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,
@@ -88,7 +97,10 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
         }
         sourceHandler = capturedHandler
         var failures: [String] = []
-        for source in sources {
+        let enabledSources = sources.filter {
+            request.includeLocalMicrophone || $0.source != .microphone
+        }
+        for source in enabledSources {
             do {
                 update(source.source, state: source.source == .microphone ? .requestingPermission : .starting)
                 try await startSource(source, handler: capturedHandler)
@@ -238,7 +250,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
 @MainActor
 final class NoopNativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     func start(
-        sessionID: String,
+        request: NativeAudioCaptureRequest,
         onStatus: @escaping @Sendable (AudioCaptureSnapshot) -> Void,
         onPartialTranscript: @escaping @Sendable (String) -> Void,
         onTranscript: @escaping @Sendable (LocalTranscript) -> Void,

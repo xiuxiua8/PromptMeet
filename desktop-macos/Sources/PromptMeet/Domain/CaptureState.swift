@@ -64,6 +64,7 @@ enum ScreenshotOperationState: Equatable, Sendable {
     case selecting
     case capturing
     case succeeded
+    case analyzed(status: String, detail: String)
     case failed(String)
 }
 
@@ -78,6 +79,16 @@ struct SuggestionRefreshState: Equatable, Sendable {
     var phase: SuggestionRefreshPhase = .idle
     var generationID: UUID?
     var contextRevision = 0
+}
+
+enum SummaryAutomationState: Equatable, Sendable {
+    case idle
+    case off
+    case waiting(nextActiveMinute: Int)
+    case generating(activeMinute: Int?)
+    case completed(revision: Int, activeMinute: Int?)
+    case noAction(activeMinute: Int, message: String)
+    case failed(String)
 }
 
 extension Duration {

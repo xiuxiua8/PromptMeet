@@ -156,6 +156,19 @@ class QuestionGenerationRequest(BaseModel):
         return value
 
 
+class SummaryGenerationRequest(BaseModel):
+    trigger: str = "manual"
+    active_minutes: int | None = Field(default=None, ge=0)
+    client_input_revision: int | None = Field(default=None, ge=0)
+
+    @field_validator("trigger")
+    @classmethod
+    def validate_trigger(cls, value: str) -> str:
+        if value not in {"manual", "milestone"}:
+            raise ValueError("trigger 必须是 manual 或 milestone")
+        return value
+
+
 meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
 question_generation_tasks: dict[str, asyncio.Task] = {}
@@ -635,35 +648,113 @@ async def stop_recording(session_id: str):
 
 
 @app.post("/api/sessions/{session_id}/generate-summary")
-async def generate_summary(session_id: str):
+async def generate_summary(
+    session_id: str,
+    request: SummaryGenerationRequest | None = None,
+):
     """生成会议摘要"""
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    if not session.transcript_segments:
+    if not DESKTOP_MODE and not session.transcript_segments:
         return {"success": False, "message": "没有转录内容可分析"}
 
     try:
-        if DESKTOP_MODE and desktop_summary_service is not None:
-            summary_data = await desktop_summary_service.summarize(
-                session_id,
-                session.transcript_segments,
+        if DESKTOP_MODE and desktop_agent_service is not None:
+            record = meeting_repository.get(session_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="会议持久记录不存在")
+            source_events = [
+                event
+                for event in record.events
+                if event.kind
+                in {
+                    EventKind.TRANSCRIPT,
+                    EventKind.SCREENSHOT,
+                    EventKind.SCREENSHOT_ANALYSIS,
+                }
+            ]
+            source_revision = max(
+                (event.sequence for event in source_events), default=0
             )
-            await on_summary_generated(
+            previous_summaries = [
+                event
+                for event in record.events
+                if event.kind == EventKind.SUMMARY
+                and isinstance(event.payload, SummaryPayload)
+            ]
+            previous_source_revision = max(
+                (event.payload.source_revision for event in previous_summaries),
+                default=0,
+            )
+            if not source_events or source_revision <= previous_source_revision:
+                return {
+                    "success": True,
+                    "status": "no_action",
+                    "message": "没有新的会议输入，已跳过本次摘要与待办生成",
+                }
+            result = await desktop_agent_service.summarize_meeting(
+                record, source_events
+            )
+            revision = (
+                max(
+                    (event.payload.revision for event in previous_summaries),
+                    default=0,
+                )
+                + 1
+            )
+            summary_data = result.summary
+            timeline_event = meeting_ingestion.summary(
                 session_id,
                 summary_data,
+                revision=revision,
+                source_event_ids=[event.event_id for event in source_events],
+                source_revision=source_revision,
+                trigger=request.trigger if request else "manual",
+                active_minutes=request.active_minutes if request else None,
+                provider=result.provider,
+                model=result.model,
             )
-            return {"success": True, "message": "会议摘要已生成"}
+            summary = MeetingSummary(
+                session_id=session_id,
+                summary_text=summary_data["summary_text"],
+                tasks=[TaskItem(**task) for task in summary_data.get("tasks", [])],
+                key_points=summary_data.get("key_points", []),
+                decisions=summary_data.get("decisions", []),
+                generated_at=datetime.now(),
+            )
+            session.current_summary = summary
+            session_manager.update_session(session)
+            await websocket_manager.broadcast_to_session(
+                session_id,
+                {
+                    "type": MessageType.SUMMARY_GENERATED,
+                    "data": summary.model_dump(mode="json"),
+                    "timestamp": datetime.now(),
+                    "session_id": session_id,
+                },
+            )
+            await broadcast_meeting_event(session_id, timeline_event)
+            return {
+                "success": True,
+                "status": "generated",
+                "message": "会议摘要与待办已生成",
+                "event": timeline_event.model_dump(mode="json"),
+            }
         # 启动 Summary 分析进程
         await process_manager.start_summary_process(session_id)
 
         logger.info(f"会话 {session_id} 开始生成摘要")
-        return {"success": True, "message": "开始生成摘要"}
+        return {"success": True, "status": "generated", "message": "开始生成摘要"}
 
     except Exception as e:
         logger.error(f"生成摘要失败: {e}")
-        return {"success": False, "message": f"生成摘要失败: {str(e)}"}
+        return {
+            "success": False,
+            "status": "failed",
+            "message": f"生成摘要失败: {str(e)}",
+        }
 
 
 @app.post("/api/sessions/{session_id}/generate-questions")
@@ -706,6 +797,13 @@ async def generate_questions(
                     question_generation_tasks.pop(session_id, None)
             if latest_question_generations.get(session_id) != generation:
                 return {"success": True, "superseded": True}
+            if len(questions) != 3:
+                return {
+                    "success": True,
+                    "message": "本次没有生成可替换的完整问题集",
+                    "superseded": False,
+                    "accepted": False,
+                }
             payload = {"questions": questions}
             if request is not None:
                 payload.update(
@@ -729,6 +827,7 @@ async def generate_questions(
                 "success": True,
                 "message": "问题已生成",
                 "superseded": False,
+                "accepted": True,
             }
         if not session.transcript_segments:
             return {"success": False, "message": "没有转录内容可生成问题"}

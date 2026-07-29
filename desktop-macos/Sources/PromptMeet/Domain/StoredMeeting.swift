@@ -22,7 +22,7 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
     var suggestions: [String] {
         timeline.reversed().compactMap { event -> [String]? in
             guard case .suggestions(let value) = event.payload else { return nil }
-            return value.questions
+            return SuggestedQuestionSet.accepted(value.questions)
         }.first ?? []
     }
 
@@ -79,7 +79,12 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
                     summaryText: value.summaryText,
                     tasks: value.tasks.compactMap(Self.task),
                     keyPoints: value.keyPoints,
-                    decisions: value.decisions
+                    decisions: value.decisions,
+                    revision: value.revision ?? 1,
+                    sourceEventIDs: value.sourceEventIDs ?? [],
+                    sourceRevision: value.sourceRevision ?? 0,
+                    trigger: value.trigger,
+                    activeMinutes: value.activeMinutes
                 )
             }.first
     }
