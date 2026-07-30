@@ -57,6 +57,12 @@ extension WorkspaceView {
         .frame(height: 1)
     }
 
+    var verticalDivider: some View {
+        Rectangle()
+            .fill(VisualTokens.line)
+            .frame(width: 1)
+    }
+
     var workspaceBackground: some View {
         ZStack {
             VisualTokens.island

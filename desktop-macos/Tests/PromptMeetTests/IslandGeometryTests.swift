@@ -3,10 +3,14 @@ import XCTest
 @testable import PromptMeet
 
 final class IslandGeometryTests: XCTestCase {
-    func testLiveIslandMakesRoomForStreamingCaption() {
-        XCTAssertGreaterThan(
+    func testLiveIslandAddsCaptionHeightWithoutMovingControlRailEdges() {
+        XCTAssertEqual(
             IslandGeometry.size(for: .live).width,
             IslandGeometry.size(for: .idle).width
+        )
+        XCTAssertGreaterThan(
+            IslandGeometry.size(for: .live).height,
+            IslandGeometry.size(for: .idle).height
         )
     }
 
@@ -18,7 +22,7 @@ final class IslandGeometryTests: XCTestCase {
         )
 
         XCTAssertEqual(live.width, 520)
-        XCTAssertEqual(live.height, 82)
+        XCTAssertEqual(live.height, 62)
     }
 
     func testIslandUsesDetectedTopChromeHeight() {
@@ -28,6 +32,22 @@ final class IslandGeometryTests: XCTestCase {
         )
     }
 
+    func testShortMenuBarStillKeepsCompleteButtonHitRegionsVisible() {
+        let host = CGSize(width: 1_440, height: 640)
+        let visible = IslandGeometry.visibleRect(
+            for: .idle,
+            inHost: host,
+            topChromeWidth: 100,
+            topChromeHeight: 24
+        )
+        let controls = IslandGeometry.controlHitRects(inHost: host, topChromeHeight: 24)
+
+        XCTAssertEqual(visible.height, IslandGeometry.controlHitSize)
+        XCTAssertTrue(visible.contains(controls.workspace))
+        XCTAssertTrue(visible.contains(controls.pauseResume))
+        XCTAssertTrue(visible.contains(controls.quickAsk))
+    }
+
     func testAuraIdleIslandLeavesBalancedFlanksAroundThePhysicalNotch() {
         let size = IslandGeometry.size(
             for: .idle,
@@ -35,7 +55,7 @@ final class IslandGeometryTests: XCTestCase {
             topChromeHeight: 32
         )
 
-        XCTAssertEqual(size.width, 300)
+        XCTAssertEqual(size.width, IslandGeometry.controlRailWidth)
         XCTAssertEqual(size.height, 32)
     }
 
@@ -67,6 +87,60 @@ final class IslandGeometryTests: XCTestCase {
         let triggerPoint = CGPoint(x: compact.midX, y: compact.midY)
 
         XCTAssertTrue(expanded.contains(triggerPoint))
+    }
+
+    func testControlAnchorsStayFixedAcrossCompactHoverAndQuickAskPresentations() {
+        let host = CGSize(width: 1_440, height: 640)
+        let presentations: [IslandPresentation] = [
+            .idle, .connecting, .live, .answering, .hoverIdle, .hoverLive,
+            .live, .hoverLive, .live, .hoverLive
+        ]
+        let expected = IslandGeometry.controlAnchors(inHost: host, topChromeHeight: 32)
+
+        for presentation in presentations {
+            XCTAssertEqual(
+                IslandGeometry.controlAnchors(
+                    for: presentation,
+                    inHost: host,
+                    topChromeHeight: 32
+                ),
+                expected
+            )
+        }
+    }
+
+    func testControlHitRegionsAreStableAndInsideEveryInteractiveRect() {
+        for host in [
+            CGSize(width: 640, height: 480),
+            CGSize(width: 1_184, height: 640),
+            CGSize(width: 1_440, height: 640),
+            CGSize(width: 1_920, height: 1_080)
+        ] {
+            let expectedRects = IslandGeometry.controlHitRects(inHost: host, topChromeHeight: 32)
+            for presentation in [
+                IslandPresentation.idle, .connecting, .live, .answering, .hoverIdle, .hoverLive
+            ] {
+                let interactive = IslandGeometry.interactiveRect(
+                    for: presentation,
+                    inHost: host,
+                    topChromeWidth: 184,
+                    topChromeHeight: 32
+                )
+                let rects = IslandGeometry.controlHitRects(
+                    for: presentation,
+                    inHost: host,
+                    topChromeHeight: 32
+                )
+
+                XCTAssertEqual(rects, expectedRects)
+                XCTAssertEqual(rects.workspace.size, CGSize(width: 32, height: 32))
+                XCTAssertEqual(rects.pauseResume.size, CGSize(width: 32, height: 32))
+                XCTAssertEqual(rects.quickAsk.size, CGSize(width: 32, height: 32))
+                XCTAssertTrue(interactive.contains(rects.workspace))
+                XCTAssertTrue(interactive.contains(rects.pauseResume))
+                XCTAssertTrue(interactive.contains(rects.quickAsk))
+            }
+        }
     }
 
     func testInteractiveRectExactlyMatchesVisibleRectAtRealisticHostSizes() {

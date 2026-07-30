@@ -7,7 +7,8 @@ struct WorkspaceView: View {
 
     @State var selectedTab = WorkspaceTab.assistant
     @State var showsHistory = false
-    @State var followsTranscript = true
+    @State var timelineFollowState = TimelineFollowState()
+    @State var timelineScrollRequest = 0
     @State var showsNewMeetingConfirmation = false
     @State var historySearchText = ""
     @FocusState var isHistorySearchFocused: Bool
@@ -38,20 +39,32 @@ struct WorkspaceView: View {
             toolbar
             hairline
 
-            HSplitView {
-                if showsHistory {
-                    historyColumn
-                        .frame(minWidth: 190, idealWidth: 210, maxWidth: 230)
+            GeometryReader { geometry in
+                let widths = WorkspaceLayout.columnWidths(
+                    totalWidth: geometry.size.width,
+                    showsHistory: showsHistory
+                )
+                HStack(spacing: 0) {
+                    if showsHistory {
+                        historyColumn
+                            .frame(width: widths.history)
+                        verticalDivider
+                    }
+
+                    timelineColumn
+                        .frame(width: widths.timeline)
+
+                    verticalDivider
+
+                    intelligenceColumn
+                        .frame(width: widths.intelligence)
                 }
-
-                timelineColumn
-                    .frame(minWidth: 470, idealWidth: 640, maxWidth: 880)
-
-                intelligenceColumn
-                    .frame(minWidth: 390, idealWidth: 620, maxWidth: .infinity)
             }
         }
-        .frame(minWidth: 980, minHeight: 640)
+        .frame(
+            minWidth: WorkspaceLayout.minimumWindowSize.width,
+            minHeight: WorkspaceLayout.minimumWindowSize.height
+        )
         .background(workspaceBackground)
         .foregroundStyle(VisualTokens.primaryText)
         .task { await store.loadMeetingHistoryNow() }
@@ -78,10 +91,11 @@ extension WorkspaceView {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 toolbarButton(
-                    showsHistory ? "隐藏会议历史" : "显示会议历史",
+                    "会议历史",
                     icon: "sidebar.left",
                     action: { withAnimation(.easeOut(duration: 0.18)) { showsHistory.toggle() } }
                 )
+                .accessibilityValue(showsHistory ? "已展开" : "已折叠")
 
                 Circle()
                     .fill(workspaceStatusTint)
@@ -137,16 +151,17 @@ extension WorkspaceView {
                 }
 
                 Button(action: beginNewMeeting) {
-                    Label("开始新会议", systemImage: "plus.circle.fill")
+                    Label("新会议", systemImage: "plus.circle.fill")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color.black.opacity(0.86))
-                        .padding(.horizontal, 15)
-                        .frame(height: 34)
+                        .padding(.horizontal, 12)
+                        .frame(height: WorkspaceLayout.actionHeight)
                         .background(VisualTokens.live)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .help("创建新的隔离会议上下文")
+                .accessibilityLabel("开始新会议")
 
                 toolbarButton("设置", icon: "gearshape", action: openSettings)
                     .keyboardShortcut(",", modifiers: .command)
@@ -265,17 +280,21 @@ extension WorkspaceView {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+            Label(title, systemImage: icon)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
                 .foregroundStyle(VisualTokens.secondaryText)
-                .frame(width: 30, height: 30)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .frame(minHeight: WorkspaceLayout.actionHeight)
                 .background(VisualTokens.raised.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
         .help(title)
+        .accessibilityLabel(title)
     }
 
     var screenshotTargetLabel: String {

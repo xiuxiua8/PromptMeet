@@ -1,159 +1,109 @@
-import AppKit
 import SwiftUI
 
 extension WorkspaceView {
-    var transcriptColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Text("会议记录")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                Text("\(store.state.displayedTranscript.count)")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.tertiaryText)
-
-                Spacer()
-
-                Button {
-                    followsTranscript.toggle()
-                } label: {
-                    Image(systemName: followsTranscript ? "arrow.down.to.line" : "pause")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(followsTranscript ? VisualTokens.live : VisualTokens.secondaryText)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .help(followsTranscript ? "自动跟随转写" : "恢复自动跟随")
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 50)
-
-            hairline
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if store.state.displayedTranscript.isEmpty {
-                            emptyState(
-                                icon: "waveform",
-                                text: isViewingHistory ? "这次会议没有保存转写" : "开始录音后，转写会在这里连续出现"
-                            )
-                            .frame(minHeight: 360)
-                        } else {
-                            let enumerated = Array(store.state.displayedTranscript.enumerated())
-                            ForEach(enumerated, id: \.element.id) { index, line in
-                                transcriptRow(
-                                    line,
-                                    isLast: index == store.state.displayedTranscript.count - 1
-                                        && store.state.activeTranscript.isEmpty
-                                )
-                                .id(line.id)
-                            }
-                        }
-
-                        if !isViewingHistory && !store.state.activeTranscript.isEmpty {
-                            activeTranscriptRow
-                                .id("active-transcript")
-                        }
-
-                        Color.clear
-                            .frame(height: 32)
-                            .id("transcript-bottom")
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-                }
-                .scrollIndicators(.hidden)
-                .onChange(of: store.state.displayedTranscript.count) { _, _ in
-                    guard followsTranscript else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                }
-                .onChange(of: store.state.activeTranscript) { _, _ in
-                    guard followsTranscript else { return }
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
+    func legacyTranscriptStream(_ blocks: [WorkspaceTranscriptBlock]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(blocks) { block in
+                transcriptBlockRow(block, timestamp: block.segments.first?.timestamp ?? Date())
             }
         }
     }
 
-    func transcriptRow(_ line: TranscriptLine, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 7) {
-                Text(line.timestamp, style: .time)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.tertiaryText)
+    func transcriptBlockRow(
+        _ block: WorkspaceTranscriptBlock,
+        timestamp: Date
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(timestamp, style: .time)
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(VisualTokens.tertiaryText)
+                .frame(width: 46, alignment: .leading)
 
-                Circle()
-                    .fill(VisualTokens.live.opacity(0.72))
-                    .frame(width: 5, height: 5)
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(transcriptTint(source: block.source))
+                .frame(width: 3)
+                .padding(.vertical, 3)
 
-                if !isLast {
-                    Rectangle()
-                        .fill(VisualTokens.line)
-                        .frame(width: 1)
-                        .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Text(transcriptSpeakerLabel(block))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(transcriptTint(source: block.source))
+                    Text(transcriptSourceLabel(block.source))
+                        .font(.system(size: 8, weight: .medium, design: .rounded))
+                        .foregroundStyle(VisualTokens.tertiaryText)
+                    if block.segments.count > 1 {
+                        Text("\(block.segments.count) 段")
+                            .font(.system(size: 8, weight: .medium, design: .rounded))
+                            .foregroundStyle(VisualTokens.tertiaryText)
+                    }
                 }
-            }
-            .frame(width: 46)
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text(transcriptSpeakerLabel(line))
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(transcriptTint(line))
-
-                Text(line.text)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .lineSpacing(5)
+                Text(block.text)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(VisualTokens.primaryText.opacity(0.90))
+                    .lineSpacing(4)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if let translation = line.translatedText {
+                if let translation = block.translatedText {
                     Text(translation)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.sky)
-                        .lineSpacing(4)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(VisualTokens.sky.opacity(0.90))
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 22)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(
+                "\(transcriptSpeakerLabel(block))，\(transcriptSourceLabel(block.source))，\(block.text)"
+            )
         }
+        .padding(.vertical, 10)
     }
 
-    func transcriptSpeakerLabel(_ line: TranscriptLine) -> String {
-        switch line.source {
-        case .microphone: "我"
-        case .system: "会议"
-        case .mixed, .none: line.speaker
-        }
-    }
+    var activeTranscriptStreamRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("现在")
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(VisualTokens.live)
+                .frame(width: 46, alignment: .leading)
 
-    func transcriptTint(_ line: TranscriptLine) -> Color {
-        line.source == .microphone ? VisualTokens.sky : VisualTokens.live
-    }
-
-    var activeTranscriptRow: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 7) {
-                Text("现在")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.live)
-                Circle()
-                    .fill(VisualTokens.live)
-                    .frame(width: 6, height: 6)
-                    .shadow(color: VisualTokens.live.opacity(0.55), radius: 6)
-            }
-            .frame(width: 46)
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(VisualTokens.live)
+                .frame(width: 3)
+                .shadow(color: VisualTokens.live.opacity(0.45), radius: 5)
+                .padding(.vertical, 3)
 
             Text(store.state.activeTranscript)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(VisualTokens.primaryText.opacity(0.80))
-                .lineSpacing(5)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(VisualTokens.primaryText.opacity(0.78))
+                .lineSpacing(4)
+                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 22)
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("正在转写，\(store.state.activeTranscript)")
+    }
+
+    func transcriptSpeakerLabel(_ block: WorkspaceTranscriptBlock) -> String {
+        block.displaySpeaker
+    }
+
+    func transcriptSourceLabel(_ source: String?) -> String {
+        switch source {
+        case NativeAudioSource.microphone.rawValue: "本机麦克风"
+        case NativeAudioSource.system.rawValue: "系统音频"
+        case NativeAudioSource.mixed.rawValue: "混合音频"
+        default: "来源未标记"
         }
     }
 
+    func transcriptTint(source: String?) -> Color {
+        source == NativeAudioSource.microphone.rawValue ? VisualTokens.sky : VisualTokens.live
+    }
 }

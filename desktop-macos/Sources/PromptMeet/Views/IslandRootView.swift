@@ -13,12 +13,14 @@ struct IslandRootView: View {
         )
 
         VStack(spacing: 0) {
-            Group {
+            ZStack(alignment: .top) {
                 if isExpanded {
-                    HoverMeetingCardView(store: store, openWorkspace: openWorkspace)
+                    HoverMeetingCardView(store: store)
                 } else {
-                    compactIsland
+                    compactContent
                 }
+
+                permanentControlRail
             }
             .frame(width: size.width, height: size.height)
             .background {
@@ -51,55 +53,22 @@ struct IslandRootView: View {
             .shadow(color: auraLeadingColor.opacity(auraOpacity), radius: isExpanded ? 24 : 18, y: 10)
             .shadow(color: auraTrailingColor.opacity(auraOpacity), radius: isExpanded ? 28 : 20, y: 12)
             .contentShape(IslandShape())
-            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: store.presentation)
+            .animation(.spring(response: 0.36, dampingFraction: 0.86), value: store.presentation)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    private var effectiveTopChromeHeight: CGFloat {
+        max(IslandGeometry.controlHitSize, store.topChromeHeight)
+    }
+
     @ViewBuilder
-    private var compactIsland: some View {
-        switch store.state.phase {
-        case .idle:
-            notchFlanks {
-                statusOrb(color: VisualTokens.tertiaryText)
-            } trailing: {
-                quickAskButton
-            }
-        case .connecting, .stopping:
-            notchFlanks {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(VisualTokens.amber)
-            } trailing: {
-                quickAskButton
-            }
-        case .failed(let message):
-            notchFlanks {
-                statusOrb(color: VisualTokens.danger)
-                    .help(message)
-            } trailing: {
-                quickAskButton
-            }
-        case .live:
+    private var compactContent: some View {
+        if store.state.phase == .live {
             VStack(spacing: 0) {
-                notchFlanks {
-                    if store.state.recordingActivity == .paused {
-                        statusOrb(color: VisualTokens.amber)
-                    } else {
-                        waveform
-                    }
-                } trailing: {
-                    compactPauseResumeButton
-                    if store.state.aiReader.isStreaming {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(VisualTokens.sky)
-                    }
-                    quickAskButton
-                }
-                .frame(height: store.topChromeHeight)
+                Color.clear.frame(height: effectiveTopChromeHeight)
 
                 LinearGradient(
                     colors: [.clear, VisualTokens.line, VisualTokens.line, .clear],
@@ -111,79 +80,140 @@ struct IslandRootView: View {
 
                 RollingCaptionView(
                     text: compactCaption,
-                    viewportHeight: 39,
+                    font: .system(size: 12, weight: .medium),
+                    viewportHeight: 24,
                     topPadding: 4
                 )
-                .padding(.horizontal, 20)
-                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 22)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }
 
-    private func notchFlanks<Leading: View, Trailing: View>(
-        @ViewBuilder leading: () -> Leading,
-        @ViewBuilder trailing: () -> Trailing
-    ) -> some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 7) {
-                leading()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private var permanentControlRail: some View {
+        HStack(spacing: IslandGeometry.controlSpacing) {
+            workspaceButton
 
-            Color.clear
-                .frame(width: store.topChromeWidth)
+            Spacer(minLength: 0)
 
-            HStack(spacing: 6) {
-                trailing()
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            pauseResumeSlot
+                .frame(
+                    width: IslandGeometry.controlHitSize,
+                    height: IslandGeometry.controlHitSize
+                )
+
+            quickAskButton
         }
-        .padding(.horizontal, 16 + IslandShape.topCurl)
+        .padding(.horizontal, IslandGeometry.controlInset)
+        .frame(
+            width: IslandGeometry.controlRailWidth,
+            height: effectiveTopChromeHeight
+        )
     }
 
-    private func statusOrb(color: Color) -> some View {
-        Circle()
-            .fill(color)
-            .frame(width: 6, height: 6)
-            .shadow(color: color.opacity(0.45), radius: 6)
-    }
-
-    private var quickAskButton: some View {
-        Button(action: store.toggleQuickAsk) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(VisualTokens.sky)
-                .frame(width: 24, height: 24)
+    private var workspaceButton: some View {
+        let presentation = IslandControlPresentation.workspace
+        return Button(action: openWorkspace) {
+            workspaceStatusSymbol
+                .frame(
+                    width: IslandGeometry.controlHitSize,
+                    height: IslandGeometry.controlHitSize
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("问 AI")
+        .help(presentation.help)
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .keyboardShortcut(
+            KeyEquivalent(presentation.shortcut.key),
+            modifiers: presentation.shortcut.modifiers
+        )
     }
 
     @ViewBuilder
-    private var compactPauseResumeButton: some View {
+    private var workspaceStatusSymbol: some View {
+        switch store.state.phase {
+        case .idle:
+            statusOrb(color: VisualTokens.tertiaryText)
+        case .connecting, .stopping:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(VisualTokens.amber)
+        case .failed:
+            Image(systemName: "exclamationmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(VisualTokens.danger)
+        case .live:
+            if store.state.recordingActivity == .paused {
+                statusOrb(color: VisualTokens.amber)
+            } else {
+                waveform
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pauseResumeSlot: some View {
         switch store.state.recordingActivity {
         case .pausing, .resuming:
             ProgressView()
                 .controlSize(.mini)
                 .tint(VisualTokens.amber)
-                .frame(width: 24, height: 24)
                 .accessibilityLabel("正在切换录音状态")
         case .recording, .paused:
+            let control = IslandControlPresentation.pauseResume(
+                recordingActivity: store.state.recordingActivity
+            )
             let isPaused = store.state.recordingActivity == .paused
             Button(action: store.togglePauseResume) {
                 Image(systemName: isPaused ? "play.fill" : "pause.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(isPaused ? VisualTokens.live : VisualTokens.amber)
-                    .frame(width: 24, height: 24)
+                    .frame(
+                        width: IslandGeometry.controlHitSize,
+                        height: IslandGeometry.controlHitSize
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isPaused ? "继续录音" : "暂停录音")
-            .accessibilityLabel(isPaused ? "继续录音" : "暂停录音")
+            .help(control.help)
+            .accessibilityLabel(control.accessibilityLabel)
+            .keyboardShortcut(
+                KeyEquivalent(control.shortcut.key),
+                modifiers: control.shortcut.modifiers
+            )
         default:
-            EmptyView()
+            Color.clear
+                .accessibilityHidden(true)
         }
+    }
+
+    private var quickAskButton: some View {
+        let presentation = IslandControlPresentation.quickAsk
+        return Button(action: store.toggleQuickAsk) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(VisualTokens.sky)
+                .frame(
+                    width: IslandGeometry.controlHitSize,
+                    height: IslandGeometry.controlHitSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(presentation.help)
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .keyboardShortcut(
+            KeyEquivalent(presentation.shortcut.key),
+            modifiers: presentation.shortcut.modifiers
+        )
+    }
+
+    private func statusOrb(color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 7, height: 7)
+            .shadow(color: color.opacity(0.45), radius: 6)
     }
 
     private var compactCaption: String {

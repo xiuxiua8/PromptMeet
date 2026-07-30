@@ -89,10 +89,16 @@ final class MeetingStore: ObservableObject {
         case "live":
             state = .previewAura
             isHovered = false
+        case "paused":
+            state = .previewPaused
+            isHovered = false
         case "hover":
             state = .previewAura
             isHovered = true
-        case "workspace":
+        case "quick-ask":
+            state = .previewQuickAsk
+            isHovered = false
+        case "workspace", "workspace-compact", "workspace-large":
             state = .previewWorkspace
             isHovered = false
         case "reader-short":

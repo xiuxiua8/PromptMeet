@@ -3,6 +3,9 @@ import SwiftUI
 enum VisualTokens {
     static let island = Color(red: 0.012, green: 0.016, blue: 0.020)
     static let islandSoft = Color(red: 0.030, green: 0.038, blue: 0.046)
+    static let workspaceSurface = Color(red: 0.017, green: 0.022, blue: 0.027)
+    static let sidebar = Color.black.opacity(0.12)
+    static let selected = Color.white.opacity(0.04)
     static let raised = Color.white.opacity(0.052)
     static let line = Color.white.opacity(0.07)
     static let primaryText = Color.white.opacity(0.96)

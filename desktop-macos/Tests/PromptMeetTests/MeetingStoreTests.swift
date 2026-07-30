@@ -6,6 +6,50 @@ import XCTest
 
 @MainActor
 final class MeetingStoreTests: XCTestCase {
+    func testSyntheticUIPreviewModesCoverStableIslandPresentationsWithoutStartingCapture() {
+        let capture = NativeAudioCaptureSpy()
+        let companion = CompanionLauncherSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: capture,
+            companion: companion
+        )
+
+        store.configureUIPreview("live")
+        XCTAssertEqual(store.state.recordingActivity, .recording)
+        XCTAssertEqual(store.presentation, .live)
+
+        store.configureUIPreview("paused")
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(store.presentation, .live)
+
+        store.configureUIPreview("hover")
+        XCTAssertTrue(store.isHovered)
+        XCTAssertEqual(store.presentation, .hoverLive)
+
+        store.configureUIPreview("quick-ask")
+        XCTAssertTrue(store.state.isQuickAskPresented)
+        XCTAssertEqual(store.presentation, .hoverLive)
+
+        store.configureUIPreview("workspace-compact")
+        XCTAssertEqual(store.state.timeline.map(\.kind), [
+            .lifecycle,
+            .transcript,
+            .transcript,
+            .transcript,
+            .screenshot,
+            .screenshotAnalysis,
+            .screenshotAnalysis,
+            .summary
+        ])
+
+        store.configureUIPreview("workspace-large")
+        XCTAssertFalse(store.state.timeline.isEmpty)
+
+        XCTAssertNil(capture.startedSessionID)
+        XCTAssertEqual(companion.ensureCount, 0)
+    }
+
     func testSharedDraftAndGeneratedQuestionsPublishImmediately() {
         let store = MeetingStore(
             backend: BackendClientSpy(),

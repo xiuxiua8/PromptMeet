@@ -32,15 +32,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         configureStatusItem()
         configureShortcuts()
-        island.show()
         if let previewMode = ProcessInfo.processInfo.environment["PROMPTMEET_UI_PREVIEW"] {
             store.configureUIPreview(previewMode)
-            if previewMode == "workspace" {
+            if previewMode.hasPrefix("workspace") {
                 workspace.show()
             } else if previewMode == "reader-short" || previewMode == "reader-long" {
                 reader.showPreview(state: store.state)
+            } else {
+                island.show()
             }
         } else {
+            island.show()
             store.prepareCompanion()
         }
     }
