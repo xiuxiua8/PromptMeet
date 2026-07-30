@@ -1,101 +1,123 @@
 import Foundation
 
 enum AudioSourceState: Equatable, Sendable {
-    case idle
-    case starting
-    case requestingPermission
-    case active
-    case paused
-    case denied
-    case restricted
-    case unavailable(String)
-    case failed(String)
+  case idle
+  case starting
+  case requestingPermission
+  case active
+  case paused
+  case denied
+  case restricted
+  case unavailable(String)
+  case failed(String)
 
-    var isActive: Bool { self == .active }
+  var isActive: Bool { self == .active }
+}
+
+enum AudioSignalState: Equatable, Sendable {
+  case idle
+  case speechDetected
+  case silenceFiltered
 }
 
 struct AudioCaptureSnapshot: Equatable, Sendable {
-    var microphone: AudioSourceState = .idle
-    var system: AudioSourceState = .idle
+  var microphone: AudioSourceState = .idle
+  var system: AudioSourceState = .idle
+  var microphoneSignal: AudioSignalState = .idle
+  var systemSignal: AudioSignalState = .idle
 
-    subscript(source: NativeAudioSource) -> AudioSourceState {
-        get {
-            switch source {
-            case .microphone: microphone
-            case .system, .mixed: system
-            }
-        }
-        set {
-            switch source {
-            case .microphone: microphone = newValue
-            case .system, .mixed: system = newValue
-            }
-        }
+  subscript(source: NativeAudioSource) -> AudioSourceState {
+    get {
+      switch source {
+      case .microphone: microphone
+      case .system, .mixed: system
+      }
     }
+    set {
+      switch source {
+      case .microphone: microphone = newValue
+      case .system, .mixed: system = newValue
+      }
+    }
+  }
 
-    var hasActiveSource: Bool { microphone.isActive || system.isActive }
+  var hasActiveSource: Bool { microphone.isActive || system.isActive }
+
+  mutating func setSignal(_ signal: AudioSignalState, for source: NativeAudioSource) {
+    switch source {
+    case .microphone: microphoneSignal = signal
+    case .system, .mixed: systemSignal = signal
+    }
+  }
+
+  func signal(for source: NativeAudioSource) -> AudioSignalState {
+    switch source {
+    case .microphone: microphoneSignal
+    case .system, .mixed: systemSignal
+    }
+  }
 }
 
 enum RecordingActivity: Equatable, Sendable {
-    case inactive
-    case starting
-    case recording
-    case pausing
-    case paused
-    case resuming
-    case stopping
+  case inactive
+  case starting
+  case recording
+  case pausing
+  case paused
+  case resuming
+  case stopping
 }
 
 enum ScreenshotTargetState: Equatable, Sendable {
-    case none
-    case selected(label: String)
-    case invalid(label: String, reason: String)
+  case none
+  case selected(label: String)
+  case invalid(label: String, reason: String)
 
-    var label: String? {
-        switch self {
-        case .none: nil
-        case .selected(let label), .invalid(let label, _): label
-        }
+  var label: String? {
+    switch self {
+    case .none: nil
+    case .selected(let label), .invalid(let label, _): label
     }
+  }
 }
 
 enum ScreenshotOperationState: Equatable, Sendable {
-    case idle
-    case selecting
-    case capturing
-    case succeeded
-    case analyzed(status: String, detail: String)
-    case failed(String)
+  case idle
+  case selecting
+  case capturing
+  case succeeded
+  case analyzed(status: String, detail: String)
+  case failed(String)
 }
 
 enum SuggestionRefreshPhase: Equatable, Sendable {
-    case idle
-    case loading
-    case ready
-    case failed(String)
+  case idle
+  case loading
+  case ready
+  case failed(String)
 }
 
 struct SuggestionRefreshState: Equatable, Sendable {
-    var phase: SuggestionRefreshPhase = .idle
-    var generationID: UUID?
-    var contextRevision = 0
+  var phase: SuggestionRefreshPhase = .idle
+  var generationID: UUID?
+  var contextRevision = 0
 }
 
 enum SummaryAutomationState: Equatable, Sendable {
-    case idle
-    case off
-    case waiting(nextActiveMinute: Int)
-    case generating(activeMinute: Int?)
-    case completed(revision: Int, activeMinute: Int?)
-    case noAction(activeMinute: Int, message: String)
-    case failed(String)
+  case idle
+  case off
+  case waiting(nextActiveMinute: Int)
+  case generating(activeMinute: Int?)
+  case completed(revision: Int, activeMinute: Int?)
+  case noAction(activeMinute: Int, message: String)
+  case failed(String)
 }
 
 extension Duration {
-    var millisecondsValue: Int64 {
-        let parts = components
-        let seconds = parts.seconds.multipliedReportingOverflow(by: 1_000)
-        if seconds.overflow { return parts.seconds >= 0 ? Int64.max : Int64.min }
-        return seconds.partialValue + Int64(parts.attoseconds / 1_000_000_000_000_000)
-    }
+  var millisecondsValue: Int64 {
+    let parts = components
+    let seconds = parts.seconds.multipliedReportingOverflow(by: 1_000)
+    if seconds.overflow { return parts.seconds >= 0 ? Int64.max : Int64.min }
+    return seconds.partialValue + Int64(parts.attoseconds / 1_000_000_000_000_000)
+  }
 }

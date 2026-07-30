@@ -85,6 +85,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Each question gets its own request ID, immutable snapshot, and streaming state. Rapid concurrent questions finish independently without overwriting.
 - `开始新会议` requires explicit confirmation when a meeting is active. Backend meeting creation precedes capture startup.
 - Microphone and system audio remain independent source-tagged streams with meeting-relative timing. Permission or runtime failure in one source must not stop or relabel the other.
+- Local PCM passes through the per-source adaptive gate in `SpeechActivityGate` before Whisper. Pause and stop invalidate queued transcription work; macOS Voice Processing applies only to microphone capture and safely falls back when unsupported.
 - Disabling local microphone capture excludes that source before permission or engine startup and affects only future capture.
 - Recording pause keeps the meeting active and its context available. Resume is transactional across the companion and native capture, and stop works while paused.
 - Window selection only retains a screenshot target. Screenshot capture never opens the picker and repeated captures reuse the current valid target.
