@@ -41,16 +41,29 @@ extension PromptMeetSettingsView {
                             .font(.system(size: 10, design: .monospaced))
                     }
                     if selection.providerID == "openai" {
-                        Toggle("该端点与模型支持图像输入", isOn: workflowVisionBinding(workflow))
-                            .toggleStyle(.checkbox)
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                    }
-                    if workflow == .screenshotAnalysis && !selection.supportsVision {
-                        Label(
-                            "此模型不会收到截图像素。截图会保留，分析记录会明确标记为不支持，不会伪造视觉结论。",
-                            systemImage: "eye.slash"
+                        Toggle(
+                            workflow == .screenshotAnalysis
+                                ? "将原始截图像素发送给此端点与模型"
+                                : "该端点与模型支持图像输入",
+                            isOn: workflowVisionBinding(workflow)
                         )
+                        .toggleStyle(.checkbox)
                         .font(.system(size: 9, weight: .medium, design: .rounded))
+                    }
+                    if workflow == .screenshotAnalysis && selection.supportsVision {
+                        Label(
+                            "截图视觉已开启。PromptMeet 会发送原始像素；若兼容模型拒绝图像，将保留截图并明确记录拒绝来源。",
+                            systemImage: "eye.fill"
+                        )
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(VisualTokens.live)
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else if workflow == .screenshotAnalysis {
+                        Label(
+                            "配置问题：此截图模型不会收到像素。请开启上方选项或改用视觉模型；有文字时仅使用明确标记的本地 OCR 证据。",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
                         .foregroundStyle(VisualTokens.amber)
                         .fixedSize(horizontal: false, vertical: true)
                     } else if workflow == .conversation && !selection.supportsVision {
@@ -63,8 +76,21 @@ extension PromptMeetSettingsView {
                     }
                 }
                 .padding(10)
-                .background(VisualTokens.raised.opacity(0.72))
+                .background(
+                    workflow == .screenshotAnalysis
+                        ? VisualTokens.amber.opacity(0.075)
+                        : VisualTokens.raised.opacity(0.72)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(
+                            workflow == .screenshotAnalysis
+                                ? VisualTokens.amber.opacity(0.28)
+                                : Color.clear,
+                            lineWidth: 0.7
+                        )
+                }
             }
         }
         .padding(12)
@@ -158,8 +184,8 @@ extension PromptMeetSettingsView {
 
     func normalizeSelectedModel() {
         guard let provider = selectedProvider,
-              !provider.models.contains(where: { $0.id == selectedModelID }),
-              let fallback = provider.models.first
+            !provider.models.contains(where: { $0.id == selectedModelID }),
+            let fallback = provider.models.first
         else { return }
         selectedModelBinding.wrappedValue = fallback.id
     }
@@ -191,7 +217,8 @@ extension PromptMeetSettingsView {
             openAIModelDraft = openAIConfiguration.modelID
             deepSeekBaseURLDraft = deepSeekConfiguration.baseURL.absoluteString
             secretDraft = ""
-            aiFeedback = trimmedSecret.isEmpty
+            aiFeedback =
+                trimmedSecret.isEmpty
                 ? "兼容端点与模型已保存，正在应用配置"
                 : "API Key 已安全保存到 macOS Keychain，正在应用配置"
             aiFeedbackIsSuccess = true
@@ -249,16 +276,18 @@ extension PromptMeetSettingsView {
     func validateSelectedKey() {
         do {
             let draft = secretDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-            let credential = draft.isEmpty
+            let credential =
+                draft.isEmpty
                 ? try secretManager.credential(providerID: aiProvider)
                 : draft
             guard let credential, !credential.isEmpty else {
                 throw AIProviderConfigurationError.emptySecret
             }
             let providerID = aiProvider
-            let workflow = AIWorkflow.allCases.first {
-                workflowSelection($0).providerID == providerID
-            } ?? .conversation
+            let workflow =
+                AIWorkflow.allCases.first {
+                    workflowSelection($0).providerID == providerID
+                } ?? .conversation
             let modelID = workflowSelection(workflow).modelID
             let baseURL = providerID == "openai" ? openAIBaseURLDraft : deepSeekBaseURLDraft
             isValidatingAI = true

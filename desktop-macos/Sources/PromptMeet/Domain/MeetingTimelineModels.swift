@@ -6,6 +6,8 @@ struct ScreenshotAnalysis: Equatable, Sendable {
     let visionUsed: Bool
     let provider: String?
     let model: String?
+    let evidenceKind: String?
+    let imageRejection: String?
 }
 
 struct ScreenshotAsset: Identifiable, Equatable, Sendable {
@@ -14,6 +16,8 @@ struct ScreenshotAsset: Identifiable, Equatable, Sendable {
     let mimeType: String
     let width: Int?
     let height: Int?
+    let localOCRText: String?
+    let ocrEngine: String?
     let capturedAt: Date
     var analysis: ScreenshotAnalysis?
 

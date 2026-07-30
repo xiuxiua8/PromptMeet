@@ -73,6 +73,8 @@ struct TimelineScreenshotPayload: Codable, Equatable, Sendable {
     let width: Int?
     let height: Int?
     let captureStatus: String
+    let localOCRText: String?
+    let ocrEngine: String?
 
     enum CodingKeys: String, CodingKey {
         case assetID = "asset_id"
@@ -80,6 +82,8 @@ struct TimelineScreenshotPayload: Codable, Equatable, Sendable {
         case mimeType = "mime_type"
         case sha256, width, height
         case captureStatus = "capture_status"
+        case localOCRText = "local_ocr_text"
+        case ocrEngine = "ocr_engine"
     }
 }
 
@@ -88,11 +92,15 @@ struct TimelineScreenshotAnalysisPayload: Codable, Equatable, Sendable {
     let status: String
     let text: String
     let visionUsed: Bool
+    let evidenceKind: String?
+    let imageRejection: String?
 
     enum CodingKeys: String, CodingKey {
         case assetID = "asset_id"
         case status, text
         case visionUsed = "vision_used"
+        case evidenceKind = "evidence_kind"
+        case imageRejection = "image_rejection"
     }
 }
 
@@ -280,6 +288,8 @@ struct MeetingTimelineEvent: Identifiable, Equatable, Decodable, Sendable {
             mimeType: value.mimeType,
             width: value.width,
             height: value.height,
+            localOCRText: value.localOCRText,
+            ocrEngine: value.ocrEngine,
             capturedAt: occurredAt,
             analysis: nil
         )

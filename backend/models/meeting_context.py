@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MeetingStatus(StrEnum):
@@ -74,6 +74,8 @@ class ScreenshotPayload(BaseModel):
     width: int | None = None
     height: int | None = None
     capture_status: Literal["available", "missing"] = "available"
+    local_ocr_text: str | None = Field(default=None, max_length=20_000)
+    ocr_engine: Literal["apple_vision"] | None = None
 
 
 class ScreenshotAnalysisPayload(BaseModel):
@@ -81,9 +83,19 @@ class ScreenshotAnalysisPayload(BaseModel):
 
     type: Literal["screenshot_analysis"] = "screenshot_analysis"
     asset_id: str
-    status: Literal["completed", "failed", "unsupported"]
+    status: Literal["pending", "completed", "failed", "unsupported"]
     text: str
     vision_used: bool = False
+    evidence_kind: Literal["vision", "ocr", "none"] | None = None
+    image_rejection: str | None = Field(default=None, max_length=240)
+
+    @model_validator(mode="after")
+    def infer_legacy_evidence_kind(self) -> ScreenshotAnalysisPayload:
+        if self.evidence_kind is None:
+            self.evidence_kind = (
+                "vision" if self.status == "completed" and self.vision_used else "none"
+            )
+        return self
 
 
 class QuestionPayload(BaseModel):

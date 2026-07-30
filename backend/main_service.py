@@ -292,7 +292,12 @@ async def broadcast_meeting_event(session_id: str, event: MeetingEvent) -> None:
     )
 
 
-async def process_native_screenshot(session_id: str, image_path) -> dict:
+async def process_native_screenshot(
+    session_id: str,
+    image_path,
+    local_ocr_text: str | None = None,
+    ocr_engine: str | None = None,
+) -> dict:
     mime_type = (
         "image/jpeg"
         if Path(image_path).suffix.lower() in {".jpg", ".jpeg"}
@@ -303,7 +308,11 @@ async def process_native_screenshot(session_id: str, image_path) -> dict:
         event = await loop.run_in_executor(
             None,
             lambda: meeting_ingestion.screenshot(
-                session_id, Path(image_path), mime_type
+                session_id,
+                Path(image_path),
+                mime_type,
+                local_ocr_text=local_ocr_text,
+                ocr_engine=ocr_engine,
             ),
         )
     except (FileNotFoundError, MeetingNotFoundError, ValueError):
@@ -340,11 +349,12 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
         if record is None:
             raise MeetingNotFoundError(session_id)
         result = await desktop_agent_service.analyze_screenshot(record, event)
-    except Exception as error:
+    except Exception:
         result = ScreenshotAnalysisResult(
             status="failed",
-            text=f"截图分析失败：{error}",
+            text="截图分析失败。请检查截图分析工作流的提供方、模型和视觉能力配置。",
             vision_used=False,
+            evidence_kind="none",
         )
     analysis_event = meeting_ingestion.screenshot_analysis(
         session_id,
@@ -361,6 +371,8 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
                 "content": result.text,
                 "status": result.status,
                 "vision_used": result.vision_used,
+                "evidence_kind": result.evidence_kind,
+                "image_rejection": result.image_rejection,
             },
             "timestamp": datetime.now(UTC).isoformat(),
             "session_id": session_id,

@@ -57,6 +57,21 @@ final class AIWorkflowConfigurationTests: XCTestCase {
         XCTAssertEqual(preferences.selection(for: .summariesAndTasks).modelID, "deepseek-summary")
     }
 
+    func testLegacyUnknownOpenAIModelAttemptsVisionForScreenshotWorkflowOnly() throws {
+        let suiteName = "AIWorkflowScreenshotMigrationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("openai", forKey: AIProviderPreferenceKey.provider)
+        defaults.set("gpt-5.6-terra", forKey: AIProviderPreferenceKey.openAIModel)
+        let preferences = AIProviderPreferences(defaults: defaults)
+
+        XCTAssertTrue(preferences.selection(for: .screenshotAnalysis).supportsVision)
+        XCTAssertFalse(preferences.selection(for: .conversation).supportsVision)
+        XCTAssertTrue(
+            defaults.bool(forKey: AIProviderPreferenceKey.screenshotAnalysisVision)
+        )
+    }
+
     func testRuntimeEnvironmentInventoriesEveryWorkflowWithoutSecrets() throws {
         let suiteName = "AIWorkflowRuntimeTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -111,7 +126,7 @@ final class AIWorkflowConfigurationTests: XCTestCase {
             (
                 .translation,
                 .init(providerID: "deepseek", modelID: "translation-model", supportsVision: false)
-            )
+            ),
         ]
         for (workflow, selection) in selections {
             try preferences.save(selection, for: workflow)

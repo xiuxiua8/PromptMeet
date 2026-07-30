@@ -91,6 +91,7 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
     private let targetPicker: any ScreenshotTargetPicking
     private let targetCapturer: any ScreenshotTargetCapturing
     private let uploader: any NativeScreenshotUploading
+    private let ocrRecognizer: any ScreenshotOCRRecognizing
     private let permission: any ScreenRecordingPermissionProviding
     private var selectedTarget: ScreenshotTargetHandle?
     private(set) var targetState: ScreenshotTargetState = .none
@@ -99,11 +100,13 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
         targetPicker: any ScreenshotTargetPicking = SystemContentSharingTargetPicker(),
         targetCapturer: any ScreenshotTargetCapturing = SystemScreenshotTargetCapturer(),
         uploader: any NativeScreenshotUploading = NativeScreenshotUploader(),
+        ocrRecognizer: any ScreenshotOCRRecognizing = LocalScreenshotOCR(),
         permission: any ScreenRecordingPermissionProviding = SystemScreenRecordingPermission()
     ) {
         self.targetPicker = targetPicker
         self.targetCapturer = targetCapturer
         self.uploader = uploader
+        self.ocrRecognizer = ocrRecognizer
         self.permission = permission
     }
 
@@ -129,7 +132,17 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
             throw error
         }
         do {
-            try await uploader.upload(data, sessionID: sessionID)
+            let localOCRText: String?
+            do {
+                localOCRText = try await ocrRecognizer.recognize(data)
+            } catch {
+                localOCRText = nil
+            }
+            try await uploader.upload(
+                data,
+                sessionID: sessionID,
+                localOCRText: localOCRText
+            )
             targetState = .selected(label: selectedTarget.label)
         } catch {
             throw ScreenshotPickerError.uploadFailed(error.localizedDescription)

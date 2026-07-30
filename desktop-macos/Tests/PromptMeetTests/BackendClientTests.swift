@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import PromptMeet
 
 final class BackendClientTests: XCTestCase {
@@ -134,6 +135,42 @@ final class BackendClientTests: XCTestCase {
                 "摘要与待办 · OpenAI 兼容 · summary-model 连接失败"
             )
         }
+    }
+
+    func testNativeScreenshotUploaderSendsPixelsAndOCRAsJSON() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendClientURLProtocol.self]
+        BackendClientURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/sessions/meeting-ocr/native-screenshot")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            let body = try requestBodyData(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["mime_type"] as? String, "image/png")
+            XCTAssertEqual(json["ocr_engine"] as? String, "apple_vision")
+            XCTAssertEqual(
+                json["local_ocr_text"] as? String,
+                "截图证据：青岚计划在 14:30 部署，负责人周岚。"
+            )
+            let encoded = try XCTUnwrap(json["image_base64"] as? String)
+            XCTAssertEqual(Data(base64Encoded: encoded), Data([0, 1, 2, 3]))
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data(#"{"success":true,"status":"analyzing"}"#.utf8))
+        }
+        let uploader = NativeScreenshotUploader(
+            environment: BackendEnvironment(baseURL: URL(string: "http://127.0.0.1:8000")!),
+            session: URLSession(configuration: configuration)
+        )
+
+        try await uploader.upload(
+            Data([0, 1, 2, 3]),
+            sessionID: "meeting-ocr",
+            localOCRText: "截图证据：青岚计划在 14:30 部署，负责人周岚。"
+        )
     }
 }
 

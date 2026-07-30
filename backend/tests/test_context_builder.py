@@ -89,7 +89,7 @@ def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order()
         selected.kind for selected in selection.events
     ]
     assert selection.omitted_count > 0
-    assert selection.derived_summary
+    assert selection.derived_summary is None
     assert [source.source_id for source in selection.sources] == [
         f"M{selected.sequence}" for selected in selection.events
     ]
@@ -140,6 +140,154 @@ def test_relevant_screenshot_analysis_keeps_its_raw_image_ahead_of_unrelated_evi
         EventKind.SCREENSHOT,
         EventKind.SCREENSHOT_ANALYSIS,
     ]
+
+
+def test_screenshot_query_uses_only_latest_asset_and_its_completed_analysis() -> None:
+    record = MeetingRecord(
+        meeting_id="meeting-a",
+        started_at=START,
+        events=[
+            event(
+                1,
+                EventKind.SCREENSHOT,
+                ScreenshotPayload(
+                    asset_id="older",
+                    relative_path="assets/meeting-a/older.png",
+                    mime_type="image/png",
+                    sha256="older-sha",
+                ),
+            ),
+            event(
+                2,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="older",
+                    status="completed",
+                    text="旧截图写着旧计划",
+                    vision_used=True,
+                ),
+            ),
+            event(
+                3,
+                EventKind.TRANSCRIPT,
+                TranscriptPayload(
+                    segment_id="audio",
+                    speaker="会议",
+                    text="无关音频提到了另一个部署时间",
+                ),
+            ),
+            event(
+                4,
+                EventKind.SCREENSHOT,
+                ScreenshotPayload(
+                    asset_id="latest",
+                    relative_path="assets/meeting-a/latest.png",
+                    mime_type="image/png",
+                    sha256="latest-sha",
+                ),
+            ),
+            event(
+                5,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="latest",
+                    status="completed",
+                    text="OCR 证据：青岚计划在 14:30 部署",
+                    vision_used=False,
+                    evidence_kind="ocr",
+                ),
+            ),
+        ],
+    )
+
+    selection = MeetingContextBuilder().select(
+        record,
+        "这张最新截图写了什么？",
+        ContextBudget(total_tokens=500, answer_reserve=100),
+    )
+
+    assert [selected.sequence for selected in selection.events] == [4, 5]
+    assert [source.source_id for source in selection.sources] == ["M4", "M5"]
+
+
+def test_screenshot_query_excludes_pending_failed_empty_and_mismatched_analysis() -> (
+    None
+):
+    pending = ScreenshotAnalysisPayload.model_construct(
+        type="screenshot_analysis",
+        asset_id="latest",
+        status="pending",
+        text="尚未完成",
+        vision_used=False,
+        evidence_kind="none",
+        image_rejection=None,
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-a",
+        started_at=START,
+        events=[
+            event(
+                1,
+                EventKind.SCREENSHOT,
+                ScreenshotPayload(
+                    asset_id="latest",
+                    relative_path="assets/meeting-a/latest.png",
+                    mime_type="image/png",
+                    sha256="latest-sha",
+                ),
+            ),
+            event(
+                2,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="other",
+                    status="completed",
+                    text="其他截图可读",
+                    vision_used=True,
+                ),
+            ),
+            event(
+                3,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="latest",
+                    status="failed",
+                    text="失败叙述不应作为证据",
+                    vision_used=False,
+                ),
+            ),
+            event(
+                4,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="latest",
+                    status="unsupported",
+                    text="配置提示不应作为可读证据",
+                    vision_used=False,
+                ),
+            ),
+            event(
+                5,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="latest",
+                    status="completed",
+                    text="   ",
+                    vision_used=True,
+                ),
+            ),
+            event(6, EventKind.SCREENSHOT_ANALYSIS, pending),
+        ],
+    )
+
+    selection = MeetingContextBuilder().select(
+        record,
+        "请读取最新图片",
+        ContextBudget(total_tokens=500, answer_reserve=100),
+    )
+
+    assert [selected.sequence for selected in selection.events] == [1]
+    assert [source.source_id for source in selection.sources] == ["M1"]
 
 
 def test_source_aware_transcript_is_explicit_in_rendering_and_evidence_label() -> None:
@@ -340,5 +488,5 @@ def test_text_only_provider_discloses_pixels_were_not_seen_but_vision_gets_asset
     assert text_request.degraded_vision is True
     assert "提供方不支持图像输入" in text_request.messages[1].content
     assert vision_request.degraded_vision is False
-    developer_parts = vision_request.messages[1].content
-    assert any(part.type == "image_asset" for part in developer_parts)
+    user_parts = vision_request.messages[-1].content
+    assert any(part.type == "image_asset" for part in user_parts)

@@ -88,6 +88,28 @@ final class ScreenCapturePickerTests: XCTestCase {
         XCTAssertEqual(uploader.sessionIDs, ["meeting-1", "meeting-1"])
     }
 
+    func testCapturedChineseTextIsUploadedWithLocalOCRProvenance() async throws {
+        let uploader = NativeScreenshotUploaderSpy()
+        let ocr = ScreenshotOCRRecognizerSpy(
+            text: "截图证据：青岚计划在 14:30 部署，负责人周岚。"
+        )
+        let controller = ScreenCaptureController(
+            targetPicker: ScreenshotTargetPickerSpy(),
+            targetCapturer: ScreenshotTargetCapturerSpy(),
+            uploader: uploader,
+            ocrRecognizer: ocr
+        )
+        _ = try await controller.selectTarget()
+
+        try await controller.captureSelected(sessionID: "meeting-ocr")
+
+        XCTAssertEqual(ocr.recognizeCount, 1)
+        XCTAssertEqual(
+            uploader.ocrTexts,
+            ["截图证据：青岚计划在 14:30 部署，负责人周岚。"]
+        )
+    }
+
     func testUploadFailurePreservesSelectedTargetAndSurfacesAccurateError() async throws {
         let picker = ScreenshotTargetPickerSpy()
         let uploader = NativeScreenshotUploaderSpy(
@@ -253,15 +275,31 @@ private final class ScreenshotTargetCapturerSpy: ScreenshotTargetCapturing {
 private final class NativeScreenshotUploaderSpy: NativeScreenshotUploading, @unchecked Sendable {
     private(set) var uploadCount = 0
     private(set) var sessionIDs: [String] = []
+    private(set) var ocrTexts: [String?] = []
     private let stubbedError: (any Error)?
 
     init(stubbedError: (any Error)? = nil) {
         self.stubbedError = stubbedError
     }
 
-    func upload(_ pngData: Data, sessionID: String) async throws {
+    func upload(_ pngData: Data, sessionID: String, localOCRText: String?) async throws {
         uploadCount += 1
         sessionIDs.append(sessionID)
+        ocrTexts.append(localOCRText)
         if let stubbedError { throw stubbedError }
+    }
+}
+
+private final class ScreenshotOCRRecognizerSpy: ScreenshotOCRRecognizing, @unchecked Sendable {
+    private(set) var recognizeCount = 0
+    private let text: String?
+
+    init(text: String?) {
+        self.text = text
+    }
+
+    func recognize(_ pngData: Data) async throws -> String? {
+        recognizeCount += 1
+        return text
     }
 }

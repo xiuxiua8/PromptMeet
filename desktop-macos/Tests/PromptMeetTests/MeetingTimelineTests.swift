@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import PromptMeet
 
 final class MeetingTimelineTests: XCTestCase {
@@ -16,12 +17,14 @@ final class MeetingTimelineTests: XCTestCase {
                 + #""kind":"screenshot","provenance":{"source":"native_screenshot"},"#
                 + #""payload":{"type":"screenshot","asset_id":"asset-1","#
                 + #""relative_path":"assets/meeting-1/slide.png","mime_type":"image/png","sha256":"abc","#
-                + #""width":1280,"height":720,"capture_status":"available"}},{"event_id":"event-3","#
+                + #""width":1280,"height":720,"capture_status":"available","#
+                + #""local_ocr_text":"青岚计划在 14:30 部署","ocr_engine":"apple_vision"}},{"event_id":"event-3","#
                 + #""meeting_id":"meeting-1","sequence":3,"occurred_at":"2026-07-25T10:03:00Z","#
                 + #""kind":"screenshot_analysis","provenance":{"source":"multimodal_analysis","#
                 + #""provider":"openai","model":"gpt-4o"},"payload":{"type":"screenshot_analysis","#
                 + #""asset_id":"asset-1","status":"completed","text":"截图显示周岚负责回滚","#
-                + #""vision_used":true}},{"event_id":"event-4","meeting_id":"meeting-1","sequence":4,"#
+                + #""vision_used":false,"evidence_kind":"ocr","#
+                + #""image_rejection":"HTTP 400: image input rejected"}},{"event_id":"event-4","meeting_id":"meeting-1","sequence":4,"#
                 + #""occurred_at":"2026-07-25T10:04:00Z","kind":"user_question","#
                 + #""provenance":{"source":"user","request_id":"11111111-1111-1111-1111-111111111111"},"#
                 + #""payload":{"type":"user_question","request_id":"11111111-1111-1111-1111-111111111111","#
@@ -42,6 +45,14 @@ final class MeetingTimelineTests: XCTestCase {
         XCTAssertEqual(meeting.timeline.map(\.sequence), [1, 2, 3, 4, 5])
         XCTAssertEqual(meeting.transcript.first?.text, "确认周五上线")
         XCTAssertEqual(meeting.screenshots.first?.analysis?.text, "截图显示周岚负责回滚")
+        XCTAssertEqual(meeting.screenshots.first?.localOCRText, "青岚计划在 14:30 部署")
+        XCTAssertEqual(meeting.screenshots.first?.ocrEngine, "apple_vision")
+        XCTAssertEqual(meeting.screenshots.first?.analysis?.evidenceKind, "ocr")
+        XCTAssertEqual(
+            meeting.screenshots.first?.analysis?.imageRejection,
+            "HTTP 400: image input rejected"
+        )
+        XCTAssertFalse(try XCTUnwrap(meeting.screenshots.first?.analysis?.visionUsed))
         XCTAssertEqual(meeting.conversation.first?.answer, "周岚 [M3]")
         XCTAssertEqual(meeting.conversation.first?.sources.first?.sourceID, "M3")
     }
@@ -53,6 +64,8 @@ final class MeetingTimelineTests: XCTestCase {
             mimeType: "image/png",
             width: nil,
             height: nil,
+            localOCRText: nil,
+            ocrEngine: nil,
             capturedAt: Date(),
             analysis: nil
         )

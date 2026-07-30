@@ -185,7 +185,8 @@ extension WorkspaceView {
                 .lineLimit(1)
 
             if store.state.screenshotOperation == .selecting
-                || store.state.screenshotOperation == .capturing {
+                || store.state.screenshotOperation == .capturing
+            {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(VisualTokens.sky)
@@ -195,9 +196,17 @@ extension WorkspaceView {
                 .font(.system(size: 8, weight: .medium, design: .rounded))
                 .foregroundStyle(screenshotStatusTint)
                 .lineLimit(1)
+                .help(screenshotOperationLabel)
 
             if screenshotNeedsSettings {
                 Button("打开屏幕录制设置", action: store.openScreenRecordingSettings)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VisualTokens.amber)
+            }
+
+            if screenshotNeedsAISettings {
+                Button("打开 AI 截图设置", action: openSettings)
                     .buttonStyle(.plain)
                     .font(.system(size: 8, weight: .semibold, design: .rounded))
                     .foregroundStyle(VisualTokens.amber)
@@ -302,6 +311,13 @@ extension WorkspaceView {
     var screenshotNeedsSettings: Bool {
         guard case .failed(let message) = store.state.screenshotOperation else { return false }
         return message.contains("屏幕录制权限")
+    }
+
+    var screenshotNeedsAISettings: Bool {
+        guard case .analyzed(let status, let detail) = store.state.screenshotOperation else {
+            return false
+        }
+        return status == "unsupported" || detail.contains("截图分析工作流配置问题")
     }
 
     var summaryAutomationTint: Color {

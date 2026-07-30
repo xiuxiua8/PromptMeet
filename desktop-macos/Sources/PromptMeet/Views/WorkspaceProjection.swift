@@ -60,10 +60,17 @@ struct WorkspaceProjection: Equatable, Sendable {
                     screenshot: screenshots[value.assetID]
                 )
             case .screenshotAnalysis(let value):
+                let title =
+                    switch (value.status, value.evidenceKind) {
+                    case ("completed", "ocr"): "截图 OCR 证据"
+                    case ("completed", _): "截图视觉分析"
+                    case ("unsupported", _): "截图分析配置"
+                    default: "截图分析状态"
+                    }
                 return Self.item(
                     event,
                     .screenshotAnalysis,
-                    value.status == "completed" ? "截图分析" : "截图分析状态",
+                    title,
                     value.text,
                     isFailure: value.status == "failed"
                 )

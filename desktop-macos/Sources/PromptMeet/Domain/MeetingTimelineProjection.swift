@@ -9,7 +9,8 @@ enum MeetingTimelineProjection {
                 continue
             }
             guard case .screenshotAnalysis(let value) = event.payload,
-                  let index = assets.firstIndex(where: { $0.id == value.assetID }) else {
+                let index = assets.firstIndex(where: { $0.id == value.assetID })
+            else {
                 continue
             }
             assets[index].analysis = ScreenshotAnalysis(
@@ -17,7 +18,9 @@ enum MeetingTimelineProjection {
                 text: value.text,
                 visionUsed: value.visionUsed,
                 provider: event.provenance.provider,
-                model: event.provenance.model
+                model: event.provenance.model,
+                evidenceKind: value.evidenceKind,
+                imageRejection: value.imageRejection
             )
         }
         return assets
@@ -71,7 +74,8 @@ enum MeetingTimelineProjection {
         event: MeetingTimelineEvent,
         to turns: inout [ConversationTurn]
     ) {
-        let index = turns.firstIndex(where: { $0.requestID == answer.requestID })
+        let index =
+            turns.firstIndex(where: { $0.requestID == answer.requestID })
             ?? appendPlaceholder(for: answer, event: event, to: &turns)
         turns[index].answer = answer.answer
         turns[index].phase = answer.status == "failed" ? .failed : .completed

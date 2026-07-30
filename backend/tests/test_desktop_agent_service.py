@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from datetime import UTC, datetime
 
@@ -265,7 +266,11 @@ class ImageRejectingStreamResponse(FakeAgentStreamResponse):
         response = httpx.Response(
             400,
             request=request,
-            json={"error": {"message": "image_url input is not supported"}},
+            json={
+                "error": {
+                    "message": "secret-runtime-key image_url input is not supported"
+                }
+            },
         )
         raise httpx.HTTPStatusError(
             "image input rejected",
@@ -625,7 +630,7 @@ def test_openai_compatible_requests_use_configured_endpoint_and_model_consistent
         "summary_model": "proxy-model",
         "screenshot_provider": "openai",
         "screenshot_model": "proxy-model",
-        "screenshot_supports_vision": False,
+        "screenshot_supports_vision": True,
         "translation_provider": "openai",
         "translation_model": "proxy-model",
     }
@@ -706,8 +711,12 @@ def test_openai_compatible_image_rejection_retries_text_only_on_same_route(
         "proxy-vision-model",
         "proxy-vision-model",
     ]
-    first_developer_content = ImageFallbackClient.payloads[0]["messages"][1]["content"]
-    assert any(part.get("type") == "image_url" for part in first_developer_content)
+    first_user_content = ImageFallbackClient.payloads[0]["messages"][-1]["content"]
+    assert any(part.get("type") == "image_url" for part in first_user_content)
+    assert any(
+        part.get("type") == "text" and "asset_id=screen" in part.get("text", "")
+        for part in first_user_content
+    )
     second_developer_content = ImageFallbackClient.payloads[1]["messages"][1]["content"]
     assert isinstance(second_developer_content, str)
     assert "模型没有看到截图像素" in second_developer_content
@@ -715,6 +724,8 @@ def test_openai_compatible_image_rejection_retries_text_only_on_same_route(
     assert result.provider == "openai"
     assert result.model == "proxy-vision-model"
     assert result.answer == "已基于文字上下文回答。"
+    assert result.image_rejection == "HTTP 400: image input rejected"
+    assert "secret-runtime-key" not in result.image_rejection
 
 
 def test_screenshot_analysis_reports_proxy_image_rejection_truthfully(
@@ -769,6 +780,245 @@ def test_screenshot_analysis_reports_proxy_image_rejection_truthfully(
     assert "没有看到截图像素" in result.text
     assert result.provider == "openai"
     assert result.model == "proxy-vision-model"
+    assert result.evidence_kind == "none"
+    assert result.image_rejection == "HTTP 400: image input rejected"
+
+
+def test_screenshot_analysis_routes_only_exact_asset_pixels_in_user_message(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    old_path = tmp_path / "assets/meeting-proxy/old.png"
+    latest_path = tmp_path / "assets/meeting-proxy/latest.png"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"old-image-bytes")
+    latest_path.write_bytes(b"captain-shape-chinese-pixels")
+    old_event = MeetingEvent(
+        event_id="old-screen-event",
+        meeting_id="meeting-proxy",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="old",
+            relative_path="assets/meeting-proxy/old.png",
+            mime_type="image/png",
+            sha256="old-sha",
+        ),
+    )
+    latest_event = MeetingEvent(
+        event_id="latest-screen-event",
+        meeting_id="meeting-proxy",
+        sequence=2,
+        occurred_at=datetime(2026, 7, 28, 10, 1, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="latest",
+            relative_path="assets/meeting-proxy/latest.png",
+            mime_type="image/png",
+            sha256="latest-sha",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-proxy",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[old_event, latest_event],
+    )
+    FakeAgentClient.responses = [
+        {
+            "role": "assistant",
+            "content": "-**关键h息**：截图写着青岚计划在 14:30 部署。",
+        }
+    ]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "proxy-vision-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "1",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, latest_event))
+
+    request = FakeAgentClient.payloads[0]
+    assert [message["role"] for message in request["messages"]] == [
+        "system",
+        "developer",
+        "user",
+    ]
+    assert isinstance(request["messages"][1]["content"], str)
+    user_content = request["messages"][2]["content"]
+    identity_parts = [
+        part["text"]
+        for part in user_content
+        if part.get("type") == "text" and "asset_id=" in part.get("text", "")
+    ]
+    image_urls = [
+        part["image_url"]["url"]
+        for part in user_content
+        if part.get("type") == "image_url"
+    ]
+    assert identity_parts == ["截图 [M2] asset_id=latest sha256=latest-sha"]
+    assert image_urls == [
+        "data:image/png;base64,"
+        + base64.b64encode(b"captain-shape-chinese-pixels").decode("ascii")
+    ]
+    assert result.status == "completed"
+    assert result.vision_used is True
+    assert result.evidence_kind == "vision"
+    assert result.text == "- **关键信息**：截图写着青岚计划在 14:30 部署。"
+
+
+def test_text_only_screenshot_configuration_is_actionable_without_ai_narrative() -> (
+    None
+):
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-text-only",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-text-only/screen.png",
+            mime_type="image/png",
+            sha256="screen-sha",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-text-only",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "text-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "0",
+            "OPENAI_API_KEY": "secret-screenshot-key",
+        }
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert result.status == "unsupported"
+    assert result.vision_used is False
+    assert result.evidence_kind == "none"
+    assert "截图分析" in result.text
+    assert "图像输入" in result.text
+    assert "text-model" in result.text
+    assert "secret-screenshot-key" not in result.text
+
+
+def test_text_only_screenshot_configuration_uses_explicit_local_ocr_evidence() -> None:
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-ocr",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 30, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-ocr/screen.png",
+            mime_type="image/png",
+            sha256="screen-sha",
+            local_ocr_text="截图证据：青岚计划在 14:30 部署，负责人周岚。",
+            ocr_engine="apple_vision",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-ocr",
+        started_at=datetime(2026, 7, 30, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "text-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "0",
+            "OPENAI_API_KEY": "placeholder-key",
+        }
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert result.status == "completed"
+    assert result.vision_used is False
+    assert result.evidence_kind == "ocr"
+    assert "本地 OCR 证据" in result.text
+    assert "非视觉模型分析" in result.text
+    assert "青岚计划在 14:30 部署" in result.text
+
+
+def test_image_rejection_keeps_exact_asset_and_falls_back_to_labeled_ocr(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-ocr/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"captain-shape-chinese-pixels")
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-ocr",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 30, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-ocr/screen.png",
+            mime_type="image/png",
+            sha256="screen-sha",
+            local_ocr_text="截图证据：青岚计划在 14:30 部署，负责人周岚。",
+            ocr_engine="apple_vision",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-ocr",
+        started_at=datetime(2026, 7, 30, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    ImageFallbackClient.endpoints = []
+    ImageFallbackClient.payloads = []
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: ImageFallbackClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "unknown-compatible-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "1",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert len(ImageFallbackClient.payloads) == 2
+    assert result.status == "completed"
+    assert result.vision_used is False
+    assert result.evidence_kind == "ocr"
+    assert result.image_rejection == "HTTP 400: image input rejected"
+    assert "本地 OCR 证据" in result.text
+    assert "非视觉模型分析" in result.text
+    assert "青岚计划在 14:30 部署" in result.text
+    assert "已基于文字上下文回答" not in result.text
 
 
 def test_meeting_answer_uses_typed_budgeted_context_and_exact_question(

@@ -125,7 +125,7 @@ class ProviderConfiguration:
             supports_vision = (
                 configured_vision == "1"
                 if configured_vision is not None
-                else cls._openai_vision_model(model)
+                else purpose == "screenshot" or cls._openai_vision_model(model)
             )
             capabilities = ProviderCapabilities(
                 provider="openai",

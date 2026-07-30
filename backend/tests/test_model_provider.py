@@ -176,7 +176,9 @@ def test_each_workflow_routes_to_its_own_provider_model_and_endpoint() -> None:
     assert (translation.provider, translation.model) == ("openai", "translation-model")
 
 
-def test_custom_openai_model_is_text_only_without_explicit_vision_capability() -> None:
+def test_custom_openai_screenshot_model_attempts_vision_without_explicit_override() -> (
+    None
+):
     configuration = ProviderConfiguration.from_environment(
         {
             "OPENAI_API_KEY": "placeholder-key",
@@ -186,7 +188,7 @@ def test_custom_openai_model_is_text_only_without_explicit_vision_capability() -
         purpose="screenshot",
     )
 
-    assert configuration.capabilities.supports_vision is False
+    assert configuration.capabilities.supports_vision is True
 
 
 @pytest.mark.parametrize(

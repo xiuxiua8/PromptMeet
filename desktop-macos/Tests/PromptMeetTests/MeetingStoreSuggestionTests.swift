@@ -197,7 +197,9 @@ extension MeetingStoreTests {
                     assetID: "asset-1",
                     status: "completed",
                     text: "截图显示发布风险",
-                    visionUsed: true
+                    visionUsed: true,
+                    evidenceKind: "vision",
+                    imageRejection: nil
                 )
             )
         )
@@ -239,7 +241,9 @@ extension MeetingStoreTests {
                     assetID: "asset-1",
                     status: "completed",
                     text: "截图显示发布风险",
-                    visionUsed: true
+                    visionUsed: true,
+                    evidenceKind: "vision",
+                    imageRejection: nil
                 )
             )
         )

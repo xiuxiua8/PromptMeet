@@ -31,6 +31,8 @@ class ScreenshotAnalysisResult:
     vision_used: bool
     provider: str | None = None
     model: str | None = None
+    evidence_kind: str = "none"
+    image_rejection: str | None = None
 
 
 class MeetingIngestionService:
@@ -69,7 +71,15 @@ class MeetingIngestionService:
         )
         return self.repository.append(meeting_id, event).events[-1]
 
-    def screenshot(self, meeting_id: str, path: Path, mime_type: str) -> MeetingEvent:
+    def screenshot(
+        self,
+        meeting_id: str,
+        path: Path,
+        mime_type: str,
+        *,
+        local_ocr_text: str | None = None,
+        ocr_engine: str | None = None,
+    ) -> MeetingEvent:
         resolved = path.resolve()
         root = self.repository.root.resolve()
         if root not in resolved.parents:
@@ -87,6 +97,8 @@ class MeetingIngestionService:
                 sha256=hashlib.sha256(data).hexdigest(),
                 width=width,
                 height=height,
+                local_ocr_text=(local_ocr_text or "").strip() or None,
+                ocr_engine=ocr_engine if local_ocr_text else None,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]
@@ -110,6 +122,8 @@ class MeetingIngestionService:
                 status=result.status,
                 text=result.text,
                 vision_used=result.vision_used,
+                evidence_kind=result.evidence_kind,
+                image_rejection=result.image_rejection,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]

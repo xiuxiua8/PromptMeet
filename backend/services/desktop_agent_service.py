@@ -1,6 +1,7 @@
 import json
 import os
 import base64
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
@@ -9,8 +10,12 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from models.meeting_context import EvidenceSource, MeetingRecord
-from services.context_builder import ContextBudget, MeetingContextBuilder
+from models.meeting_context import EvidenceSource, MeetingRecord, ScreenshotPayload
+from services.context_builder import (
+    ContextBudget,
+    ContextSelection,
+    MeetingContextBuilder,
+)
 from services.meeting_ingestion import ScreenshotAnalysisResult
 from services.model_provider import ProviderConfiguration
 from services.prompt_builder import MeetingPromptBuilder, ProviderContentPart
@@ -23,6 +28,7 @@ class MeetingAnswerResult:
     degraded_vision: bool
     provider: str
     model: str
+    image_rejection: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,7 @@ class DesktopAgentService:
         exclude_event_ids: set[str] | None = None,
         search_web: bool = True,
         purpose: str = "answer",
+        selection_override: ContextSelection | None = None,
     ) -> MeetingAnswerResult:
         configuration = ProviderConfiguration.from_environment(
             dict(self.environment), purpose=purpose
@@ -125,7 +132,7 @@ class DesktopAgentService:
             answer_reserve=2_000,
             summary_reserve=500,
         )
-        selection = MeetingContextBuilder().select(
+        selection = selection_override or MeetingContextBuilder().select(
             record,
             question,
             context_budget,
@@ -141,6 +148,7 @@ class DesktopAgentService:
             search_web
             and self.environment.get("PROMPTMEET_WEB_SEARCH_ENABLED", "1") != "0"
         )
+        image_rejection = None
         try:
             answer, web_sources = await self._run_meeting_prompt(
                 configuration,
@@ -151,6 +159,7 @@ class DesktopAgentService:
         except httpx.HTTPStatusError as error:
             if not self._is_image_rejection(error, prompt_request):
                 raise self._runtime_failure(configuration, purpose, error) from error
+            image_rejection = self._image_rejection_provenance(error)
             prompt_request = MeetingPromptBuilder().build(
                 selection,
                 question,
@@ -179,6 +188,7 @@ class DesktopAgentService:
             degraded_vision=prompt_request.degraded_vision,
             provider=configuration.provider,
             model=configuration.model,
+            image_rejection=image_rejection,
         )
 
     async def _run_meeting_prompt(
@@ -271,46 +281,106 @@ class DesktopAgentService:
         configuration = ProviderConfiguration.from_environment(
             dict(self.environment), purpose="screenshot"
         )
+        payload = screenshot_event.payload
+        if not isinstance(payload, ScreenshotPayload):
+            raise ValueError("截图分析需要截图事件")
+        local_ocr_text = (payload.local_ocr_text or "").strip()
         if not configuration.capabilities.supports_vision:
+            if local_ocr_text:
+                return ScreenshotAnalysisResult(
+                    status="completed",
+                    text=self._local_ocr_evidence(local_ocr_text),
+                    vision_used=False,
+                    provider=configuration.provider,
+                    model=configuration.model,
+                    evidence_kind="ocr",
+                )
             return ScreenshotAnalysisResult(
                 status="unsupported",
                 text=(
-                    f"{configuration.provider} 的当前模型 {configuration.model} 不支持图像输入。"
-                    "截图已保留，可改用支持视觉的提供方重新分析。"
+                    "截图分析工作流配置问题："
+                    f"{configuration.provider} 的模型 {configuration.model} 当前未启用图像输入。"
+                    "请在设置 > AI 服务 > 截图分析中选择视觉模型，"
+                    "并勾选“该端点与模型支持图像输入”。原截图已保留。"
                 ),
                 vision_used=False,
                 provider=configuration.provider,
                 model=configuration.model,
+                evidence_kind="none",
             )
 
         async def ignore(_: dict) -> None:
             return None
 
+        selection = MeetingContextBuilder().select_screenshot(record, screenshot_event)
         result = await self.answer_meeting(
             record,
             "请客观描述最新会议截图中的关键信息、数字、决定和待办。不要推测看不清的内容。",
             ignore,
             search_web=False,
             purpose="screenshot",
+            selection_override=selection,
         )
         if result.degraded_vision:
+            if local_ocr_text:
+                return ScreenshotAnalysisResult(
+                    status="completed",
+                    text=self._local_ocr_evidence(local_ocr_text),
+                    vision_used=False,
+                    provider=result.provider,
+                    model=result.model,
+                    evidence_kind="ocr",
+                    image_rejection=result.image_rejection,
+                )
             return ScreenshotAnalysisResult(
                 status="unsupported",
                 text=(
-                    f"{result.provider} 的当前端点或模型 {result.model} 拒绝了图像输入。"
-                    "截图已保留，但模型没有看到截图像素。"
+                    "截图分析工作流配置问题："
+                    f"{result.provider} 的端点或模型 {result.model} 拒绝了图像输入。"
+                    "原截图已保留，但模型没有看到截图像素。"
+                    "请确认该模型支持视觉，或关闭错误的视觉声明后改用支持视觉的模型。"
                 ),
                 vision_used=False,
                 provider=result.provider,
                 model=result.model,
+                evidence_kind="none",
+                image_rejection=result.image_rejection,
             )
         return ScreenshotAnalysisResult(
             status="completed",
-            text=result.answer,
+            text=self._normalize_screenshot_markdown(result.answer),
             vision_used=True,
             provider=result.provider,
             model=result.model,
+            evidence_kind="vision",
         )
+
+    @classmethod
+    def _local_ocr_evidence(cls, text: str) -> str:
+        return cls._normalize_screenshot_markdown(
+            "本地 OCR 证据（Apple Vision，非视觉模型分析）：\n\n" + text
+        )
+
+    @staticmethod
+    def _normalize_screenshot_markdown(text: str) -> str:
+        value = text.replace("关键h息", "关键信息")
+        value = re.sub(r"(?m)^(\s*)-(?=\S)", r"\1- ", value)
+        lines = value.strip().splitlines()
+        normalized: list[str] = []
+        for line in lines:
+            is_list = bool(re.match(r"^\s*[-*+]\s+", line))
+            previous_is_list = bool(
+                normalized and re.match(r"^\s*[-*+]\s+", normalized[-1])
+            )
+            if (
+                is_list
+                and normalized
+                and normalized[-1].strip()
+                and not previous_is_list
+            ):
+                normalized.append("")
+            normalized.append(line.rstrip())
+        return "\n".join(normalized).strip()
 
     def _provider_content(self, content: str | list[ProviderContentPart]) -> object:
         if isinstance(content, str):
@@ -334,6 +404,10 @@ class DesktopAgentService:
                 }
             )
         return encoded
+
+    @staticmethod
+    def _image_rejection_provenance(error: httpx.HTTPStatusError) -> str:
+        return f"HTTP {error.response.status_code}: image input rejected"
 
     async def answer(
         self,
