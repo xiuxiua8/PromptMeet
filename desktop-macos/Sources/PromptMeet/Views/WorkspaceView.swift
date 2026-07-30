@@ -9,6 +9,8 @@ struct WorkspaceView: View {
     @State var showsHistory = false
     @State var followsTranscript = true
     @State var showsNewMeetingConfirmation = false
+    @State var historySearchText = ""
+    @FocusState var isHistorySearchFocused: Bool
 
     enum WorkspaceTab: String, CaseIterable {
         case assistant = "AI"
@@ -53,6 +55,9 @@ struct WorkspaceView: View {
         .background(workspaceBackground)
         .foregroundStyle(VisualTokens.primaryText)
         .task { await store.loadMeetingHistoryNow() }
+        .onChange(of: showsHistory) { _, isShown in
+            if isShown { isHistorySearchFocused = true }
+        }
         .confirmationDialog(
             "当前会议仍在进行",
             isPresented: $showsNewMeetingConfirmation,
@@ -84,8 +89,14 @@ extension WorkspaceView {
                     .shadow(color: workspaceStatusTint.opacity(0.55), radius: 7)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(isViewingHistory ? "历史会议" : "当前会议")
+                    Text(
+                        isViewingHistory
+                            ? store.state.selectedArchivedMeeting?.displayTitle ?? "历史会议"
+                            : "当前会议"
+                    )
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                        .help(store.state.selectedArchivedMeeting?.displayTitle ?? "当前会议")
                     Text(workspaceStatus)
                         .font(.system(size: 9, weight: .medium, design: .rounded))
                         .foregroundStyle(workspaceStatusTint)

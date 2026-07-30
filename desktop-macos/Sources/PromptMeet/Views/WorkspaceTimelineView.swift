@@ -2,13 +2,32 @@ import AppKit
 import SwiftUI
 
 extension WorkspaceView {
+    var filteredMeetingHistory: [StoredMeeting] {
+        MeetingHistorySearch.results(
+            in: store.state.meetingHistory,
+            query: historySearchText
+        )
+    }
+
     var historyColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("会议历史")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+            HStack(spacing: 8) {
+                Text("会议历史")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                Spacer(minLength: 0)
+                if !historySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("\(filteredMeetingHistory.count) 项")
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                        .foregroundStyle(VisualTokens.tertiaryText)
+                }
+            }
                 .padding(.horizontal, 16)
                 .padding(.top, 18)
-                .padding(.bottom, 12)
+                .padding(.bottom, 10)
+
+            historySearchField
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
 
             historyItem(
                 "当前会议",
@@ -20,11 +39,21 @@ extension WorkspaceView {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(store.state.meetingHistory) { meeting in
+                    if filteredMeetingHistory.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("没有匹配的会议")
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                        }
+                        .foregroundStyle(VisualTokens.tertiaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 28)
+                        .accessibilityElement(children: .combine)
+                    }
+                    ForEach(filteredMeetingHistory) { meeting in
                         historyItem(
-                            meeting.title
-                                ?? meeting.summary?.summaryText.split(separator: "\n").first.map(String.init)
-                                ?? "历史会议",
+                            meeting.displayTitle,
                             detail: "\(meeting.startTime.formatted(date: .abbreviated, time: .shortened))"
                                 + " · \(meetingStatus(meeting.status))",
                             active: store.state.selectedArchivedMeetingID == meeting.id
@@ -39,6 +68,52 @@ extension WorkspaceView {
         .background(Color.black.opacity(0.10))
         .overlay(alignment: .trailing) {
             Rectangle().fill(VisualTokens.line).frame(width: 1)
+        }
+    }
+
+    var historySearchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(VisualTokens.tertiaryText)
+
+            TextField("搜索标题或内容", text: $historySearchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .focused($isHistorySearchFocused)
+                .accessibilityLabel("搜索会议历史")
+                .onExitCommand {
+                    if historySearchText.isEmpty {
+                        isHistorySearchFocused = false
+                    } else {
+                        historySearchText = ""
+                    }
+                }
+
+            if !historySearchText.isEmpty {
+                Button {
+                    historySearchText = ""
+                    isHistorySearchFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(VisualTokens.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清除历史搜索")
+                .help("清除搜索")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(
+                    isHistorySearchFocused ? VisualTokens.sky.opacity(0.55) : VisualTokens.line,
+                    lineWidth: isHistorySearchFocused ? 1 : 0.5
+                )
         }
     }
 

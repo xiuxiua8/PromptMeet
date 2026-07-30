@@ -133,6 +133,7 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     configure(main_service, root, monkeypatch)
     history = client.get("/api/meetings").json()
     assert [meeting["meeting_id"] for meeting in history] == [meeting_id]
+    assert history[0]["title"] == "发布候选周五交付"
     assert history[0]["status"] == "completed"
     kinds = [event["kind"] for event in history[0]["events"]]
     assert EventKind.TRANSCRIPT in kinds
@@ -163,6 +164,64 @@ def test_full_multimodal_meeting_survives_restart_and_accepts_follow_up(
     restored = client.get(f"/api/meetings/{meeting_id}").json()
     assert restored["events"][-1]["kind"] == "assistant_answer"
     assert restored["events"][-1]["payload"]["request_id"] == "request-history"
+
+
+def test_meeting_completion_does_not_wait_for_ai_title_generation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    root = tmp_path / "meeting-data"
+    configure(main_service, root, monkeypatch)
+    release_title = asyncio.Event()
+
+    class DelayedTitleAgent(FakeMeetingAgent):
+        async def generate_meeting_title(self, record):
+            await release_title.wait()
+            return "移动端登录恢复方案"
+
+    monkeypatch.setattr(main_service, "desktop_agent_service", DelayedTitleAgent())
+    monkeypatch.setattr(
+        main_service.websocket_manager,
+        "broadcast_to_session",
+        lambda *args, **kwargs: asyncio.sleep(0),
+    )
+
+    async def finish_meeting() -> None:
+        created = await main_service.create_session()
+        meeting_id = created["session_id"]
+        await main_service.start_native_recording(meeting_id)
+        await main_service.process_native_transcript(
+            meeting_id,
+            {
+                "id": "6E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+                "text": "讨论移动端登录失败后的恢复方案",
+                "speaker": "林晨",
+                "source": "microphone",
+                "timestamp": "2026-07-30T10:00:00+00:00",
+            },
+        )
+
+        await asyncio.wait_for(
+            main_service.stop_native_recording(meeting_id),
+            timeout=0.5,
+        )
+
+        completed = main_service.meeting_repository.get(meeting_id)
+        assert completed.status.value == "completed"
+        assert completed.title == "讨论移动端登录失败后的恢复方案"
+        title_task = main_service.meeting_title_tasks[meeting_id]
+        assert not title_task.done()
+
+        release_title.set()
+        await title_task
+        assert (
+            main_service.meeting_repository.get(meeting_id).title
+            == "移动端登录恢复方案"
+        )
+
+    asyncio.run(finish_meeting())
 
 
 def test_rapid_questions_keep_request_scoped_snapshots_and_answers(

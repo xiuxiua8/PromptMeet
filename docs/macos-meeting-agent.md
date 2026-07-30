@@ -52,6 +52,8 @@ Each record has `schema_version: 2`, a meeting ID, lifecycle status, start and e
 
 Every event includes provenance. Provider-backed events may also include provider, model, and request ID metadata. Answer events contain stable evidence references such as `M12`, vision-degradation state, and an inline failure state when generation fails. Summary events are append-only revisions with the source event IDs, highest covered source revision, trigger, and active-minute milestone so the latest result is clear without erasing audit history.
 
+Normal meeting completion persists a deterministic title from that record before returning. A tracked background task may refine it through the configured summary-capable provider using only that meeting's transcript, latest summary, decisions, and tasks. Provider failure never changes completion status or removes the local fallback. Empty meetings use a timestamp-based `空会议` title. Older version 2 records without a title remain byte-for-byte readable and receive a stable Swift display fallback without an automatic rewrite.
+
 Writes use a temporary sibling file followed by atomic replacement. A malformed version 2 file remains on disk and appears as a `recovery_required` item instead of being silently deleted. Missing screenshot bytes produce an unavailable preview and a 404 asset response while the timeline event and any analysis remain visible.
 
 ### Legacy migration
@@ -106,7 +108,9 @@ The companion cancels the prior in-flight model task for that meeting and checks
 
 The workspace projects chronological meeting evidence on the left: source-attributed transcript, screenshots, screenshot analysis or failure, and generated summary or task evidence. User questions and assistant answers are excluded from that input projection and remain durably paired on the right conversation surface. The removed `参与讨论` item is not a meeting input event.
 
-Assistant answers and generated narrative evidence use the native Markdown renderer in `MarkdownDocument.swift` and `MarkdownTextView.swift`. It supports headings, emphasis, ordered and unordered lists, quotes, inline and fenced code, and safe HTTP(S) links. Partial streaming fences render as stable code blocks, unsafe link destinations are stripped while preserving text, and the AppKit text view keeps selection, copy, wrapping, accessibility, and dark-theme contrast.
+Meeting history displays the concise title in the sidebar and reopened toolbar. `MeetingHistorySearch.swift` matches Unicode and case-folded ASCII terms across title, transcript, summary, decisions, key points, and task metadata. Complete title matches rank ahead of body-only matches while chronological order and meeting-ID selection preserve duplicate titles.
+
+Assistant answers, generated summaries, key points, decisions, and structured tasks use the native Markdown renderer in `MarkdownDocument.swift` and `MarkdownTextView.swift`. It supports headings, emphasis, ordered and unordered lists, quotes, inline and fenced code, semantic task checklists, and safe HTTP(S) links. Partial streaming fences and inline delimiters render stably, unsafe link destinations are stripped while preserving text, and the SwiftUI text view keeps selection, copy, wrapping, accessibility, and dark-theme contrast.
 
 ## Active-time summary and task milestones
 

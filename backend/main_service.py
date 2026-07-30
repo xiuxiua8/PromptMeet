@@ -44,6 +44,7 @@ from services.meeting_repository import (
     MeetingNotFoundError,
     MeetingRepository,
 )  # noqa: E402
+from services.meeting_title_service import MeetingTitleService  # noqa: E402
 from models.meeting_context import (  # noqa: E402
     EventKind,
     AnswerPayload,
@@ -173,6 +174,7 @@ meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
 question_generation_tasks: dict[str, asyncio.Task] = {}
 latest_question_generations: dict[str, tuple[str, int]] = {}
+meeting_title_tasks: dict[str, asyncio.Task] = {}
 
 
 def finish_question_task(task: asyncio.Task) -> None:
@@ -195,6 +197,53 @@ def finish_screenshot_task(task: asyncio.Task) -> None:
         task.result()
     except Exception as error:
         logger.warning("截图分析任务失败: %s", error)
+
+
+def meeting_title_service() -> MeetingTitleService:
+    generator = (
+        getattr(desktop_agent_service, "generate_meeting_title", None)
+        if desktop_agent_service is not None
+        else None
+    )
+    return MeetingTitleService(meeting_repository, generator=generator)
+
+
+def persist_meeting_title_fallback(meeting_id: str) -> None:
+    try:
+        meeting_title_service().persist_fallback(meeting_id)
+    except Exception as error:
+        logger.warning(
+            "会议已结束，但本地标题回退保存失败: session=%s, error=%s",
+            meeting_id,
+            error.__class__.__name__,
+        )
+
+
+def schedule_meeting_title_generation(meeting_id: str) -> None:
+    existing = meeting_title_tasks.get(meeting_id)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        meeting_title_service().finalize(meeting_id),
+        name=f"meeting-title-{meeting_id}",
+    )
+    meeting_title_tasks[meeting_id] = task
+
+    def finish_title_task(completed: asyncio.Task) -> None:
+        if meeting_title_tasks.get(meeting_id) is completed:
+            meeting_title_tasks.pop(meeting_id, None)
+        if completed.cancelled():
+            return
+        try:
+            completed.result()
+        except Exception as error:
+            logger.warning(
+                "会议标题生成失败，已保留本地回退: session=%s, error=%s",
+                meeting_id,
+                error.__class__.__name__,
+            )
+
+    task.add_done_callback(finish_title_task)
 
 
 async def start_native_recording(session_id: str) -> None:
@@ -231,6 +280,9 @@ async def stop_native_recording(session_id: str) -> None:
         meeting_ingestion.finish(session_id, MeetingStatus.COMPLETED)
     except MeetingNotFoundError:
         logger.warning("结束会议时未找到持久记录: session=%s", session_id)
+    else:
+        persist_meeting_title_fallback(session_id)
+        schedule_meeting_title_generation(session_id)
     await websocket_manager.broadcast_to_session(
         session_id,
         {
@@ -555,6 +607,8 @@ async def mark_session_incomplete(session_id: str):
         MeetingStatus.INCOMPLETE,
         "会议采集未完整启动，已保留当前记录",
     )
+    persist_meeting_title_fallback(session_id)
+    schedule_meeting_title_generation(session_id)
     return {
         "success": True,
         "status": record.status.value,
@@ -921,6 +975,8 @@ async def store_session(session_id: str):
                     MeetingStatus.INCOMPLETE,
                     "会议已保存，但尚未收到正常结束事件",
                 )
+                persist_meeting_title_fallback(session_id)
+                schedule_meeting_title_generation(session_id)
             return {
                 "success": True,
                 "message": "会话存储成功",

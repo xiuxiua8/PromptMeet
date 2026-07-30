@@ -71,6 +71,15 @@ class MeetingRepository:
             self._write(updated)
             return updated
 
+    def set_title(self, meeting_id: str, title: str) -> MeetingRecord:
+        with self._lock:
+            record = self.get(meeting_id)
+            if record is None or record.status == MeetingStatus.RECOVERY_REQUIRED:
+                raise MeetingNotFoundError(meeting_id)
+            updated = record.model_copy(update={"title": title})
+            self._write(updated)
+            return updated
+
     def get(self, meeting_id: str) -> MeetingRecord | None:
         with self._lock:
             path = self._path(meeting_id)

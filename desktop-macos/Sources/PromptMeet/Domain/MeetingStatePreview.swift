@@ -71,6 +71,128 @@ extension MeetingState {
 
     static var previewWorkspace: MeetingState {
         var state = previewAura
+        let historyDate = Date().addingTimeInterval(-86_400)
+        let historicalSummary = MeetingSummaryContent(
+            summaryText: "团队完成 **Release** 演练，并确认 `rollback --dry-run` 可用。",
+            tasks: [
+                MeetingTask(
+                    title: "归档回滚日志",
+                    deadline: "周五 18:00",
+                    details: "附上 **支付链路** 验证结果",
+                    priority: "high",
+                    assignee: "周岚",
+                    status: "pending"
+                ),
+                MeetingTask(
+                    title: "完成发布复核",
+                    priority: "medium",
+                    assignee: "林晨",
+                    status: "completed"
+                )
+            ],
+            keyPoints: ["核心链路稳定", "长行内容会自动换行"],
+            decisions: ["周五分批上线", "异常时立即回滚"]
+        )
+        let historicalTimeline = [
+            MeetingTimelineEvent(
+                eventID: "preview-history-transcript-1",
+                meetingID: "preview-release-history",
+                sequence: 1,
+                occurredAt: historyDate.addingTimeInterval(20),
+                kind: .transcript,
+                provenance: TimelineProvenance(
+                    source: "preview",
+                    provider: nil,
+                    model: nil,
+                    requestID: nil
+                ),
+                payload: .transcript(
+                    TimelineTranscriptPayload(
+                        segmentID: "22222222-2222-2222-2222-222222222222",
+                        text: "Release rollback rehearsal completed",
+                        speaker: "林晨",
+                        source: "microphone",
+                        translatedText: nil,
+                        meetingTimeMilliseconds: 20_000
+                    )
+                )
+            ),
+            MeetingTimelineEvent(
+                eventID: "preview-history-transcript-2",
+                meetingID: "preview-release-history",
+                sequence: 2,
+                occurredAt: historyDate.addingTimeInterval(40),
+                kind: .transcript,
+                provenance: TimelineProvenance(
+                    source: "preview",
+                    provider: nil,
+                    model: nil,
+                    requestID: nil
+                ),
+                payload: .transcript(
+                    TimelineTranscriptPayload(
+                        segmentID: "33333333-3333-3333-3333-333333333333",
+                        text: "支付链路回滚验证通过",
+                        speaker: "周岚",
+                        source: "microphone",
+                        translatedText: nil,
+                        meetingTimeMilliseconds: 40_000
+                    )
+                )
+            ),
+            MeetingTimelineEvent(
+                eventID: "preview-history-question",
+                meetingID: "preview-release-history",
+                sequence: 3,
+                occurredAt: historyDate.addingTimeInterval(60),
+                kind: .userQuestion,
+                provenance: TimelineProvenance(
+                    source: "preview",
+                    provider: nil,
+                    model: nil,
+                    requestID: "11111111-1111-1111-1111-111111111111"
+                ),
+                payload: .userQuestion(
+                    TimelineQuestionPayload(
+                        requestID: "11111111-1111-1111-1111-111111111111",
+                        threadID: "main",
+                        question: "历史发布结论是什么？"
+                    )
+                )
+            ),
+            MeetingTimelineEvent(
+                eventID: "preview-history-answer",
+                meetingID: "preview-release-history",
+                sequence: 4,
+                occurredAt: historyDate.addingTimeInterval(62),
+                kind: .assistantAnswer,
+                provenance: TimelineProvenance(
+                    source: "preview",
+                    provider: "openai",
+                    model: "preview-model",
+                    requestID: "11111111-1111-1111-1111-111111111111"
+                ),
+                payload: .assistantAnswer(
+                    TimelineAnswerPayload(
+                        requestID: "11111111-1111-1111-1111-111111111111",
+                        threadID: "main",
+                        answer: """
+                            ## 历史发布结论
+
+                            **核心链路验证通过**，周五分批上线。
+
+                            > 异常时立即执行 `rollback --dry-run`。
+
+                            参考 [发布清单](https://example.com/release-checklist)。
+                            """,
+                        sources: [],
+                        degradedVision: false,
+                        status: "completed",
+                        errorMessage: nil
+                    )
+                )
+            )
+        ]
         state.promptHistory = ["这次发布最需要关注什么？"]
         state.aiReader = AIReaderState(
             title: "这次发布最需要关注什么？",
@@ -113,6 +235,53 @@ extension MeetingState {
                 degradedVision: false,
                 askedAt: Date().addingTimeInterval(-12),
                 answeredAt: Date()
+            )
+        ]
+        state.meetingHistory = [
+            StoredMeeting(
+                id: "preview-release-history",
+                schemaVersion: 2,
+                title: "发布范围与回滚复盘",
+                status: .completed,
+                startTime: historyDate,
+                endTime: historyDate.addingTimeInterval(3_600),
+                timeline: historicalTimeline,
+                transcript: [
+                    TranscriptLine(
+                        speaker: "林晨",
+                        text: "Release rollback rehearsal completed",
+                        timestamp: historyDate.addingTimeInterval(20)
+                    ),
+                    TranscriptLine(
+                        speaker: "周岚",
+                        text: "支付链路回滚验证通过",
+                        timestamp: historyDate.addingTimeInterval(40)
+                    )
+                ],
+                summary: historicalSummary
+            ),
+            StoredMeeting(
+                id: "preview-kv-history",
+                schemaVersion: 2,
+                startTime: historyDate.addingTimeInterval(-86_400),
+                endTime: historyDate.addingTimeInterval(-82_800),
+                transcript: [
+                    TranscriptLine(speaker: "陈曦", text: "KV Cache 压缩与延迟基准讨论")
+                ],
+                summary: MeetingSummaryContent(
+                    summaryText: "确认 **KV Cache** 压缩测试范围。",
+                    tasks: [],
+                    keyPoints: ["覆盖 ASCII 搜索"],
+                    decisions: ["先测长上下文"]
+                )
+            ),
+            StoredMeeting(
+                id: "preview-empty-history",
+                schemaVersion: 2,
+                startTime: historyDate.addingTimeInterval(-172_800),
+                endTime: historyDate.addingTimeInterval(-172_200),
+                transcript: [],
+                summary: nil
             )
         ]
         return state

@@ -124,6 +124,7 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
         return StoredMeeting(
             id: id,
             schemaVersion: object["schema_version"] as? Int ?? 1,
+            title: object["title"] as? String,
             status: StoredMeetingStatus(rawValue: object["status"] as? String ?? "completed") ?? .completed,
             startTime: startTime,
             endTime: (object["end_time"] as? String).map(parseDate),

@@ -74,4 +74,61 @@ final class MarkdownDocumentTests: XCTestCase {
         XCTAssertEqual(block?.kind, .paragraph)
         XCTAssertEqual(block?.text, line)
     }
+
+    func testChecklistMarkersBecomeSemanticTaskListContent() {
+        let blocks = MarkdownDocument.parse(
+            "- [ ] 准备发布\n- [x] 完成回滚演练",
+            mode: .completed
+        )
+
+        XCTAssertEqual(blocks.map(\.kind), [.taskList(completed: [false, true])])
+        XCTAssertEqual(blocks.first?.lines, ["准备发布", "完成回滚演练"])
+        XCTAssertFalse(blocks.first?.text.contains("[ ]") ?? true)
+        XCTAssertFalse(blocks.first?.text.contains("[x]") ?? true)
+    }
+
+    func testStreamingPartialInlineMarkdownDoesNotExposeDanglingMarker() {
+        let stable = MarkdownDocument.stableInlineSource(
+            "结论 **重要**，后续 **"
+        )
+        let attributed = MarkdownDocument.inline(stable)
+
+        XCTAssertEqual(String(attributed.characters), "结论 重要，后续 ")
+        XCTAssertFalse(String(attributed.characters).contains("**"))
+    }
+
+    func testStreamingBalancedInlineMarkdownKeepsItsClosingMarkerForRendering() {
+        let stable = MarkdownDocument.stableInlineSource(
+            "结论 **重要**"
+        )
+        let attributed = MarkdownDocument.inline(stable)
+
+        XCTAssertEqual(stable, "结论 **重要**")
+        XCTAssertEqual(String(attributed.characters), "结论 重要")
+    }
+
+    func testUnmatchedOpeningMarkersAreHiddenForStreamingAndHistoricalReplay() {
+        let sources = [
+            "结论 **重要",
+            "结论 *重要",
+            "代码 `rollback --dry-run"
+        ]
+
+        let rendered = sources.map {
+            String(MarkdownDocument.inline(MarkdownDocument.stableInlineSource($0)).characters)
+        }
+
+        XCTAssertEqual(rendered, ["结论 重要", "结论 重要", "代码 rollback --dry-run"])
+    }
+
+    func testInlineCodePreservesLiteralAsteriskWhileBalancedMarkdownStillRenders() {
+        let source = "`a*b`、\\`字面反引号 与 **重点**"
+        let stable = MarkdownDocument.stableInlineSource(source)
+
+        XCTAssertEqual(stable, source)
+        XCTAssertEqual(
+            String(MarkdownDocument.inline(stable).characters),
+            "a*b、`字面反引号 与 重点"
+        )
+    }
 }

@@ -10,7 +10,13 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from models.meeting_context import EvidenceSource, MeetingRecord, ScreenshotPayload
+from models.meeting_context import (
+    EvidenceSource,
+    MeetingRecord,
+    ScreenshotPayload,
+    SummaryPayload,
+    TranscriptPayload,
+)
 from services.context_builder import (
     ContextBudget,
     ContextSelection,
@@ -647,6 +653,75 @@ class DesktopAgentService:
             provider=configuration.provider,
             model=configuration.model,
         )
+
+    async def generate_meeting_title(self, record: MeetingRecord) -> str:
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="summary"
+        )
+        context = self._meeting_title_context(record)
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "根据且仅根据当前这一场会议的内容，生成一个具体、有辨识度的"
+                                    "简体中文标题。目标长度为8到18个汉字，避免新会议、会议总结、"
+                                    "历史会议等通用名称。只输出标题，不要引号、标签、解释或标点。"
+                                ),
+                            },
+                            {"role": "user", "content": context},
+                        ],
+                        "stream": False,
+                        "temperature": 0.1,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "title", error) from error
+
+    @staticmethod
+    def _meeting_title_context(record: MeetingRecord) -> str:
+        transcript_lines: list[str] = []
+        summaries: list[SummaryPayload] = []
+        for event in sorted(
+            record.events,
+            key=lambda item: (item.sequence, item.occurred_at),
+        ):
+            if isinstance(event.payload, TranscriptPayload):
+                text = " ".join(event.payload.text.split())
+                if text:
+                    transcript_lines.append(f"{event.payload.speaker}：{text[:300]}")
+            elif isinstance(event.payload, SummaryPayload):
+                summaries.append(event.payload)
+        sections = ["会议转写：", *(transcript_lines[:40] or ["无"])]
+        if summaries:
+            summary = summaries[-1]
+            sections.extend(["", "最新摘要：", summary.summary_text])
+            if summary.decisions:
+                sections.extend(["", "决定：", *summary.decisions])
+            task_lines = [
+                "；".join(
+                    str(value)
+                    for value in (
+                        task.get("task"),
+                        task.get("assignee"),
+                        task.get("deadline"),
+                    )
+                    if value
+                )
+                for task in summary.tasks
+                if isinstance(task, dict) and task.get("task")
+            ]
+            if task_lines:
+                sections.extend(["", "待办：", *task_lines])
+        return "\n".join(sections)
 
     async def generate_questions(self, transcript: list) -> list[dict]:
         configuration = ProviderConfiguration.from_environment(

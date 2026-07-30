@@ -27,13 +27,13 @@ PromptMeet is a meeting-assistant platform with two major modes:
 | Models | `backend/models/` | Pydantic data types |
 | Processors | `backend/processors/` | MySQL, image, Whisper |
 
-Desktop-mode services (`desktop_agent_service`, `desktop_storage`, `meeting_repository`, `context_builder`, `model_provider`, `prompt_builder`) activate when `PROMPTMEET_DESKTOP_MODE=1`.
+Desktop-mode services (`desktop_agent_service`, `desktop_storage`, `meeting_repository`, `meeting_title_service`, `context_builder`, `model_provider`, `prompt_builder`) activate when `PROMPTMEET_DESKTOP_MODE=1`.
 
 ### Swift layers
 
 | Layer | Location | Role |
 | --- | --- | --- |
-| Domain | `Domain/` | `MeetingTimeline`, `MeetingState`, `CaptureState`, `BackendEvent`, `StoredMeeting` |
+| Domain | `Domain/` | `MeetingTimeline`, `MeetingState`, `CaptureState`, `BackendEvent`, `StoredMeeting`, `MeetingHistorySearch` |
 | Services | `Services/` | `MeetingStore`, `MeetingAutomationScheduler`, `MeetingPreferences`, `BackendClient`, `CompanionLauncher`, `KeychainStore`, `AIProviderConfiguration` |
 | Views | `Views/` | `WorkspaceView`, `AIReaderView`, `HoverMeetingCardView`, `SettingsView`, `IslandRootView` |
 | Capture | `Capture/` | ScreenCaptureKit, microphone, system audio, screenshot upload |
@@ -78,6 +78,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 
 - API keys live only in macOS Keychain (`com.promptmeet.desktop`) and process environment. Never in logs, responses, serialized state, or WebSocket payloads.
 - Version 2 meeting records use atomic sibling-file writes. Malformed records are kept as `recovery_required`; legacy `desktop-sessions.json` is migrated on read, never deleted.
+- Meeting completion persists a deterministic meeting-scoped title fallback before optional AI refinement. Title generation never delays completion, and untitled historical records keep a stable display fallback without being rewritten.
 - Context assembly is per-question with a budget (default 8k tokens, 2k reserved for answer). Prompts use separate system, developer, and user roles.
 - DeepSeek selections default to text-only capability. When selected context contains screenshot pixels but a workflow is not configured for vision, the prompt and answer metadata disclose the degradation truthfully.
 - OpenAI-compatible Base URL and model preferences are typed and non-secret; API keys remain in Keychain. HTTP is loopback-only, request paths derive exactly from the configured base, and image rejection may retry text-only only on that same endpoint and model with truthful degradation metadata.
@@ -90,6 +91,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Suggested-question generations are meeting-scoped, revisioned, cancellable, and durable. A stale generation must never overwrite newer or historical suggestions.
 - Suggested questions replace atomically only with exactly three unique non-empty choices. Failure, cancellation, loading, or partial output never clears the last good set.
 - Summary and task automation uses pause-aware active recording milestones, skips unchanged input, and stores append-only source coverage revisions.
+- AI answers, summaries, decisions, key points, and structured tasks share the native Markdown renderer. Unsafe links remain inert, streaming delimiters stay stable, and structured tasks render as accessible checklists.
 - AI provider endpoints and credentials are shared, while provider, model, and explicit vision capability route independently per token-spending workflow. Manual provider-scoped model identifiers require only non-empty validation.
 
 ## Authoritative documentation

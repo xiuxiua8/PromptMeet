@@ -12,6 +12,7 @@ from models.meeting_context import (
     MeetingEvent,
     MeetingRecord,
     ScreenshotPayload,
+    SummaryPayload,
     TranscriptPayload,
 )
 from services.desktop_agent_service import DesktopAgentService
@@ -66,6 +67,84 @@ class RuntimeFailureClient:
 
     async def post(self, *args, **kwargs) -> RuntimeFailureResponse:
         return RuntimeFailureResponse()
+
+
+class TitleResponse:
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return {"choices": [{"message": {"content": "周五发布与回滚准备"}}]}
+
+
+class TitleClient:
+    last_payload = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, *args, **kwargs) -> TitleResponse:
+        type(self).last_payload = kwargs["json"]
+        return TitleResponse()
+
+
+def test_generate_meeting_title_uses_only_the_record_content(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: TitleClient(),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-title",
+        started_at=datetime(2026, 7, 30, tzinfo=UTC),
+        events=[
+            MeetingEvent(
+                event_id="event-transcript",
+                meeting_id="meeting-title",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 30, tzinfo=UTC),
+                kind=EventKind.TRANSCRIPT,
+                provenance=EventProvenance(source="native_transcript"),
+                payload=TranscriptPayload(
+                    segment_id="segment-title",
+                    speaker="林晨",
+                    text="周五发布，并由周岚准备回滚方案",
+                ),
+            ),
+            MeetingEvent(
+                event_id="event-summary",
+                meeting_id="meeting-title",
+                sequence=2,
+                occurred_at=datetime(2026, 7, 30, tzinfo=UTC),
+                kind=EventKind.SUMMARY,
+                provenance=EventProvenance(source="summary_service"),
+                payload=SummaryPayload(
+                    summary_text="确认发布窗口",
+                    decisions=["周五发布"],
+                    tasks=[{"task": "准备回滚", "assignee": "周岚"}],
+                ),
+            ),
+        ],
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SUMMARY_PROVIDER": "openai",
+            "PROMPTMEET_SUMMARY_MODEL": "summary-model",
+            "OPENAI_API_KEY": "test-key",
+        }
+    )
+
+    title = asyncio.run(service.generate_meeting_title(record))
+
+    assert title == "周五发布与回滚准备"
+    payload = TitleClient.last_payload
+    assert payload["model"] == "summary-model"
+    assert payload["stream"] is False
+    assert "周五发布" in payload["messages"][1]["content"]
+    assert "周岚" in payload["messages"][1]["content"]
+    assert "meeting-title" not in payload["messages"][1]["content"]
 
 
 def test_summary_runtime_failure_names_workflow_provider_model_without_credential(
