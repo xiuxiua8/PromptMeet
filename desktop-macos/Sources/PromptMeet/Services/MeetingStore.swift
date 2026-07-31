@@ -18,7 +18,9 @@ final class MeetingStore: ObservableObject {
     let suggestionDebounce: Duration
     let meetingPreferences: MeetingPreferences
     let now: @MainActor () -> Date
-    var suggestionRefreshTask: Task<Void, Never>?
+    var suggestionDebounceTask: Task<Void, Never>?
+    var suggestionGenerationTask: Task<Void, Never>?
+    var pendingSuggestionRevision: Int?
     var suggestionContextRevision = 0
     var lastRequestedSuggestionRevision = -1
     var activeSuggestionGenerationID: UUID?

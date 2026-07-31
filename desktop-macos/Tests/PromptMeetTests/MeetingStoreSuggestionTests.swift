@@ -119,17 +119,49 @@ extension MeetingStoreTests {
         for text in ["第二条", "第三条", "第四条"] {
             capture.emit(LocalTranscript(source: .microphone, text: text))
         }
-        for _ in 0..<50 {
-            if backend.questionRequests.count == 2 {
+        for _ in 0..<100 {
+            if backend.questionCompletionCount == 2 {
                 break
             }
             try? await Task.sleep(for: .milliseconds(10))
         }
 
-        XCTAssertEqual(
-            backend.questionRequests.count,
-            2
+        XCTAssertEqual(backend.questionRequests.map(\.contextRevision), [1, 4])
+        XCTAssertEqual(backend.questionCompletionCount, 2)
+        XCTAssertEqual(backend.questionCancellationCount, 0)
+    }
+
+    func testInFlightSuggestionSetIsAcceptedWhileNewerContextWaits() async throws {
+        let backend = BackendClientSpy()
+        backend.questionDelay = .milliseconds(40)
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            suggestionDebounce: .milliseconds(10)
         )
+        await store.startMeetingNow()
+
+        capture.emit(LocalTranscript(source: .microphone, text: "第一条"))
+        try await waitUntil { backend.questionRequests.count == 1 }
+        let first = try XCTUnwrap(backend.questionRequests.first)
+        capture.emit(LocalTranscript(source: .microphone, text: "第二条"))
+        try await waitUntil { store.state.suggestionRefresh.contextRevision == 2 }
+        backend.emit(
+            .questions(
+                generationID: first.generationID,
+                contextRevision: first.contextRevision,
+                questions: ["首轮问题一", "首轮问题二", "首轮问题三"]
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(
+            store.state.generatedQuestions,
+            ["首轮问题一", "首轮问题二", "首轮问题三"]
+        )
+        XCTAssertEqual(backend.questionRequests.count, 1)
     }
 
     func testOlderSuggestionGenerationCannotOverwriteNewerContext() async throws {

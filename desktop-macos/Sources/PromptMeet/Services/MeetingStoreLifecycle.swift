@@ -28,8 +28,11 @@ extension MeetingStore {
             backend.disconnect()
             backendSessionID = nil
         }
-        suggestionRefreshTask?.cancel()
-        suggestionRefreshTask = nil
+        suggestionDebounceTask?.cancel()
+        suggestionDebounceTask = nil
+        suggestionGenerationTask?.cancel()
+        suggestionGenerationTask = nil
+        pendingSuggestionRevision = nil
         suggestionContextRevision = 0
         lastRequestedSuggestionRevision = -1
         activeSuggestionGenerationID = nil
@@ -118,8 +121,12 @@ extension MeetingStore {
         automationScheduler?.stop(at: now())
         automationClockTask?.cancel()
         automationClockTask = nil
-        suggestionRefreshTask?.cancel()
-        suggestionRefreshTask = nil
+        suggestionDebounceTask?.cancel()
+        suggestionDebounceTask = nil
+        suggestionGenerationTask?.cancel()
+        suggestionGenerationTask = nil
+        pendingSuggestionRevision = nil
+        activeSuggestionGenerationID = nil
         await capture.stop()
         if let backendSessionID {
             try? await backend.perform(sessionID: backendSessionID, action: "stop-native-recording")

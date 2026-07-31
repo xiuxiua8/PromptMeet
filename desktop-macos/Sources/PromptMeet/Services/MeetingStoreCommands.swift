@@ -165,8 +165,12 @@ extension MeetingStore {
 
     func shutdown() {
         screenshotController.cancelSelection()
-        suggestionRefreshTask?.cancel()
-        suggestionRefreshTask = nil
+        suggestionDebounceTask?.cancel()
+        suggestionDebounceTask = nil
+        suggestionGenerationTask?.cancel()
+        suggestionGenerationTask = nil
+        pendingSuggestionRevision = nil
+        activeSuggestionGenerationID = nil
         automationClockTask?.cancel()
         automationClockTask = nil
         backend.disconnect()
@@ -175,8 +179,12 @@ extension MeetingStore {
 
     func shutdownNow() async {
         screenshotController.cancelSelection()
-        suggestionRefreshTask?.cancel()
-        suggestionRefreshTask = nil
+        suggestionDebounceTask?.cancel()
+        suggestionDebounceTask = nil
+        suggestionGenerationTask?.cancel()
+        suggestionGenerationTask = nil
+        pendingSuggestionRevision = nil
+        activeSuggestionGenerationID = nil
         automationClockTask?.cancel()
         automationClockTask = nil
         await capture.stop()

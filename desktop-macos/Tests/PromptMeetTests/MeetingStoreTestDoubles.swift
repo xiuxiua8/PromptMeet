@@ -181,6 +181,8 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var performDelay: Duration?
     var questionDelay: Duration?
     var questionRequests: [QuestionRequest] = []
+    var questionCompletionCount = 0
+    var questionCancellationCount = 0
     var createSessionCount = 0
     var historicalQuestions: [HistoricalQuestion] = []
     private var eventHandler: (@Sendable (BackendEvent) -> Void)?
@@ -213,8 +215,14 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
                 )
             )
         }
-        if let questionDelay = await MainActor.run(body: { self.questionDelay }) {
-            try await Task.sleep(for: questionDelay)
+        do {
+            if let questionDelay = await MainActor.run(body: { self.questionDelay }) {
+                try await Task.sleep(for: questionDelay)
+            }
+            await MainActor.run { questionCompletionCount += 1 }
+        } catch is CancellationError {
+            await MainActor.run { questionCancellationCount += 1 }
+            throw CancellationError()
         }
     }
 

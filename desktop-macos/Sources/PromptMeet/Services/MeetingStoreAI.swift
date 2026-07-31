@@ -10,11 +10,16 @@ extension MeetingStore {
             suggestionContextRevision + 1,
             lastRequestedSuggestionRevision + 1
         )
-        await refreshSuggestedQuestionsNow(
+        pendingSuggestionRevision = suggestionContextRevision
+        state.suggestionRefresh.phase = .loading
+        state.suggestionRefresh.contextRevision = suggestionContextRevision
+        state.reduce(.suggestion("正在生成值得追问的问题"))
+        guard suggestionGenerationTask == nil else { return }
+        let task = startPendingSuggestionGeneration(
             sessionID: backendSessionID,
-            revision: suggestionContextRevision,
             announce: true
         )
+        await task?.value
     }
 
     func requestSummaryNow() async {
@@ -114,8 +119,10 @@ extension MeetingStore {
 
     private func receiveTimelineEvent(_ event: MeetingTimelineEvent) {
         if case .suggestions(let value) = event.payload {
-            guard UUID(uuidString: value.generationID) == activeSuggestionGenerationID,
-                  value.contextRevision == suggestionContextRevision else { return }
+            guard suggestionResponseIsCurrent(
+                generationID: UUID(uuidString: value.generationID),
+                contextRevision: value.contextRevision
+            ) else { return }
         }
         state.reduce(.meetingEvent(event))
         registerTimelineInput(event.payload)
@@ -191,7 +198,7 @@ extension MeetingStore {
         contextRevision: Int?
     ) -> Bool {
         if let generationID, generationID != activeSuggestionGenerationID { return false }
-        if let contextRevision, contextRevision != suggestionContextRevision { return false }
+        if let contextRevision, contextRevision != lastRequestedSuggestionRevision { return false }
         return true
     }
 
@@ -241,30 +248,34 @@ extension MeetingStore {
         let revision = suggestionContextRevision
         state.suggestionRefresh.phase = .loading
         state.suggestionRefresh.contextRevision = revision
-        suggestionRefreshTask?.cancel()
-        suggestionRefreshTask = Task { [weak self] in
+        pendingSuggestionRevision = revision
+        guard suggestionGenerationTask == nil else { return }
+        scheduleSuggestionDebounce(sessionID: backendSessionID)
+    }
+
+    private func scheduleSuggestionDebounce(sessionID: String) {
+        suggestionDebounceTask?.cancel()
+        suggestionDebounceTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: self?.suggestionDebounce ?? .milliseconds(350))
             } catch {
                 return
             }
-            guard let self,
-                  self.backendSessionID == backendSessionID,
-                  self.suggestionContextRevision == revision else { return }
-            await self.refreshSuggestedQuestionsNow(
-                sessionID: backendSessionID,
-                revision: revision,
-                announce: false
-            )
+            guard let self, self.backendSessionID == sessionID else { return }
+            self.suggestionDebounceTask = nil
+            self.startPendingSuggestionGeneration(sessionID: sessionID, announce: false)
         }
     }
 
-    func refreshSuggestedQuestionsNow(
+    @discardableResult
+    private func startPendingSuggestionGeneration(
         sessionID: String,
-        revision: Int,
         announce: Bool
-    ) async {
-        guard revision > lastRequestedSuggestionRevision else { return }
+    ) -> Task<Void, Never>? {
+        guard suggestionGenerationTask == nil,
+              let revision = pendingSuggestionRevision,
+              revision > lastRequestedSuggestionRevision else { return nil }
+        pendingSuggestionRevision = nil
         lastRequestedSuggestionRevision = revision
         let generationID = UUID()
         activeSuggestionGenerationID = generationID
@@ -276,6 +287,25 @@ extension MeetingStore {
         if announce {
             state.reduce(.suggestion("正在生成值得追问的问题"))
         }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performSuggestionGeneration(
+                sessionID: sessionID,
+                revision: revision,
+                generationID: generationID,
+                announce: announce
+            )
+        }
+        suggestionGenerationTask = task
+        return task
+    }
+
+    private func performSuggestionGeneration(
+        sessionID: String,
+        revision: Int,
+        generationID: UUID,
+        announce: Bool
+    ) async {
         do {
             try await backend.generateQuestions(
                 sessionID: sessionID,
@@ -283,14 +313,31 @@ extension MeetingStore {
                 contextRevision: revision
             )
         } catch is CancellationError {
-            return
         } catch {
-            guard activeSuggestionGenerationID == generationID,
-                  suggestionContextRevision == revision else { return }
-            state.suggestionRefresh.phase = .failed(error.localizedDescription)
-            if announce {
-                state.reduce(.suggestion(error.localizedDescription))
+            if activeSuggestionGenerationID == generationID,
+               lastRequestedSuggestionRevision == revision,
+               pendingSuggestionRevision == nil {
+                state.suggestionRefresh.phase = .failed(error.localizedDescription)
+                if announce {
+                    state.reduce(.suggestion(error.localizedDescription))
+                }
             }
         }
+        finishSuggestionGeneration(
+            sessionID: sessionID,
+            generationID: generationID
+        )
+    }
+
+    private func finishSuggestionGeneration(
+        sessionID: String,
+        generationID: UUID
+    ) {
+        guard activeSuggestionGenerationID == generationID else { return }
+        suggestionGenerationTask = nil
+        guard backendSessionID == sessionID,
+              let pendingSuggestionRevision,
+              pendingSuggestionRevision > lastRequestedSuggestionRevision else { return }
+        scheduleSuggestionDebounce(sessionID: sessionID)
     }
 }
