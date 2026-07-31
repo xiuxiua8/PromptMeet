@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import base64
 import re
@@ -13,6 +14,7 @@ import httpx
 from models.meeting_context import (
     EvidenceSource,
     MeetingRecord,
+    ScreenshotAnalysisPayload,
     ScreenshotPayload,
     SummaryPayload,
     TranscriptPayload,
@@ -593,16 +595,33 @@ class DesktopAgentService:
         configuration = ProviderConfiguration.from_environment(
             dict(self.environment), purpose="summary"
         )
+        context_budget = ContextBudget(
+            total_tokens=min(configuration.capabilities.max_context_tokens, 8_000),
+            answer_reserve=2_000,
+            summary_reserve=500,
+        )
+        token_limit = context_budget.evidence_tokens
+        estimator = MeetingContextBuilder._estimate_tokens
         context_lines = []
+        spent = 0
         for event in source_events:
             payload = event.payload
-            if hasattr(payload, "text") and payload.text:
-                speaker = getattr(payload, "speaker", None) or event.kind.value
-                context_lines.append(f"[{event.sequence}] {speaker}：{payload.text}")
+            if isinstance(payload, TranscriptPayload) and payload.text:
+                speaker = payload.speaker
+                line = f"[{event.sequence}] {speaker}：{payload.text}"
+            elif isinstance(payload, ScreenshotAnalysisPayload) and payload.text:
+                line = f"[{event.sequence}] [截图分析结果]：{payload.text}"
             elif isinstance(payload, ScreenshotPayload):
-                context_lines.append(
+                line = (
                     f"[{event.sequence}] 截图资产 {payload.asset_id}，类型 {payload.mime_type}"
                 )
+            else:
+                continue
+            cost = estimator(line)
+            if spent + cost > token_limit:
+                break
+            context_lines.append(line)
+            spent += cost
         response_content = ""
         try:
             async with httpx.AsyncClient(timeout=90) as client:
@@ -639,7 +658,12 @@ class DesktopAgentService:
             response_content = (
                 response_content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
             )
-        summary = json.loads(response_content)
+        try:
+            summary = json.loads(response_content)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"摘要模型返回了无法解析的 JSON：{error}"
+            ) from error
         if (
             not isinstance(summary, dict)
             or not str(summary.get("summary_text") or "").strip()

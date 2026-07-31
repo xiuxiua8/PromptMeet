@@ -9,10 +9,10 @@ extension MeetingStore {
         guard let decision else { return }
         switch decision {
         case .noAction(let milestone):
-            state.summaryAutomation = .noAction(
+            modify(\.summaryAutomation, to: .noAction(
                 activeMinute: milestone.activeMinutes,
                 message: "没有新的会议输入，已跳过本次生成"
-            )
+            ))
         case .generate(let milestone):
             await generateMilestoneSummary(milestone)
         }
@@ -20,7 +20,7 @@ extension MeetingStore {
 
     private func generateMilestoneSummary(_ milestone: MeetingMilestone) async {
         guard let backendSessionID else { return }
-        state.summaryAutomation = .generating(activeMinute: milestone.activeMinutes)
+        modify(\.summaryAutomation, to: .generating(activeMinute: milestone.activeMinutes))
         do {
             let response = try await backend.generateSummary(
                 sessionID: backendSessionID,
@@ -32,7 +32,7 @@ extension MeetingStore {
             )
             applySummaryResponse(response, activeMinute: milestone.activeMinutes)
         } catch {
-            state.summaryAutomation = .failed(error.localizedDescription)
+            modify(\.summaryAutomation, to: .failed(error.localizedDescription))
         }
     }
 
@@ -43,10 +43,10 @@ extension MeetingStore {
         automationScheduler = scheduler
         automationClockTask?.cancel()
         guard cadence != .off else {
-            state.summaryAutomation = .off
+            modify(\.summaryAutomation, to: .off)
             return
         }
-        state.summaryAutomation = .waiting(nextActiveMinute: cadence.rawValue)
+        modify(\.summaryAutomation, to: .waiting(nextActiveMinute: cadence.rawValue))
         automationClockTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -72,14 +72,14 @@ extension MeetingStore {
     ) {
         switch response.status {
         case .generated:
-            state.reduce(.suggestion("会议摘要与待办已更新"))
+            dispatch(.suggestion("会议摘要与待办已更新"))
         case .noAction:
-            state.summaryAutomation = .noAction(
+            modify(\.summaryAutomation, to: .noAction(
                 activeMinute: activeMinute ?? 0,
                 message: response.message
-            )
+            ))
         case .failed:
-            state.summaryAutomation = .failed(response.message)
+            modify(\.summaryAutomation, to: .failed(response.message))
         }
     }
 }

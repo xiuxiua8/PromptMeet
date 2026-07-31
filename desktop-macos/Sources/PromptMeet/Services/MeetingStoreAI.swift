@@ -3,7 +3,7 @@ import Foundation
 extension MeetingStore {
     func requestQuestionsNow() async {
         guard let backendSessionID else {
-            state.reduce(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
+            dispatch(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
             return
         }
         suggestionContextRevision = max(
@@ -11,9 +11,9 @@ extension MeetingStore {
             lastRequestedSuggestionRevision + 1
         )
         pendingSuggestionRevision = suggestionContextRevision
-        state.suggestionRefresh.phase = .loading
-        state.suggestionRefresh.contextRevision = suggestionContextRevision
-        state.reduce(.suggestion("正在生成值得追问的问题"))
+        modify(\.suggestionRefresh.phase, to: .loading)
+        modify(\.suggestionRefresh.contextRevision, to: suggestionContextRevision)
+        dispatch(.suggestion("正在生成值得追问的问题"))
         guard suggestionGenerationTask == nil else { return }
         let task = startPendingSuggestionGeneration(
             sessionID: backendSessionID,
@@ -24,10 +24,10 @@ extension MeetingStore {
 
     func requestSummaryNow() async {
         guard let backendSessionID else {
-            state.reduce(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
+            dispatch(.suggestion(state.phase == .live ? "AI companion 暂未连接" : "请先开始会议"))
             return
         }
-        state.summaryAutomation = .generating(activeMinute: nil)
+        modify(\.summaryAutomation, to: .generating(activeMinute: nil))
         do {
             let response = try await backend.generateSummary(
                 sessionID: backendSessionID,
@@ -39,8 +39,8 @@ extension MeetingStore {
             )
             applySummaryResponse(response, activeMinute: nil)
         } catch {
-            state.summaryAutomation = .failed(error.localizedDescription)
-            state.reduce(.suggestion(error.localizedDescription))
+            modify(\.summaryAutomation, to: .failed(error.localizedDescription))
+            dispatch(.suggestion(error.localizedDescription))
         }
     }
 
@@ -49,11 +49,11 @@ extension MeetingStore {
         guard !trimmed.isEmpty else { return }
         let archivedMeetingID = state.selectedArchivedMeetingID
         guard backendSessionID != nil || archivedMeetingID != nil else {
-            state.reduce(.suggestion("AI companion 暂未连接"))
+            dispatch(.suggestion("AI companion 暂未连接"))
             return
         }
         let requestID = UUID()
-        state.reduce(.userPromptSubmitted(id: requestID, prompt: trimmed))
+        dispatch(.userPromptSubmitted(id: requestID, prompt: trimmed))
         if let archivedMeetingID {
             await submitHistoricalPrompt(
                 trimmed,
@@ -65,7 +65,7 @@ extension MeetingStore {
         do {
             try await backend.sendPrompt(trimmed, requestID: requestID)
         } catch {
-            state.reduce(.aiFailure(requestID: requestID, message: error.localizedDescription))
+            dispatch(.aiFailure(requestID: requestID, message: error.localizedDescription))
         }
     }
 
@@ -81,10 +81,10 @@ extension MeetingStore {
                 requestID: requestID,
                 threadID: "main"
             )
-            state.reduce(.answerFinal(requestID: requestID, answer: answer.answer))
-            state.reduce(.meetingHistoryUpdated(try await backend.fetchMeeting(id: meetingID)))
+            dispatch(.answerFinal(requestID: requestID, answer: answer.answer))
+            dispatch(.meetingHistoryUpdated(try await backend.fetchMeeting(id: meetingID)))
         } catch {
-            state.reduce(.aiFailure(requestID: requestID, message: error.localizedDescription))
+            dispatch(.aiFailure(requestID: requestID, message: error.localizedDescription))
         }
     }
 
@@ -108,10 +108,10 @@ extension MeetingStore {
         case .meetingEvent(let timelineEvent):
             receiveTimelineEvent(timelineEvent)
         case .transcript(let line):
-            state.reduce(.transcriptFinal(line))
+            dispatch(.transcriptFinal(line))
             registerMeetingInput(token: "transcript:\(line.id.uuidString.lowercased())")
         case .translation(let id, let text):
-            state.reduce(.transcriptTranslated(id: id, text: text))
+            dispatch(.transcriptTranslated(id: id, text: text))
         default:
             break
         }
@@ -124,7 +124,7 @@ extension MeetingStore {
                 contextRevision: value.contextRevision
             ) else { return }
         }
-        state.reduce(.meetingEvent(event))
+        dispatch(.meetingEvent(event))
         registerTimelineInput(event.payload)
         refreshSuggestions(after: event)
     }
@@ -145,7 +145,7 @@ extension MeetingStore {
     private func refreshSuggestions(after event: MeetingTimelineEvent) {
         switch event.payload {
         case .screenshotAnalysis(let value):
-            state.screenshotOperation = .analyzed(status: value.status, detail: value.text)
+            modify(\.screenshotOperation, to: .analyzed(status: value.status, detail: value.text))
             scheduleSuggestionRefresh(
                 contextToken: "screenshot:\(value.assetID):\(value.status):\(value.text)"
             )
@@ -161,15 +161,15 @@ extension MeetingStore {
     private func receiveAnswerEvent(_ event: BackendEvent) {
         switch event {
         case .answerDelta(let requestID, let delta):
-            state.reduce(.answerDelta(requestID: requestID, delta: delta))
+            dispatch(.answerDelta(requestID: requestID, delta: delta))
         case .answerFinal(let requestID, let answer):
-            state.reduce(.answerFinal(requestID: requestID, answer: answer))
+            dispatch(.answerFinal(requestID: requestID, answer: answer))
             scheduleSuggestionRefresh(
                 contextToken: requestID.map { "answer:\($0.uuidString.lowercased())" }
                     ?? "answer:\(answer)"
             )
         case .aiFailure(let requestID, let message):
-            state.reduce(.aiFailure(requestID: requestID, message: message))
+            dispatch(.aiFailure(requestID: requestID, message: message))
         default:
             break
         }
@@ -178,16 +178,16 @@ extension MeetingStore {
     private func receiveSuggestionEvent(_ event: BackendEvent) {
         switch event {
         case .question(let question):
-            state.reduce(.questionGenerated(question))
+            dispatch(.questionGenerated(question))
         case .questions(let generationID, let contextRevision, let questions):
             guard suggestionResponseIsCurrent(
                 generationID: generationID,
                 contextRevision: contextRevision
             ) else { return }
-            state.reduce(.questionsGenerated(questions))
-            state.suggestionRefresh.phase = .ready
+            dispatch(.questionsGenerated(questions))
+            modify(\.suggestionRefresh.phase, to: .ready)
         case .suggestion(let insight):
-            state.reduce(.suggestion(insight))
+            dispatch(.suggestion(insight))
         default:
             break
         }
@@ -205,20 +205,20 @@ extension MeetingStore {
     private func receiveInsightEvent(_ event: BackendEvent) {
         switch event {
         case .summary(let summary):
-            state.reduce(.summaryGenerated(summary))
+            dispatch(.summaryGenerated(summary))
             scheduleSuggestionRefresh(contextToken: "summary:\(summary.summaryText)")
         case .screenshotInsight(let insight):
-            state.reduce(.screenshotInsight(insight))
+            dispatch(.screenshotInsight(insight))
             scheduleSuggestionRefresh(contextToken: "screenshot-insight:\(insight)")
         case .failure(let message):
-            state.reduce(.failure(message))
+            dispatch(.failure(message))
         default:
             break
         }
     }
 
     func receiveLocalTranscript(_ transcript: LocalTranscript) async {
-        state.reduce(
+        dispatch(
             .transcriptFinal(
                 TranscriptLine(
                     id: transcript.id,
@@ -235,7 +235,7 @@ extension MeetingStore {
             do {
                 try await backend.submitTranscript(transcript, sessionID: backendSessionID)
             } catch {
-                state.reduce(.suggestion("转写已保留在本机，暂未同步到会议服务"))
+                dispatch(.suggestion("转写已保留在本机，暂未同步到会议服务"))
             }
         }
         scheduleSuggestionRefresh(contextToken: "transcript:\(transcript.id.uuidString)")
@@ -246,8 +246,8 @@ extension MeetingStore {
         guard suggestionContextTokens.insert(contextToken).inserted else { return }
         suggestionContextRevision += 1
         let revision = suggestionContextRevision
-        state.suggestionRefresh.phase = .loading
-        state.suggestionRefresh.contextRevision = revision
+        modify(\.suggestionRefresh.phase, to: .loading)
+        modify(\.suggestionRefresh.contextRevision, to: revision)
         pendingSuggestionRevision = revision
         guard suggestionGenerationTask == nil else { return }
         scheduleSuggestionDebounce(sessionID: backendSessionID)
@@ -279,13 +279,13 @@ extension MeetingStore {
         lastRequestedSuggestionRevision = revision
         let generationID = UUID()
         activeSuggestionGenerationID = generationID
-        state.suggestionRefresh = SuggestionRefreshState(
+        modify(\.suggestionRefresh, to: SuggestionRefreshState(
             phase: .loading,
             generationID: generationID,
             contextRevision: revision
-        )
+        ))
         if announce {
-            state.reduce(.suggestion("正在生成值得追问的问题"))
+            dispatch(.suggestion("正在生成值得追问的问题"))
         }
         let task = Task { [weak self] in
             guard let self else { return }
@@ -317,9 +317,9 @@ extension MeetingStore {
             if activeSuggestionGenerationID == generationID,
                lastRequestedSuggestionRevision == revision,
                pendingSuggestionRevision == nil {
-                state.suggestionRefresh.phase = .failed(error.localizedDescription)
+                modify(\.suggestionRefresh.phase, to: .failed(error.localizedDescription))
                 if announce {
-                    state.reduce(.suggestion(error.localizedDescription))
+                    dispatch(.suggestion(error.localizedDescription))
                 }
             }
         }

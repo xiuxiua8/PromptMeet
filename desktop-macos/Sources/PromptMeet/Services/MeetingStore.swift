@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class MeetingStore: ObservableObject {
-    @Published var state = MeetingState()
+    @Published private(set) var state = MeetingState()
     @Published var isHovered = false
     @Published var sessionID: String?
     @Published var topChromeWidth: CGFloat = 200
@@ -113,5 +113,14 @@ final class MeetingStore: ObservableObject {
             state = MeetingState()
             isHovered = false
         }
+    }
+
+    func dispatch(_ action: MeetingAction) {
+        state.reduce(action)
+    }
+
+    func modify<Value>(_ keyPath: WritableKeyPath<MeetingState, Value>, to value: Value) {
+        objectWillChange.send()
+        state[keyPath: keyPath] = value
     }
 }

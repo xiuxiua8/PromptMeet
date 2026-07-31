@@ -302,6 +302,9 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
                 return
             }
         }
+        for event in batcher.finish() {
+            onEvent(event)
+        }
     }
 
     private func validate(_ response: URLResponse) throws {

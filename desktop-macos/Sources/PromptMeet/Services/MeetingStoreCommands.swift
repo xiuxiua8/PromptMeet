@@ -14,7 +14,7 @@ extension MeetingStore {
             try await companion.ensureRunning()
             await loadMeetingHistoryNow()
         } catch {
-            state.reduce(.suggestion("AI companion 暂未连接：\(error.localizedDescription)"))
+            dispatch(.suggestion("AI companion 暂未连接：\(error.localizedDescription)"))
         }
     }
 
@@ -25,10 +25,10 @@ extension MeetingStore {
     func reloadCompanionConfigurationNow() async {
         do {
             try await companion.reloadConfiguration()
-            state.reduce(.companionConnected)
-            state.reduce(.suggestion("AI 服务配置已更新"))
+            dispatch(.companionConnected)
+            dispatch(.suggestion("AI 服务配置已更新"))
         } catch {
-            state.reduce(.suggestion(error.localizedDescription))
+            dispatch(.suggestion(error.localizedDescription))
         }
     }
 
@@ -60,7 +60,7 @@ extension MeetingStore {
         do {
             try await capture.retry(.microphone)
         } catch {
-            state.reduce(.suggestion("麦克风恢复失败：\(error.localizedDescription)"))
+            dispatch(.suggestion("麦克风恢复失败：\(error.localizedDescription)"))
         }
     }
 
@@ -106,11 +106,11 @@ extension MeetingStore {
     }
 
     func setQuickPromptDraft(_ prompt: String) {
-        state.reduce(.quickPromptChanged(prompt))
+        dispatch(.quickPromptChanged(prompt))
     }
 
     func setQuickAskPresented(_ isPresented: Bool) {
-        state.reduce(.quickAskPresented(isPresented))
+        dispatch(.quickAskPresented(isPresented))
     }
 
     func toggleQuickAsk() {
@@ -129,8 +129,8 @@ extension MeetingStore {
     func submitQuickPromptNow() async {
         let prompt = state.quickPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !state.aiRequest.isBusy else { return }
-        state.reduce(.quickPromptChanged(""))
-        state.reduce(.quickAskPresented(false))
+        dispatch(.quickPromptChanged(""))
+        dispatch(.quickAskPresented(false))
         await submitPromptNow(prompt)
     }
 
@@ -141,22 +141,22 @@ extension MeetingStore {
     func loadMeetingHistoryNow() async {
         guard uiPreviewMode == nil else { return }
         do {
-            state.reduce(.meetingHistoryLoaded(try await backend.fetchMeetingHistory()))
+            dispatch(.meetingHistoryLoaded(try await backend.fetchMeetingHistory()))
         } catch {
-            state.reduce(.suggestion(MeetingState.historyUnavailableInsight))
+            dispatch(.suggestion(MeetingState.historyUnavailableInsight))
         }
     }
 
     func selectArchivedMeeting(_ id: String?) {
-        state.reduce(.archivedMeetingSelected(id))
+        dispatch(.archivedMeetingSelected(id))
     }
 
     func hideReader() {
-        state.reduce(.hideReader)
+        dispatch(.hideReader)
     }
 
     func showReader() {
-        state.reduce(.showReader)
+        dispatch(.showReader)
     }
 
     func toggleReader() {

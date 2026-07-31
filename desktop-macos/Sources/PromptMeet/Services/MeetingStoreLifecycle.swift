@@ -3,23 +3,23 @@ import Foundation
 extension MeetingStore {
     func startMeetingNow() async {
         guard state.phase != .live && state.phase != .connecting else {
-            state.reduce(.suggestion("当前会议仍在进行，请先结束后再开始新会议"))
+            dispatch(.suggestion("当前会议仍在进行，请先结束后再开始新会议"))
             return
         }
         resetMeetingStartState()
-        state.reduce(.prepareNewMeeting)
-        state.reduce(.beginSession)
+        dispatch(.prepareNewMeeting)
+        dispatch(.beginSession)
         let localSessionID = "local-\(UUID().uuidString)"
         let remoteRecordingStarted = await connectMeetingCompanion()
 
         do {
             try await startCaptureSession(localSessionID: localSessionID)
             sessionID = localSessionID
-            state.reduce(.connectionReady)
+            dispatch(.connectionReady)
             startAutomationClock(at: now())
         } catch {
             await rollbackFailedCaptureStart(remoteRecordingStarted: remoteRecordingStarted)
-            state.reduce(.failure(error.localizedDescription))
+            dispatch(.failure(error.localizedDescription))
         }
     }
 
@@ -51,11 +51,11 @@ extension MeetingStore {
             let remoteSessionID = try await backend.createSession()
             backendSessionID = remoteSessionID
             try connectBackendEvents(sessionID: remoteSessionID)
-            state.reduce(.companionConnected)
+            dispatch(.companionConnected)
         } catch {
             backend.disconnect()
             backendSessionID = nil
-            state.reduce(.companionDisconnected("本地转写可用 · AI 服务连接失败：\(error.localizedDescription)"))
+            dispatch(.companionDisconnected("本地转写可用 · AI 服务连接失败：\(error.localizedDescription)"))
         }
 
         guard let remoteSessionID = backendSessionID else { return false }
@@ -64,7 +64,7 @@ extension MeetingStore {
             await capture.bindBackendSession(remoteSessionID)
             return true
         } catch {
-            state.reduce(
+            dispatch(
                 .companionDisconnected("本地转写可用 · 会议服务未开始记录：\(error.localizedDescription)")
             )
             try? await backend.perform(sessionID: remoteSessionID, action: "mark-incomplete")
@@ -88,16 +88,16 @@ extension MeetingStore {
                 includeLocalMicrophone: meetingPreferences.includeLocalMicrophone
             ),
             onStatus: { [weak self] snapshot in
-                Task { @MainActor in self?.state.audioCapture = snapshot }
+                Task { @MainActor in self?.modify(\.audioCapture, to: snapshot) }
             },
             onPartialTranscript: { [weak self] text in
-                Task { @MainActor in self?.state.reduce(.transcriptPartial(text)) }
+                Task { @MainActor in self?.dispatch(.transcriptPartial(text)) }
             },
             onTranscript: { [weak self] transcript in
                 Task { @MainActor in await self?.receiveLocalTranscript(transcript) }
             },
             onTranscriptionError: { [weak self] message in
-                Task { @MainActor in self?.state.reduce(.suggestion(message)) }
+                Task { @MainActor in self?.dispatch(.suggestion(message)) }
             }
         )
     }
@@ -115,9 +115,9 @@ extension MeetingStore {
     func endMeetingNow() async {
         screenshotController.cancelSelection()
         if state.screenshotOperation == .selecting {
-            state.screenshotOperation = .idle
+            modify(\.screenshotOperation, to: .idle)
         }
-        state.recordingActivity = .stopping
+        modify(\.recordingActivity, to: .stopping)
         automationScheduler?.stop(at: now())
         automationClockTask?.cancel()
         automationClockTask = nil
@@ -132,38 +132,38 @@ extension MeetingStore {
             try? await backend.perform(sessionID: backendSessionID, action: "stop-native-recording")
             do {
                 try await backend.perform(sessionID: backendSessionID, action: "store-session")
-                state.reduce(.suggestion("会议已保存，可继续生成摘要或向 AI 提问"))
+                dispatch(.suggestion("会议已保存，可继续生成摘要或向 AI 提问"))
             } catch {
-                state.reduce(.suggestion("会议已结束，但保存失败：\(error.localizedDescription)"))
+                dispatch(.suggestion("会议已结束，但保存失败：\(error.localizedDescription)"))
             }
         }
         sessionID = nil
-        state.phase = .idle
-        state.recordingActivity = .inactive
-        state.activeTranscript = ""
-        state.audioCapture = AudioCaptureSnapshot()
+        modify(\.phase, to: .idle)
+        modify(\.recordingActivity, to: .inactive)
+        modify(\.activeTranscript, to: "")
+        modify(\.audioCapture, to: AudioCaptureSnapshot())
         await loadMeetingHistoryNow()
     }
 
     func pauseMeetingNow() async {
         guard state.phase == .live, state.recordingActivity == .recording else { return }
-        state.recordingActivity = .pausing
+        modify(\.recordingActivity, to: .pausing)
         await capture.pause()
         automationScheduler?.pause(at: now())
         if let backendSessionID {
             do {
                 try await backend.perform(sessionID: backendSessionID, action: "pause-native-recording")
             } catch {
-                state.reduce(.suggestion("录音已在本机暂停，会议服务状态暂未同步"))
+                dispatch(.suggestion("录音已在本机暂停，会议服务状态暂未同步"))
             }
         }
-        state.recordingActivity = .paused
-        state.activeTranscript = ""
+        modify(\.recordingActivity, to: .paused)
+        modify(\.activeTranscript, to: "")
     }
 
     func resumeMeetingNow() async {
         guard state.phase == .live, state.recordingActivity == .paused else { return }
-        state.recordingActivity = .resuming
+        modify(\.recordingActivity, to: .resuming)
         let remoteSessionID = backendSessionID
         var backendResumed = false
         do {
@@ -172,28 +172,28 @@ extension MeetingStore {
                 backendResumed = true
             }
             try await capture.resume()
-            state.recordingActivity = .recording
+            modify(\.recordingActivity, to: .recording)
             automationScheduler?.resume(at: now())
         } catch {
             if backendResumed, let remoteSessionID {
                 try? await backend.perform(sessionID: remoteSessionID, action: "pause-native-recording")
             }
-            state.recordingActivity = .paused
-            state.reduce(.suggestion("继续录音失败：\(error.localizedDescription)"))
+            modify(\.recordingActivity, to: .paused)
+            dispatch(.suggestion("继续录音失败：\(error.localizedDescription)"))
         }
     }
 
     func saveMeetingNow() async {
         guard let backendSessionID else {
-            state.reduce(.suggestion("当前没有可保存的会议"))
+            dispatch(.suggestion("当前没有可保存的会议"))
             return
         }
         do {
             try await backend.perform(sessionID: backendSessionID, action: "store-session")
-            state.reduce(.suggestion("会议已保存"))
+            dispatch(.suggestion("会议已保存"))
             await loadMeetingHistoryNow()
         } catch {
-            state.reduce(.suggestion("保存失败：\(error.localizedDescription)"))
+            dispatch(.suggestion("保存失败：\(error.localizedDescription)"))
         }
     }
 }
