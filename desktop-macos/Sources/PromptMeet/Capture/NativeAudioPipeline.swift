@@ -238,10 +238,83 @@ actor NativeAudioPacketPump {
   }
 }
 
+struct NativeAudioUploadBatcher {
+  static let defaultDuration: TimeInterval = 1
+
+  private struct PendingBatch {
+    let source: NativeAudioSource
+    let sampleRate: Int
+    let channels: Int
+    let capturedAt: Date
+    let meetingTime: Duration
+    var payload: Data
+
+    var pcm: CapturedPCM {
+      CapturedPCM(
+        source: source,
+        sampleRate: sampleRate,
+        channels: channels,
+        capturedAt: capturedAt,
+        meetingTime: meetingTime,
+        payload: payload
+      )
+    }
+
+    func matches(_ pcm: CapturedPCM) -> Bool {
+      sampleRate == pcm.sampleRate && channels == pcm.channels
+    }
+  }
+
+  private let duration: TimeInterval
+  private var pendingBySource: [NativeAudioSource: PendingBatch] = [:]
+
+  init(duration: TimeInterval = defaultDuration) {
+    self.duration = max(0.02, duration)
+  }
+
+  mutating func append(_ pcm: CapturedPCM) -> [CapturedPCM] {
+    guard !pcm.payload.isEmpty, pcm.sampleRate > 0, pcm.channels > 0 else { return [] }
+    var emitted: [CapturedPCM] = []
+    var pending = pendingBySource.removeValue(forKey: pcm.source)
+    if let existing = pending, !existing.matches(pcm) {
+      emitted.append(existing.pcm)
+      pending = nil
+    }
+    if pending == nil {
+      pending = PendingBatch(
+        source: pcm.source,
+        sampleRate: pcm.sampleRate,
+        channels: pcm.channels,
+        capturedAt: pcm.capturedAt,
+        meetingTime: pcm.meetingTime,
+        payload: Data()
+      )
+    }
+    pending?.payload.append(pcm.payload)
+    guard let pending else { return emitted }
+    if pending.payload.count >= targetPayloadByteCount(for: pcm) {
+      emitted.append(pending.pcm)
+    } else {
+      pendingBySource[pcm.source] = pending
+    }
+    return emitted
+  }
+
+  mutating func reset() {
+    pendingBySource.removeAll(keepingCapacity: true)
+  }
+
+  private func targetPayloadByteCount(for pcm: CapturedPCM) -> Int {
+    let bytesPerSecond = Double(pcm.sampleRate * pcm.channels * MemoryLayout<Int16>.size)
+    return max(1, Int((bytesPerSecond * duration).rounded(.up)))
+  }
+}
+
 final class NativeAudioFrameDispatcher: @unchecked Sendable {
   private let packetPump: NativeAudioPacketPump
   private let transcription: LocalTranscriptionServicing
   private let lock = NSLock()
+  private var uploadBatcher = NativeAudioUploadBatcher()
   private var generation: UInt64 = 0
   private var isSuspended = false
   private var pendingUploadTask: Task<Void, Never>?
@@ -259,11 +332,13 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
     lock.withLock {
       guard !isSuspended else { return }
       let expectedGeneration = generation
-      let uploadPredecessor = pendingUploadTask
-      pendingUploadTask = Task { [weak self] in
-        _ = await uploadPredecessor?.result
-        guard let self, isCurrent(expectedGeneration) else { return }
-        try? await packetPump.consume(pcm)
+      for batch in uploadBatcher.append(pcm) {
+        let uploadPredecessor = pendingUploadTask
+        pendingUploadTask = Task { [weak self] in
+          _ = await uploadPredecessor?.result
+          guard let self, isCurrent(expectedGeneration) else { return }
+          try? await packetPump.consume(batch)
+        }
       }
       let transcriptionPredecessor = pendingTranscriptionTask
       pendingTranscriptionTask = Task { [weak self] in
@@ -278,6 +353,7 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
     let pending = lock.withLock {
       isSuspended = true
       generation &+= 1
+      uploadBatcher.reset()
       let pending = (pendingUploadTask, pendingTranscriptionTask)
       pendingUploadTask = nil
       pendingTranscriptionTask = nil

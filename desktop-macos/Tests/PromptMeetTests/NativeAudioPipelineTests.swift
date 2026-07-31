@@ -199,6 +199,7 @@ final class NativeAudioPipelineTests: XCTestCase {
     XCTAssertEqual(clock.offset(atNanoseconds: 4_000_000_000), .seconds(3))
     XCTAssertEqual(clock.offset(atNanoseconds: 900_000_000), .zero)
   }
+
 }
 
 final class NativeAudioCoordinatorTests: XCTestCase {

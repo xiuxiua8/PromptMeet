@@ -49,7 +49,7 @@ final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unch
         source: source,
         sampleRate: 16_000,
         channels: 1,
-        payload: Data([0, 1])
+        payload: Data(repeating: 0, count: 32_000)
       )
     )
   }
@@ -81,9 +81,11 @@ struct NativeAudioUploaderSpy: NativeAudioUploading {
 
 actor RecordingNativeAudioUploader: NativeAudioUploading {
   private(set) var sessionIDs: [String] = []
+  private(set) var packets: [NativeAudioPacket] = []
 
   func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
     sessionIDs.append(sessionID)
+    packets.append(packet)
   }
 }
 
