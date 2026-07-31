@@ -180,3 +180,41 @@ Build under test: signed packaged app from `c8f13c4` plus the final uncommitted 
 - Regression proof: `MeetingStateTests.testSuccessfulHistoryReloadClearsOnlyItsStaleFailureMessage` failed before the reducer change and passes while preserving an unrelated insight.
 
 The system picker remained absent from captured pixels and from the accessibility tree during this follow-up. Computer Use could verify app-side state and real pointer selection, but could not faithfully drive the protected Cancel control; automated Escape directed at PromptMeet is not treated as equivalent manual cancellation proof.
+
+## Intermittent recording stall follow-up
+
+Date: 2026-07-31
+
+Build under test: the signed packaged app from `34998dd` in the isolated task worktree, before the performance changes.
+
+### Long system-audio recording makes the workspace unresponsive
+
+- Expected: a long system-audio-only meeting remains responsive while transcripts accumulate; pause, resume, text selection, and timeline scrolling complete without unbounded memory or CPU growth.
+- Observed: after roughly seven minutes, a pause and resume attempt left the process alive but the workspace stopped answering accessibility queries. PromptMeet was pinned at 100 percent CPU, resident memory had grown from roughly 140 MB to 677 MB, and the live stack sample reported a 1.8 GB physical footprint.
+- Repeatability: the high-frequency ingestion load was measured in two active-recording windows and stopped immediately on pause; the full UI stall occurred in the single sustained packaged reproduction.
+- Exact setup: signed `dist/PromptMeet.app`, local microphone disabled, Screen Recording already authorized, `ggml-large-v3-turbo-q5_0.bin`, real ScreenCaptureKit system audio, a visible workspace, and sustained system speech output.
+- Initiating trigger: allow consecutive system-audio transcript segments to accumulate in one live meeting, then pause and attempt to resume while the workspace is showing the input timeline.
+- Masking condition: a short meeting or a collapsed workspace does not build a large selectable transcript block. Pausing early also stops the independent audio ingress load before it compounds the render cost.
+- Visible symptom: controls stop responding, the accessibility driver times out, and the workspace no longer opens even though the app process remains alive.
+- Proven path: the same package remained responsive with a short transcript. During the stalled run, the local Whisper process had continued publishing transcript events and became idle after pause, so model inference was not holding the main thread.
+- History comparison: `cbe5891` introduced dense transcript grouping and an explicit regression expectation that 2,000 adjacent segments materialize as one block. The grouping window was measured only between consecutive segments, so continuous speech could extend a selectable SwiftUI `Text` indefinitely.
+- Smallest counterfactual: keep speaker/source grouping but cap each projected selectable block at six segments and 4,096 characters. Preserve all segments in chronological order across the resulting lazy rows.
+- Disconfirming evidence sought: a five-second process sample placed essentially all main-thread time in SwiftUI `SelectionOverlay`, `AttributeGraph`, and `WorkspaceView.timelineScrollContent` at `WorkspaceTimelineView.swift:289`, not in `WhisperServerEngine` or audio capture.
+- Regression proof: `WorkspaceProjectionTests.testLargeAdjacentTranscriptRunUsesBoundedSelectableBlocks` and `testLongTranscriptTextStartsANewSelectableBlockBeforeCharacterCap` fail on the unbounded projection and pass with exact 2,000-segment coverage after the cap.
+
+### Auxiliary loopback persistence writes every 20 ms frame separately
+
+- Expected: low-latency local transcription may consume capture frames directly, while auxiliary loopback persistence uses bounded, efficient chunks and does not create unbounded request-task pressure.
+- Observed: each 640-byte, 20 ms system frame became one HTTP request, one `.pcm` file, and one JSON sidecar. A three-second active sample added 323 files, about 108 file creations per second, while the app and companion each consumed sustained CPU even during non-speech intervals.
+- Repeatability: file growth tracked active recording in both measured windows. The count remained exactly unchanged across a three-second pause while app CPU fell near 0.6 percent and companion CPU near 0.2 percent.
+- Exact setup: the same system-audio-only packaged meeting, companion work directory under `~/Library/Application Support/PromptMeet/temp_sessions/native_audio`, and no repository copy of the generated PCM.
+- Initiating trigger: ScreenCaptureKit emits normal 20 ms audio buffers after native capture starts.
+- Masking condition: without inspecting the local work directory, the request and file amplification is hidden behind successful 200 responses. Fast storage can keep up temporarily.
+- Visible symptom: elevated background CPU and filesystem churn increase the probability and severity of long-recording stalls, although the stack sample identifies transcript rendering as the immediate main-thread failure.
+- Proven path: transcription already has an independent dispatcher lane, so upload delay does not need to gate the speech segmenter or Whisper.
+- History comparison: `NativeAudioFrameDispatcher` previously created one chained upload task per raw frame, and `NativeAudioIngress` persisted every received packet as two sibling files.
+- Smallest counterfactual: coalesce only the auxiliary upload lane into source-specific one-second PCM batches while delivering every raw frame to local transcription. Flush a pending batch before a source format change and discard incomplete auxiliary batches when a pause or stop invalidates the generation.
+- Disconfirming evidence sought: pause stopped file growth but not the already rendered transcript cost, proving upload amplification and the UI stall are distinct boundaries that both need bounded behavior.
+- Regression proof: `NativeAudioUploadBatcherTests` covers one-second coalescing and format isolation; `NativeAudioFrameDispatcherTests` proves all 50 raw frames still reach transcription while one upload is emitted and incomplete batches cannot cross a suspension.
+
+The system speech stimulus overlapped unrelated system playback during this run, so the walkthrough proves capture, load, and responsiveness behavior but does not claim a controlled word-error-rate comparison.
