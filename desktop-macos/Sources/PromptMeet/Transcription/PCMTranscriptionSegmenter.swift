@@ -78,8 +78,7 @@ struct PCMTranscriptionSegmenter {
     var update = apply(events, source: pcm.source)
     if update.signalTransition == nil,
       signalStateBySource[pcm.source] == nil,
-      gate.diagnostics.analyzedFrames >= 20
-    {
+      gate.diagnostics.analyzedFrames >= 20 {
       signalStateBySource[pcm.source] = .silenceFiltered
       update = PCMTranscriptionUpdate(
         preview: update.preview,
@@ -177,8 +176,7 @@ struct PCMTranscriptionSegmenter {
   }
 
   private mutating func drainFullSegments(for source: NativeAudioSource)
-    -> [PCMTranscriptionSegment]
-  {
+    -> [PCMTranscriptionSegment] {
     var output: [PCMTranscriptionSegment] = []
     while let samples = samplesBySource[source], samples.count >= segmentSampleCount {
       output.append(segment(source: source, samples: Array(samples.prefix(segmentSampleCount))))
@@ -190,8 +188,7 @@ struct PCMTranscriptionSegmenter {
   }
 
   private mutating func finalizeRemainder(for source: NativeAudioSource)
-    -> [PCMTranscriptionSegment]
-  {
+    -> [PCMTranscriptionSegment] {
     guard let remainder = samplesBySource[source], remainder.count >= minimumFlushSampleCount else {
       clearOutputBuffer(for: source)
       return []
@@ -202,8 +199,7 @@ struct PCMTranscriptionSegmenter {
   }
 
   private mutating func makePreviewIfNeeded(for source: NativeAudioSource)
-    -> PCMTranscriptionSegment?
-  {
+    -> PCMTranscriptionSegment? {
     guard let samples = samplesBySource[source], samples.count >= minimumPreviewSampleCount else {
       return nil
     }
@@ -267,8 +263,7 @@ struct PCMTranscriptionSegmenter {
   }
 
   private static func resample(_ samples: [Int16], from sourceRate: Int, to targetRate: Int)
-    -> [Int16]
-  {
+    -> [Int16] {
     guard !samples.isEmpty, sourceRate != targetRate else { return samples }
     let outputCount = Int(
       (Double(samples.count) * Double(targetRate) / Double(sourceRate)).rounded())

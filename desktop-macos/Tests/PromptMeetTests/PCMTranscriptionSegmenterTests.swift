@@ -166,7 +166,7 @@ final class PCMTranscriptionSegmenterTests: XCTestCase {
     for samples in [
       [Int16](),
       PCMTestFixtures.silence(),
-      PCMTestFixtures.dcOffset(),
+      PCMTestFixtures.dcOffset()
     ] {
       var segmenter = PCMTranscriptionSegmenter(segmentDuration: 1)
 
@@ -174,7 +174,9 @@ final class PCMTranscriptionSegmenterTests: XCTestCase {
       XCTAssertTrue(segmenter.flush().isEmpty)
     }
   }
+}
 
+final class SpeechActivityGateTests: XCTestCase {
   func testSteadyWhiteNoiseFromEitherSourceIsNeverSentToWhisper() {
     var segmenter = PCMTranscriptionSegmenter(segmentDuration: 1)
 

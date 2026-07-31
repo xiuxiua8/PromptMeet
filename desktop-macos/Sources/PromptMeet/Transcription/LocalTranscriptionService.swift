@@ -224,8 +224,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
   private func drainQueue(generation: UInt64) async {
     while !Task.isCancelled,
       generation == activeGeneration,
-      !pendingJobs.isEmpty
-    {
+      !pendingJobs.isEmpty {
       let job = pendingJobs.removeFirst()
       guard job.generation == generation, let engine else { continue }
       do {
@@ -295,9 +294,10 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
       let droppedSilence = counters.droppedSilenceFrames
       let droppedNoise = counters.droppedNoiseFrames
       let utterances = counters.utterances
-      Self.logger.info(
-        "boundary=\(boundary, privacy: .public) source=\(sourceName, privacy: .public) analyzed=\(analyzed) accepted=\(accepted) dropped_silence=\(droppedSilence) dropped_noise=\(droppedNoise) utterances=\(utterances)"
-      )
+      let diagnosticSummary =
+        "boundary=\(boundary) source=\(sourceName) analyzed=\(analyzed) accepted=\(accepted) "
+        + "dropped_silence=\(droppedSilence) dropped_noise=\(droppedNoise) utterances=\(utterances)"
+      Self.logger.info("\(diagnosticSummary, privacy: .public)")
     }
   }
 

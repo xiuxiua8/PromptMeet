@@ -211,8 +211,7 @@ extension WorkspaceView {
                 .lineLimit(1)
 
             if store.state.screenshotOperation == .selecting
-                || store.state.screenshotOperation == .capturing
-            {
+                || store.state.screenshotOperation == .capturing {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(VisualTokens.sky)

@@ -99,12 +99,7 @@ struct CaptureStatusPresentation: Equatable {
     switch state {
     case .idle: status = "未启动"
     case .starting, .requestingPermission: status = "正在准备"
-    case .active:
-      switch signal {
-      case .idle: status = "采集中"
-      case .speechDetected: status = "检测到语音"
-      case .silenceFiltered: status = "静音，未送入转写"
-      }
+    case .active: status = activeStatus(for: signal)
     case .paused: status = "已暂停"
     case .denied: status = prefix == "我" ? "需要麦克风权限" : "需要屏幕录制权限"
     case .restricted: status = "受系统限制"
@@ -116,5 +111,13 @@ struct CaptureStatusPresentation: Equatable {
       icon: icon,
       isActive: state == .active && signal != .silenceFiltered
     )
+  }
+
+  private static func activeStatus(for signal: AudioSignalState) -> String {
+    switch signal {
+    case .idle: "采集中"
+    case .speechDetected: "检测到语音"
+    case .silenceFiltered: "静音，未送入转写"
+    }
   }
 }

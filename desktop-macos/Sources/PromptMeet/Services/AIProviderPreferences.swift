@@ -41,8 +41,7 @@ struct AIProviderPreferences {
     func selection(for workflow: AIWorkflow) -> AIWorkflowSelection {
         let keys = workflow.preferenceKeys
         if let provider = defaults.string(forKey: keys.provider),
-            let model = defaults.string(forKey: keys.model)
-        {
+            let model = defaults.string(forKey: keys.model) {
             let vision =
                 defaults.object(forKey: keys.vision) == nil
                 ? Self.inferredVision(
@@ -101,7 +100,7 @@ struct AIProviderPreferences {
         let deepSeek = try loadDeepSeek()
         var environment = [
             "OPENAI_API_BASE": openAI.baseURL.absoluteString,
-            "DEEPSEEK_API_BASE": deepSeek.baseURL.absoluteString,
+            "DEEPSEEK_API_BASE": deepSeek.baseURL.absoluteString
         ]
         for workflow in AIWorkflow.allCases {
             let selection = selection(for: workflow)
@@ -121,14 +120,14 @@ struct AIProviderPreferences {
                 "PROMPTMEET_AI_PROVIDER": "openai",
                 "OPENAI_API_BASE": configuration.baseURL.absoluteString,
                 "OPENAI_ANSWER_MODEL": configuration.modelID,
-                "OPENAI_QUESTION_MODEL": configuration.modelID,
+                "OPENAI_QUESTION_MODEL": configuration.modelID
             ]
         case "deepseek":
             let configuration = try loadDeepSeek()
             return [
                 "PROMPTMEET_AI_PROVIDER": "deepseek",
                 "DEEPSEEK_ANSWER_MODEL": configuration.modelID,
-                "DEEPSEEK_QUESTION_MODEL": configuration.modelID,
+                "DEEPSEEK_QUESTION_MODEL": configuration.modelID
             ]
         default:
             throw AIProviderConfigurationError.unsupportedProvider(providerID)

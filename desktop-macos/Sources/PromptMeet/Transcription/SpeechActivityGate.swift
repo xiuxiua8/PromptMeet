@@ -141,8 +141,10 @@ struct SpeechActivityGate: Sendable {
   mutating func discardBufferedAudio() {
     resetStreamState(keepingDiagnostics: true)
   }
+}
 
-  private mutating func processFrame(
+private extension SpeechActivityGate {
+  mutating func processFrame(
     samples: [Int16],
     analysisSamples: [Int16]
   ) -> [SpeechGateEvent] {
@@ -156,29 +158,44 @@ struct SpeechActivityGate: Sendable {
     previousLevelDecibels = features.levelDecibels
 
     if isOpen {
-      let remainsSpeech = isSpeechCandidate(
-        features,
-        levelChange: levelChange,
-        snrMargin: configuration.closeSNRDecibels
-      )
-      diagnostics.acceptedSpeechFrames += 1
-      var events: [SpeechGateEvent] = [
-        .speechContinued(
-          SpeechAudioSpan(samples: frame.samples, startSampleIndex: frame.startSampleIndex)
-        )
-      ]
-      if remainsSpeech {
-        remainingHangoverFrames = hangoverFrameCount
-      } else {
-        remainingHangoverFrames -= 1
-        if remainingHangoverFrames <= 0 {
-          isOpen = false
-          events.append(.speechEnded)
-        }
-      }
-      return events
+      return processOpenFrame(frame, features: features, levelChange: levelChange)
     }
+    return processClosedFrame(frame, features: features, levelChange: levelChange)
+  }
 
+  private mutating func processOpenFrame(
+    _ frame: Frame,
+    features: Features,
+    levelChange: Double
+  ) -> [SpeechGateEvent] {
+    let remainsSpeech = isSpeechCandidate(
+      features,
+      levelChange: levelChange,
+      snrMargin: configuration.closeSNRDecibels
+    )
+    diagnostics.acceptedSpeechFrames += 1
+    var events: [SpeechGateEvent] = [
+      .speechContinued(
+        SpeechAudioSpan(samples: frame.samples, startSampleIndex: frame.startSampleIndex)
+      )
+    ]
+    if remainsSpeech {
+      remainingHangoverFrames = hangoverFrameCount
+    } else {
+      remainingHangoverFrames -= 1
+      if remainingHangoverFrames <= 0 {
+        isOpen = false
+        events.append(.speechEnded)
+      }
+    }
+    return events
+  }
+
+  private mutating func processClosedFrame(
+    _ frame: Frame,
+    features: Features,
+    levelChange: Double
+  ) -> [SpeechGateEvent] {
     let isCandidate = isSpeechCandidate(
       features,
       levelChange: levelChange,
@@ -236,7 +253,7 @@ struct SpeechActivityGate: Sendable {
     return voiced || changingSpeechLikeSignal
   }
 
-  private mutating func adaptNoiseFloor(toward levelDecibels: Double) {
+  mutating func adaptNoiseFloor(toward levelDecibels: Double) {
     let bounded = min(-20, max(-90, levelDecibels))
     guard let current = noiseFloorDecibels else {
       noiseFloorDecibels = bounded
@@ -254,7 +271,7 @@ struct SpeechActivityGate: Sendable {
     }
   }
 
-  private mutating func dropPendingFrames() {
+  mutating func dropPendingFrames() {
     guard !pendingFrames.isEmpty else { return }
     diagnostics.droppedNoiseFrames += pendingFrames.count
     for frame in pendingFrames {
@@ -273,7 +290,7 @@ struct SpeechActivityGate: Sendable {
     }
   }
 
-  private mutating func resetStreamState(keepingDiagnostics: Bool) {
+  mutating func resetStreamState(keepingDiagnostics: Bool) {
     inputBuffer = []
     nextFrameSampleIndex = 0
     preRollFrames = []
@@ -309,11 +326,25 @@ struct SpeechActivityGate: Sendable {
     let centered = samples.map { Double($0) - mean }
     let energy = centered.reduce(0.0) { $0 + $1 * $1 }
     let rms = sqrt(energy / Double(centered.count))
-    let levelDecibels =
-      rms > 0
-      ? 20 * log10(rms / Double(Int16.max))
-      : -120
+    let levelDecibels = Self.levelDecibels(for: rms)
+    let variation = Self.variationFeatures(centered: centered, rms: rms)
+    let periodicity = Self.periodicity(centered: centered, energy: energy)
+    return Features(
+      levelDecibels: levelDecibels,
+      zeroCrossingRate: variation.zeroCrossingRate,
+      periodicity: periodicity,
+      differenceRatio: variation.differenceRatio
+    )
+  }
 
+  static func levelDecibels(for rms: Double) -> Double {
+    rms > 0 ? 20 * log10(rms / Double(Int16.max)) : -120
+  }
+
+  static func variationFeatures(
+    centered: [Double],
+    rms: Double
+  ) -> (zeroCrossingRate: Double, differenceRatio: Double) {
     var zeroCrossings = 0
     var differenceEnergy = 0.0
     if centered.count > 1 {
@@ -328,7 +359,10 @@ struct SpeechActivityGate: Sendable {
     let zeroCrossingRate = Double(zeroCrossings) / Double(max(1, centered.count - 1))
     let differenceRMS = sqrt(differenceEnergy / Double(max(1, centered.count - 1)))
     let differenceRatio = rms > 0 ? differenceRMS / rms : 0
+    return (zeroCrossingRate, differenceRatio)
+  }
 
+  static func periodicity(centered: [Double], energy: Double) -> Double {
     var periodicity = 0.0
     if energy > 0 {
       let maximumLag = min(200, centered.count - 2)
@@ -351,12 +385,6 @@ struct SpeechActivityGate: Sendable {
         }
       }
     }
-
-    return Features(
-      levelDecibels: levelDecibels,
-      zeroCrossingRate: zeroCrossingRate,
-      periodicity: periodicity,
-      differenceRatio: differenceRatio
-    )
+    return periodicity
   }
 }

@@ -25,7 +25,7 @@ final class LocalScreenshotOCRTests: XCTestCase {
         NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 42, weight: .semibold),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: NSColor.white
         ]
         NSString(string: text).draw(
             in: NSRect(x: 40, y: 80, width: 1_120, height: 80),

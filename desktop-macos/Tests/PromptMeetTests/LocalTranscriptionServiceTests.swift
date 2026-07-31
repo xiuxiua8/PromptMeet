@@ -170,7 +170,7 @@ final class LocalTranscriptionServiceTests: XCTestCase {
       [
         SignalStateRecorder.Value(source: .microphone, state: .silenceFiltered),
         SignalStateRecorder.Value(source: .microphone, state: .speechDetected),
-        SignalStateRecorder.Value(source: .microphone, state: .silenceFiltered),
+        SignalStateRecorder.Value(source: .microphone, state: .silenceFiltered)
       ]
     )
   }

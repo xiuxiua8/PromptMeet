@@ -106,15 +106,34 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
       dispatcher.enqueue(timed)
     }
     sourceHandler = capturedHandler
+    let failures = await startEnabledSources(
+      request: request,
+      handler: capturedHandler,
+      onTranscriptionError: onTranscriptionError
+    )
+    guard !activeSources.isEmpty else {
+      await transcription.stop()
+      pump = nil
+      frameDispatcher = nil
+      throw CaptureError.noAvailableAudioSource(failures.joined(separator: "；"))
+    }
+  }
+
+  private func startEnabledSources(
+    request: NativeAudioCaptureRequest,
+    handler: @escaping @Sendable (CapturedPCM) -> Void,
+    onTranscriptionError: @escaping @Sendable (String) -> Void
+  ) async -> [String] {
     var failures: [String] = []
     let enabledSources = sources.filter {
       request.includeLocalMicrophone || $0.source != .microphone
     }
     for source in enabledSources {
       do {
-        update(
-          source.source, state: source.source == .microphone ? .requestingPermission : .starting)
-        try await startSource(source, handler: capturedHandler)
+        let startingState: AudioSourceState =
+          source.source == .microphone ? .requestingPermission : .starting
+        update(source.source, state: startingState)
+        try await startSource(source, handler: handler)
         activeSources[source.source] = source
         update(source.source, state: .active)
       } catch {
@@ -126,12 +145,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
         onTranscriptionError(detail)
       }
     }
-    guard !activeSources.isEmpty else {
-      await transcription.stop()
-      pump = nil
-      frameDispatcher = nil
-      throw CaptureError.noAvailableAudioSource(failures.joined(separator: "；"))
-    }
+    return failures
   }
 
   func bindBackendSession(_ sessionID: String) async {

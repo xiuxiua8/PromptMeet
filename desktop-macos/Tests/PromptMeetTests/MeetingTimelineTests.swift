@@ -24,7 +24,8 @@ final class MeetingTimelineTests: XCTestCase {
                 + #""provider":"openai","model":"gpt-4o"},"payload":{"type":"screenshot_analysis","#
                 + #""asset_id":"asset-1","status":"completed","text":"截图显示周岚负责回滚","#
                 + #""vision_used":false,"evidence_kind":"ocr","#
-                + #""image_rejection":"HTTP 400: image input rejected"}},{"event_id":"event-4","meeting_id":"meeting-1","sequence":4,"#
+                + #""image_rejection":"HTTP 400: image input rejected"}},{"#
+                + #""event_id":"event-4","meeting_id":"meeting-1","sequence":4,"#
                 + #""occurred_at":"2026-07-25T10:04:00Z","kind":"user_question","#
                 + #""provenance":{"source":"user","request_id":"11111111-1111-1111-1111-111111111111"},"#
                 + #""payload":{"type":"user_question","request_id":"11111111-1111-1111-1111-111111111111","#

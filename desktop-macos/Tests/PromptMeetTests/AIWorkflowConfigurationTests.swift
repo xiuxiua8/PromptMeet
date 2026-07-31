@@ -126,7 +126,7 @@ final class AIWorkflowConfigurationTests: XCTestCase {
             (
                 .translation,
                 .init(providerID: "deepseek", modelID: "translation-model", supportsVision: false)
-            ),
+            )
         ]
         for (workflow, selection) in selections {
             try preferences.save(selection, for: workflow)
