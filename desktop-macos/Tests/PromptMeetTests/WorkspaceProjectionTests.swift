@@ -83,7 +83,7 @@ final class WorkspaceProjectionTests: XCTestCase {
         XCTAssertEqual(projection.items.count, 2)
     }
 
-    func testLargeAdjacentTranscriptRunMaterializesOneStableBlock() {
+    func testLargeAdjacentTranscriptRunUsesBoundedSelectableBlocks() {
         let events = (1...2_000).map { sequence in
             transcriptEvent(
                 sequence: sequence,
@@ -93,10 +93,37 @@ final class WorkspaceProjectionTests: XCTestCase {
         }
 
         let projection = WorkspaceProjection(events: events, conversation: [])
+        let blocks = projection.items.compactMap(\.transcriptBlock)
 
-        XCTAssertEqual(projection.items.count, 1)
-        XCTAssertEqual(projection.items.first?.transcriptBlock?.segments.count, 2_000)
-        XCTAssertEqual(projection.items.first?.endSequence, 2_000)
+        XCTAssertGreaterThan(blocks.count, 1)
+        XCTAssertTrue(
+            blocks.allSatisfy {
+                $0.segments.count <= WorkspaceTranscriptBlock.maximumSegmentCount
+            }
+        )
+        XCTAssertEqual(blocks.flatMap(\.segments).count, 2_000)
+        XCTAssertEqual(projection.items.last?.endSequence, 2_000)
+    }
+
+    func testLongTranscriptTextStartsANewSelectableBlockBeforeCharacterCap() {
+        let projection = WorkspaceProjection(
+            events: [
+                transcriptEvent(
+                    sequence: 1,
+                    offset: 0,
+                    text: String(repeating: "长", count: 4_090)
+                ),
+                transcriptEvent(
+                    sequence: 2,
+                    offset: 1,
+                    text: String(repeating: "文", count: 20)
+                )
+            ],
+            conversation: []
+        )
+
+        XCTAssertEqual(projection.items.count, 2)
+        XCTAssertEqual(projection.items.map(\.endSequence), [1, 2])
     }
 
     func testLegacyTranscriptFallbackUsesTheSameDenseGroupingRules() {

@@ -18,6 +18,8 @@ struct WorkspaceTranscriptSegment: Identifiable, Equatable, Sendable {
 
 struct WorkspaceTranscriptBlock: Identifiable, Equatable, Sendable {
     static let groupingWindow: TimeInterval = 45
+    static let maximumSegmentCount = 6
+    static let maximumCharacterCount = 4_096
 
     let speaker: String
     let source: String?
@@ -49,17 +51,32 @@ struct WorkspaceTranscriptBlock: Identifiable, Equatable, Sendable {
     func canAppend(
         speaker: String,
         source: String?,
-        timestamp: Date
+        segment: WorkspaceTranscriptSegment
     ) -> Bool {
         guard self.speaker == speaker,
-              self.source == source,
-              let previousTimestamp = segments.last?.timestamp else { return false }
-        return Self.canGroup(previousTimestamp: previousTimestamp, nextTimestamp: timestamp)
+              self.source == source else { return false }
+        return Self.canGroup(segments: segments, nextSegment: segment)
     }
 
     static func canGroup(previousTimestamp: Date, nextTimestamp: Date) -> Bool {
         let interval = nextTimestamp.timeIntervalSince(previousTimestamp)
         return interval >= 0 && interval <= groupingWindow
+    }
+
+    static func canGroup(
+        segments: [WorkspaceTranscriptSegment],
+        nextSegment: WorkspaceTranscriptSegment
+    ) -> Bool {
+        guard segments.count < maximumSegmentCount,
+              let previousTimestamp = segments.last?.timestamp else { return false }
+        let existingCharacters = segments.reduce(0) { $0 + $1.text.count }
+        let separatorCharacters = segments.isEmpty ? 0 : 1
+        guard existingCharacters + separatorCharacters + nextSegment.text.count
+            <= maximumCharacterCount else { return false }
+        return canGroup(
+            previousTimestamp: previousTimestamp,
+            nextTimestamp: nextSegment.timestamp
+        )
     }
 }
 
@@ -68,14 +85,14 @@ private struct TranscriptBlockAccumulator {
     let source: String?
     var segments: [WorkspaceTranscriptSegment]
 
-    func canAppend(speaker: String, source: String?, timestamp: Date) -> Bool {
+    func canAppend(
+        speaker: String,
+        source: String?,
+        segment: WorkspaceTranscriptSegment
+    ) -> Bool {
         guard self.speaker == speaker,
-              self.source == source,
-              let previousTimestamp = segments.last?.timestamp else { return false }
-        return WorkspaceTranscriptBlock.canGroup(
-            previousTimestamp: previousTimestamp,
-            nextTimestamp: timestamp
-        )
+              self.source == source else { return false }
+        return WorkspaceTranscriptBlock.canGroup(segments: segments, nextSegment: segment)
     }
 
     mutating func append(_ segment: WorkspaceTranscriptSegment) {
@@ -160,7 +177,7 @@ struct WorkspaceProjection: Equatable, Sendable {
             if openBlock?.canAppend(
                    speaker: line.speaker,
                    source: source,
-                   timestamp: line.timestamp
+                   segment: segment
                ) == true {
                 openBlock?.append(segment)
             } else {
@@ -220,7 +237,7 @@ struct WorkspaceProjection: Equatable, Sendable {
         if openTranscript?.transcript.canAppend(
             speaker: payload.speaker,
             source: payload.source,
-            timestamp: event.occurredAt
+            segment: segment
         ) == true {
             openTranscript?.transcript.append(segment)
         } else {
