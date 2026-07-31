@@ -224,6 +224,73 @@ def test_meeting_completion_does_not_wait_for_ai_title_generation(
     asyncio.run(finish_meeting())
 
 
+def test_successful_live_translation_is_persisted_before_broadcast(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    main_service = importlib.import_module("main_service")
+    repository = MeetingRepository(tmp_path)
+    ingestion = MeetingIngestionService(repository)
+    meeting_id = "translation-meeting"
+    segment_id = "4E2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    ingestion.start(meeting_id, datetime(2026, 7, 25, tzinfo=UTC))
+    original = ingestion.transcript(
+        meeting_id,
+        {
+            "id": segment_id,
+            "text": "Hello team",
+            "speaker": "会议",
+            "source": "system",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+    persisted_at_broadcast = []
+    broadcasts = []
+
+    class TranslationAgent:
+        async def translate(self, text, target_language):
+            assert (text, target_language) == ("Hello team", "zh")
+            return "大家好"
+
+    async def collect(session_id, payload):
+        event = repository.get(meeting_id).events[1]
+        persisted_at_broadcast.append(event.payload.translated_text)
+        broadcasts.append((session_id, payload))
+
+    monkeypatch.setattr(main_service, "meeting_repository", repository)
+    monkeypatch.setattr(main_service, "meeting_ingestion", ingestion)
+    monkeypatch.setattr(main_service, "desktop_agent_service", TranslationAgent())
+    monkeypatch.setattr(
+        main_service.websocket_manager,
+        "broadcast_to_session",
+        collect,
+    )
+
+    asyncio.run(
+        main_service.translate_native_transcript(
+            meeting_id,
+            segment_id,
+            "Hello team",
+            "zh",
+        )
+    )
+
+    restored = MeetingRepository(tmp_path).get(meeting_id)
+    assert restored is not None
+    transcripts = [
+        event for event in restored.events if event.kind == EventKind.TRANSCRIPT
+    ]
+    assert len(transcripts) == 1
+    assert transcripts[0].event_id == original.event_id
+    assert transcripts[0].payload.translated_text == "大家好"
+    assert persisted_at_broadcast == ["大家好"]
+    assert broadcasts[0][0] == meeting_id
+    assert broadcasts[0][1]["data"] == {
+        "id": segment_id,
+        "translated_text": "大家好",
+    }
+
+
 def test_rapid_questions_keep_request_scoped_snapshots_and_answers(
     monkeypatch, tmp_path
 ) -> None:

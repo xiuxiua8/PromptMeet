@@ -21,6 +21,10 @@ class MeetingNotFoundError(KeyError):
     pass
 
 
+class TranscriptNotFoundError(KeyError):
+    pass
+
+
 class MeetingRepository:
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -79,6 +83,44 @@ class MeetingRepository:
             updated = record.model_copy(update={"title": title})
             self._write(updated)
             return updated
+
+    def enrich_transcript_translation(
+        self,
+        meeting_id: str,
+        segment_id: str,
+        translated_text: str,
+    ) -> MeetingEvent:
+        normalized = translated_text.strip()
+        if not normalized:
+            raise ValueError("translated_text must not be empty")
+        with self._lock:
+            record = self.get(meeting_id)
+            if record is None or record.status == MeetingStatus.RECOVERY_REQUIRED:
+                raise MeetingNotFoundError(meeting_id)
+            matches = [
+                index
+                for index, event in enumerate(record.events)
+                if event.kind == EventKind.TRANSCRIPT
+                and isinstance(event.payload, TranscriptPayload)
+                and event.payload.segment_id == segment_id
+            ]
+            if not matches:
+                raise TranscriptNotFoundError((meeting_id, segment_id))
+            if len(matches) > 1:
+                raise ValueError("segment_id is not unique within the meeting")
+            index = matches[0]
+            original = record.events[index]
+            enriched = original.model_copy(
+                update={
+                    "payload": original.payload.model_copy(
+                        update={"translated_text": normalized}
+                    )
+                }
+            )
+            events = list(record.events)
+            events[index] = enriched
+            self._write(record.model_copy(update={"events": events}))
+            return enriched
 
     def get(self, meeting_id: str) -> MeetingRecord | None:
         with self._lock:

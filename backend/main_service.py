@@ -454,6 +454,11 @@ async def translate_native_transcript(
 ) -> None:
     try:
         translated_text = await desktop_agent_service.translate(text, target_language)
+        meeting_ingestion.translate_transcript(
+            session_id,
+            transcript_id,
+            translated_text,
+        )
         await websocket_manager.broadcast_to_session(
             session_id,
             {

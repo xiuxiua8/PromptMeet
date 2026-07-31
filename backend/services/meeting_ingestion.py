@@ -71,6 +71,18 @@ class MeetingIngestionService:
         )
         return self.repository.append(meeting_id, event).events[-1]
 
+    def translate_transcript(
+        self,
+        meeting_id: str,
+        segment_id: str,
+        translated_text: str,
+    ) -> MeetingEvent:
+        return self.repository.enrich_transcript_translation(
+            meeting_id,
+            segment_id,
+            translated_text,
+        )
+
     def screenshot(
         self,
         meeting_id: str,

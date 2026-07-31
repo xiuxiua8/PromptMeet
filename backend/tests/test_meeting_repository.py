@@ -59,6 +59,31 @@ def test_records_survive_repository_relaunch_and_finish_atomically(tmp_path) -> 
     assert not list((tmp_path / "meetings" / "v2").glob("*.tmp"))
 
 
+def test_translation_enriches_existing_event_without_appending_duplicate(
+    tmp_path,
+) -> None:
+    repository = MeetingRepository(tmp_path)
+    repository.create("meeting-a", START)
+    original = repository.append("meeting-a", transcript_event("Hello")).events[-1]
+
+    enriched = repository.enrich_transcript_translation(
+        "meeting-a",
+        "segment-Hello",
+        "你好",
+    )
+    restored = MeetingRepository(tmp_path).get("meeting-a")
+
+    assert restored is not None
+    assert len(restored.events) == 1
+    assert enriched.event_id == original.event_id
+    assert enriched.sequence == original.sequence
+    assert enriched.occurred_at == original.occurred_at
+    assert enriched.provenance == original.provenance
+    assert enriched.payload.text == "Hello"
+    assert enriched.payload.translated_text == "你好"
+    assert restored.events == [enriched]
+
+
 def test_accepted_suggestions_survive_repository_relaunch(tmp_path) -> None:
     repository = MeetingRepository(tmp_path)
     repository.create("meeting-a", START)
