@@ -6,14 +6,13 @@ struct SubtitleTickerView: View {
     var font: Font = .system(size: 12, weight: .medium, design: .rounded)
     var viewportHeight: CGFloat = 21
 
-    @State private var contentWidth: CGFloat = 0
-    @State private var cycleStartedAt = Date()
+    @State private var tickerState = SubtitleTickerState()
 
     var body: some View {
         GeometryReader { proxy in
             let viewportWidth = proxy.size.width
             let scrolls = SubtitleTickerMetrics.shouldScroll(
-                contentWidth: contentWidth,
+                contentWidth: tickerState.contentWidth,
                 viewportWidth: viewportWidth
             )
 
@@ -26,8 +25,8 @@ struct SubtitleTickerView: View {
                         }
                         .offset(
                             x: SubtitleTickerMetrics.offset(
-                                elapsed: context.date.timeIntervalSince(cycleStartedAt),
-                                contentWidth: contentWidth,
+                                elapsed: context.date.timeIntervalSince(tickerState.cycleStartedAt),
+                                contentWidth: tickerState.contentWidth,
                                 viewportWidth: viewportWidth
                             )
                         )
@@ -45,11 +44,10 @@ struct SubtitleTickerView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityCaption)
         .onPreferenceChange(SubtitleTickerContentWidthKey.self) { width in
-            contentWidth = width
+            tickerState.updateContentWidth(width)
         }
         .onChange(of: captionIdentity, initial: true) { _, _ in
-            contentWidth = 0
-            cycleStartedAt = Date()
+            tickerState.restartCycle(at: Date())
         }
     }
 

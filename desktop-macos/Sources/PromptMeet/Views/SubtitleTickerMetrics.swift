@@ -1,6 +1,24 @@
 import CoreGraphics
 import Foundation
 
+struct SubtitleTickerState: Equatable {
+    private(set) var contentWidth: CGFloat = 0
+    private(set) var cycleStartedAt: Date
+
+    init(cycleStartedAt: Date = Date()) {
+        self.cycleStartedAt = cycleStartedAt
+    }
+
+    mutating func updateContentWidth(_ width: CGFloat) {
+        guard width > 0 else { return }
+        contentWidth = width
+    }
+
+    mutating func restartCycle(at date: Date) {
+        cycleStartedAt = date
+    }
+}
+
 enum SubtitleTickerMetrics {
     static let pointsPerSecond: CGFloat = 30
     static let leadingPause: TimeInterval = 1

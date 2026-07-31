@@ -29,7 +29,8 @@ final class MeetingHistoryTests: XCTestCase {
                 + #""occurred_at":"2026-07-26T10:00:01Z","kind":"transcript","#
                 + #""provenance":{"source":"native_transcript"},"payload":{"type":"transcript","#
                 + #""segment_id":"08f0900a-a756-48db-bf38-d3040ddcd986","text":"我会负责回滚","#
-                + #""speaker":"我","source":"microphone","meeting_time_ms":1250,"translated_text":"I will handle rollback"}}]}]"#)
+                + #""speaker":"我","source":"microphone","meeting_time_ms":1250,"#
+                + #""translated_text":"I will handle rollback"}}]}]"#)
                 .utf8
         )
 

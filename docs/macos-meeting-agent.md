@@ -56,6 +56,8 @@ Normal meeting completion persists a deterministic title from that record before
 
 Writes use a temporary sibling file followed by atomic replacement. A malformed version 2 file remains on disk and appears as a `recovery_required` item instead of being silently deleted. Missing screenshot bytes produce an unavailable preview and a 404 asset response while the timeline event and any analysis remain visible.
 
+Successful live translation enriches the matching transcript event by `segment_id` before the companion broadcasts the translation side channel. The atomic update preserves event ID, sequence, provenance, original text, source attribution, and meeting timing, so live state and history replay converge without a duplicate transcript event. Provider failure or a missing transcript leaves the original evidence unchanged.
+
 ### Legacy migration
 
 When `desktop-sessions.json` exists, the repository migrates each legacy entry on demand into a version 2 record. Existing version 2 files win, and the legacy source file is never removed or modified. Legacy transcript and summary data are retained with migration provenance. Records without an end time or summary become `incomplete` rather than being discarded.
@@ -110,9 +112,13 @@ No cloud transcription backend was added with the recording-stall fix. The packa
 
 ## Suggested-question freshness
 
-`猜你想问` refresh is event-driven after meaningful transcript, screenshot analysis, summary, task, and completed-answer context. Swift applies a 350 millisecond debounce, deduplicates semantic context tokens, increments a meeting-scoped context revision, and cancels any pending debounce before requesting the next generation. Each request includes a generation UUID and revision.
+`猜你想问` refresh is event-driven after meaningful transcript, screenshot analysis, summary, task, and completed-answer context. Swift applies a 350 millisecond debounce, deduplicates semantic context tokens, increments a meeting-scoped context revision, and cancels only pending debounce work before requesting the next generation. Each request includes a generation UUID and revision.
 
-The companion cancels the prior in-flight model task for that meeting and checks the latest generation before broadcasting or persisting a result. Swift performs the same generation and revision check before reducing an event, so an older response cannot replace newer suggestions. Only exactly three unique non-empty questions are accepted atomically. Loading, cancellation, empty or partial results, transient failure, and view refresh never erase the last accepted set. Accepted suggestions are version 2 timeline events and restore with their historical meeting.
+Swift permits one suggestion generation in flight. New context that arrives during that request coalesces into the newest pending revision without cancelling useful model work; after completion, at most one debounced follow-up starts for that revision. A successful in-flight set can become visible while newer context waits, but once a replacement generation starts, its generation ID prevents the older response from winning. The companion retains its last-request protection for independently concurrent clients. Only exactly three unique non-empty questions are accepted atomically. Loading, cancellation, empty or partial results, transient failure, and view refresh never erase the last accepted set. Accepted suggestions are version 2 timeline events and restore with their historical meeting.
+
+## Compact recording island
+
+The recording island uses a 460 by 54 point compact live surface with a fixed 32 point control rail and one subtitle row. `MeetingState.islandCaption` pairs the latest final transcript with its translation; an active partial transcript intentionally has no translation so the prior sentence is never mislabeled. Short captions remain leading and still. Overflowing original and translated text uses one measured, horizontally looping ticker with a restrained separator, edge fades, and a combined accessibility label. The ticker does not accept pointer input, while workspace, pause or resume, and quick-ask anchors remain fixed across compact, hover, and answering presentations.
 
 ## Workspace projection and Markdown
 
@@ -173,6 +179,8 @@ For deterministic UI inspection without capture permissions or model credentials
 ```bash
 cd desktop-macos
 PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
+PROMPTMEET_UI_PREVIEW=live swift run PromptMeet
+PROMPTMEET_UI_PREVIEW=paused swift run PromptMeet
 ```
 
 The release package check in `scripts/check-macos-package-inputs.sh` fails early when the desktop requirements, Info.plist, or third-party notices are absent.

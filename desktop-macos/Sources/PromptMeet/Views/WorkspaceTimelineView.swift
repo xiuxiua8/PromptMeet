@@ -166,7 +166,11 @@ extension WorkspaceView {
             ? WorkspaceProjection.transcriptBlocks(store.state.displayedTranscript)
             : []
         return VStack(alignment: .leading, spacing: 0) {
-            timelineHeader(projection)
+            timelineHeader(
+                inputCount: projection.visibleInputCount(
+                    fallbackTranscriptLines: store.state.displayedTranscript
+                )
+            )
             hairline
             timelineScrollView(projection, legacyBlocks: legacyBlocks)
         }
@@ -181,11 +185,11 @@ extension WorkspaceView {
         return "\(tail):\(store.state.activeTranscript)"
     }
 
-    func timelineHeader(_ projection: WorkspaceProjection) -> some View {
+    func timelineHeader(inputCount: Int) -> some View {
         HStack(spacing: 9) {
             Text("会议记录")
                 .font(.system(size: 12, weight: .semibold))
-            Text("\(projection.items.count) 条输入")
+            Text("\(inputCount) 条输入")
                 .font(.system(size: 9, weight: .medium, design: .rounded))
                 .foregroundStyle(VisualTokens.tertiaryText)
             Spacer()

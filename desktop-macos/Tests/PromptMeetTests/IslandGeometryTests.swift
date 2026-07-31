@@ -233,4 +233,16 @@ final class IslandGeometryTests: XCTestCase {
         XCTAssertLessThan(offset, 0)
         XCTAssertGreaterThan(offset, -(420 + SubtitleTickerMetrics.loopGap))
     }
+
+    func testCaptionChangeRestartsTickerWithoutDiscardingMeasuredWidth() {
+        let start = Date(timeIntervalSince1970: 100)
+        let restart = Date(timeIntervalSince1970: 200)
+        var state = SubtitleTickerState(cycleStartedAt: start)
+        state.updateContentWidth(640)
+
+        state.restartCycle(at: restart)
+
+        XCTAssertEqual(state.contentWidth, 640)
+        XCTAssertEqual(state.cycleStartedAt, restart)
+    }
 }

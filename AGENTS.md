@@ -78,6 +78,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 
 - API keys live only in macOS Keychain (`com.promptmeet.desktop`) and process environment. Never in logs, responses, serialized state, or WebSocket payloads.
 - Version 2 meeting records use atomic sibling-file writes. Malformed records are kept as `recovery_required`; legacy `desktop-sessions.json` is migrated on read, never deleted.
+- Successful translation atomically enriches the matching transcript event before live broadcast, preserving its identity, original evidence, attribution, and meeting timing without appending a duplicate.
 - Meeting completion persists a deterministic meeting-scoped title fallback before optional AI refinement. Title generation never delays completion, and untitled historical records keep a stable display fallback without being rewritten.
 - Context assembly is per-question with a budget (default 8k tokens, 2k reserved for answer). Prompts use separate system, developer, and user roles.
 - DeepSeek selections default to text-only capability. When selected context contains screenshot pixels but a workflow is not configured for vision, the prompt and answer metadata disclose the degradation truthfully.
@@ -90,7 +91,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Disabling local microphone capture excludes that source before permission or engine startup and affects only future capture.
 - Recording pause keeps the meeting active and its context available. Resume is transactional across the companion and native capture, and stop works while paused.
 - Window selection only retains a screenshot target. Screenshot capture never opens the picker and repeated captures reuse the current valid target.
-- Suggested-question generations are meeting-scoped, revisioned, cancellable, and durable. A stale generation must never overwrite newer or historical suggestions.
+- Suggested-question generations are meeting-scoped, revisioned, and durable. One useful request remains in flight while newer context coalesces into one follow-up; a stale replaced generation must never overwrite newer or historical suggestions.
 - Suggested questions replace atomically only with exactly three unique non-empty choices. Failure, cancellation, loading, or partial output never clears the last good set.
 - Summary and task automation uses pause-aware active recording milestones, skips unchanged input, and stores append-only source coverage revisions.
 - AI answers, summaries, decisions, key points, and structured tasks share the native Markdown renderer. Unsafe links remain inert, streaming delimiters stay stable, and structured tasks render as accessible checklists.

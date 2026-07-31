@@ -129,6 +129,10 @@ struct WorkspaceProjection: Equatable, Sendable {
 
     var isEmpty: Bool { items.isEmpty && conversation.isEmpty }
 
+    func visibleInputCount(fallbackTranscriptLines: [TranscriptLine]) -> Int {
+        items.isEmpty ? Self.transcriptBlocks(fallbackTranscriptLines).count : items.count
+    }
+
     init(meeting: StoredMeeting?) {
         self.init(
             events: meeting?.timeline ?? [],
