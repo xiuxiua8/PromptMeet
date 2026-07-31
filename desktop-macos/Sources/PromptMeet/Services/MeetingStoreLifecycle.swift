@@ -110,6 +110,10 @@ extension MeetingStore {
     }
 
     func endMeetingNow() async {
+        screenshotController.cancelSelection()
+        if state.screenshotOperation == .selecting {
+            state.screenshotOperation = .idle
+        }
         state.recordingActivity = .stopping
         automationScheduler?.stop(at: now())
         automationClockTask?.cancel()

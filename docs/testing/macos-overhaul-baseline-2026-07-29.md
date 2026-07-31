@@ -127,3 +127,41 @@ The packaged app was launched, the workspace opened, the native picker opened an
 ## Protected UI limitation
 
 ScreenCaptureKit's system picker surface was excluded from screenshots and not exposed in the PromptMeet accessibility tree. The real presentation lifecycle, disabled/enabled app controls, pointer selection, and pointer cancellation were verified. Thumbnail geometry inside the protected picker could not be inspected pixel-for-pixel, and this report does not present preview-mode geometry as equivalent evidence.
+
+## Final signed-build follow-up
+
+Date: 2026-07-31
+
+Build under test: signed packaged app from `c8f13c4` plus the final uncommitted integration fixes in the isolated task worktree.
+
+### Idle workspace hides the effective microphone choice
+
+- Expected: before capture begins, the workspace visibly states whether the next meeting will include the local microphone.
+- Observed: the persisted opt-out was enforced at runtime, but the idle capture strip showed only `我 · 未启动` and `会议 · 未启动`.
+- Repeatability: 2 of 2 idle workspace launches, including a real meeting where system audio continued and the microphone stayed unstarted without a permission prompt.
+- Exact setup: signed packaged app, persisted local-microphone opt-out, companion healthy, no active meeting.
+- Initiating trigger: open the workspace before starting a meeting.
+- Masking condition: after capture starts, live source badges reveal which sources actually started.
+- Visible symptom: the user cannot confirm the saved choice at the decision point before spending audio and AI resources.
+- Proven path: `MeetingStore.nextMeetingCaptureDescription` already returned the exact truthful policy and the capture request received `includeLocalMicrophone = false`.
+- History comparison: the typed preference and start-path routing were implemented, but the description was not consumed by any view.
+- Smallest counterfactual: replace the two generic idle source badges with the existing next-meeting capture description.
+- Disconfirming evidence sought: Settings already displayed the preference truthfully, confirming the problem was workspace projection rather than persistence.
+- Regression proof: `WorkspaceLayoutTests.testIdleWorkspaceShowsTheEffectiveNextMeetingMicrophoneChoice` failed before the view change and passes after it.
+
+### Ending a meeting leaves an active picker stuck
+
+- Expected: ending or quitting while window selection is active dismisses the picker, returns the operation to idle, and permits a later selection.
+- Observed: the meeting stored successfully, but `正在选择窗口` remained visible and both `选择窗口` and `截图` stayed disabled.
+- Repeatability: 1 of 1 real signed-app meeting end while the protected picker was active, plus a deterministic store-level reproduction.
+- Exact setup: live system-audio meeting, microphone opted out, no selected screenshot target, native single-window picker active.
+- Initiating trigger: choose `选择窗口`, then end the meeting while the protected picker still owns the selection lifecycle.
+- Masking condition: quitting and relaunching the process clears the in-memory selection state.
+- Visible symptom: the completed meeting is reusable for Q&A, but window selection remains indefinitely unavailable.
+- Proven path: ordinary system cancellation already returns `screenshotOperation` to idle when its callback arrives.
+- History comparison: `endMeetingNow` stopped audio and persisted the session but did not cancel the independent screenshot continuation.
+- Smallest counterfactual: give the screenshot controller an explicit cancellation path, finish the active picker generation, and reset `.selecting` during meeting end and shutdown.
+- Disconfirming evidence sought: pause, resume, audio stop, storage, suggestions, and transcript durability all completed normally, isolating the defect to picker lifecycle ownership.
+- Regression proof: `MeetingStoreCaptureLifecycleTests.testEndingMeetingCancelsActiveWindowSelectionAndReturnsToReusableIdle` failed with cancel count `0` and operation `selecting`, then passed with a successful second selection.
+
+The system picker remained absent from captured pixels and from the accessibility tree during this follow-up. Computer Use could verify app-side state and real pointer selection, but could not faithfully drive the protected Cancel control; automated Escape directed at PromptMeet is not treated as equivalent manual cancellation proof.

@@ -6,12 +6,14 @@ protocol ScreenshotCaptureControlling: AnyObject {
     var targetState: ScreenshotTargetState { get }
     func selectTarget() async throws -> ScreenshotTargetState
     func captureSelected(sessionID: String) async throws
+    func cancelSelection()
     func openScreenRecordingSettings()
 }
 
 @MainActor
 protocol ScreenshotTargetPicking: AnyObject {
     func pickTarget() async throws -> ScreenshotTargetHandle
+    func cancelSelection()
 }
 
 @MainActor
@@ -149,6 +151,10 @@ final class ScreenCaptureController: ScreenshotCaptureControlling {
         }
     }
 
+    func cancelSelection() {
+        targetPicker.cancelSelection()
+    }
+
     func openScreenRecordingSettings() {
         permission.openSystemSettings()
     }
@@ -181,7 +187,14 @@ final class SystemContentSharingTargetPicker: NSObject, ScreenshotTargetPicking 
             _ = lifecycle.finish(generation: generation)
             throw ScreenshotPickerError.screenRecordingDenied
         }
+        guard lifecycle.activeGeneration == generation else {
+            throw ScreenshotPickerError.cancelled
+        }
         return try await withCheckedThrowingContinuation { continuation in
+            guard lifecycle.activeGeneration == generation else {
+                continuation.resume(throwing: ScreenshotPickerError.cancelled)
+                return
+            }
             self.continuation = continuation
             Task { @MainActor [weak self] in
                 await Task.yield()
@@ -189,6 +202,11 @@ final class SystemContentSharingTargetPicker: NSObject, ScreenshotTargetPicking 
                 self.beginPickerPresentation(generation: generation)
             }
         }
+    }
+
+    func cancelSelection() {
+        guard let generation = lifecycle.activeGeneration else { return }
+        complete(generation: generation, result: .failure(ScreenshotPickerError.cancelled))
     }
 
     func beginPickerPresentation() {

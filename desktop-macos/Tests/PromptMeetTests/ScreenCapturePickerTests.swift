@@ -251,6 +251,8 @@ private final class ScreenshotTargetPickerSpy: ScreenshotTargetPicking {
         pickCount += 1
         return ScreenshotTargetHandle(label: "测试窗口")
     }
+
+    func cancelSelection() {}
 }
 
 @MainActor

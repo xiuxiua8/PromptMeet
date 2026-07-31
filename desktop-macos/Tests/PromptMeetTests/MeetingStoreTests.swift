@@ -276,6 +276,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(store.state.phase, .idle)
         XCTAssertTrue(store.hasMeetingContext)
     }
+
 }
 
 extension MeetingStoreTests {

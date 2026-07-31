@@ -164,6 +164,7 @@ extension MeetingStore {
     }
 
     func shutdown() {
+        screenshotController.cancelSelection()
         suggestionRefreshTask?.cancel()
         suggestionRefreshTask = nil
         automationClockTask?.cancel()
@@ -173,6 +174,7 @@ extension MeetingStore {
     }
 
     func shutdownNow() async {
+        screenshotController.cancelSelection()
         suggestionRefreshTask?.cancel()
         suggestionRefreshTask = nil
         automationClockTask?.cancel()

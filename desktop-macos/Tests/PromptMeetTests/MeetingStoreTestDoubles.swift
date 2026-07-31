@@ -83,6 +83,45 @@ final class ScreenshotCaptureControllerSpy: ScreenshotCaptureControlling {
         guard targetState != .none else { throw ScreenshotPickerError.noSelectedTarget }
     }
 
+    func cancelSelection() {}
+
+    func openScreenRecordingSettings() {}
+}
+
+@MainActor
+final class BlockingScreenshotCaptureControllerSpy: ScreenshotCaptureControlling {
+    private(set) var targetState: ScreenshotTargetState = .none
+    private(set) var cancelSelectionCount = 0
+    private(set) var isSelecting = false
+    private var selectionCount = 0
+    private var continuation: CheckedContinuation<ScreenshotTargetState, Error>?
+
+    func selectTarget() async throws -> ScreenshotTargetState {
+        selectionCount += 1
+        if selectionCount > 1 {
+            targetState = .selected(label: "第二次选择")
+            return targetState
+        }
+        isSelecting = true
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func captureSelected(sessionID: String) async throws {}
+
+    func cancelSelection() {
+        cancelSelectionCount += 1
+        finishSelectionAsCancelled()
+    }
+
+    func finishSelectionAsCancelled() {
+        guard let continuation else { return }
+        self.continuation = nil
+        isSelecting = false
+        continuation.resume(throwing: ScreenshotPickerError.cancelled)
+    }
+
     func openScreenRecordingSettings() {}
 }
 

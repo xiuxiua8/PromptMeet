@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import XCTest
 @testable import PromptMeet
 
@@ -103,5 +104,20 @@ final class WorkspaceLayoutTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(widths.remainingWidth, 0)
             XCTAssertLessThanOrEqual(widths.occupiedWidth, size.width)
         }
+    }
+
+    func testIdleWorkspaceShowsTheEffectiveNextMeetingMicrophoneChoice() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let workspace = try String(
+            contentsOf: packageRoot.appendingPathComponent(
+                "Sources/PromptMeet/Views/WorkspaceView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(workspace.contains("Text(store.nextMeetingCaptureDescription)"))
     }
 }

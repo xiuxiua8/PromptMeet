@@ -188,8 +188,19 @@ extension WorkspaceView {
                     .font(.system(size: 8, weight: .semibold, design: .rounded))
                     .foregroundStyle(VisualTokens.tertiaryText)
             }
-            captureSourceBadge(capturePresentation.microphone)
-            captureSourceBadge(capturePresentation.system)
+            if store.state.phase == .idle {
+                Image(systemName: "mic.badge.plus")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(VisualTokens.sky)
+                Text(store.nextMeetingCaptureDescription)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(VisualTokens.secondaryText)
+                    .lineLimit(1)
+                    .help(store.nextMeetingCaptureDescription)
+            } else {
+                captureSourceBadge(capturePresentation.microphone)
+                captureSourceBadge(capturePresentation.system)
+            }
 
             if capturePresentation.showsMicrophoneSettingsAction {
                 toolbarButton("打开麦克风隐私设置", icon: "gearshape", action: store.openMicrophoneSettings)
