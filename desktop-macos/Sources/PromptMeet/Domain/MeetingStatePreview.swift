@@ -10,7 +10,8 @@ extension MeetingState {
                 TranscriptLine(
                     speaker: "林晨",
                     text: "我们先确认今天的讨论目标。",
-                    source: .microphone
+                    source: .microphone,
+                    translatedText: "First, let us confirm the goal of today's discussion."
                 )
             ]
         )
@@ -37,7 +38,8 @@ extension MeetingState {
                 TranscriptLine(
                     speaker: "林晨",
                     text: "接下来需要确认每个行动项的负责人、截止时间，以及发布前必须完成的风险检查。",
-                    source: .microphone
+                    source: .microphone,
+                    translatedText: "Next, confirm every action owner, deadline, and pre-release risk check."
                 )
             ],
             latestInsight: "团队正在收敛发布范围，当前关键是确定负责人和截止时间。",

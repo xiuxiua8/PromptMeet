@@ -24,7 +24,7 @@ struct IslandControlHitRects: Equatable {
 enum IslandGeometry {
     static let topInset: CGFloat = 0
     static let hostSize = CGSize(width: 1_440, height: 640)
-    static let controlRailWidth: CGFloat = 520
+    static let controlRailWidth: CGFloat = 460
     static let controlHitSize: CGFloat = 32
     static let controlInset: CGFloat = 22
     static let controlSpacing: CGFloat = 4
@@ -45,9 +45,9 @@ enum IslandGeometry {
         case .connecting:
             CGSize(width: compactWidth, height: max(effectiveTopChromeHeight, 42))
         case .live:
-            CGSize(width: compactWidth, height: max(effectiveTopChromeHeight, 62))
+            CGSize(width: compactWidth, height: max(effectiveTopChromeHeight, 54))
         case .answering:
-            CGSize(width: compactWidth, height: max(effectiveTopChromeHeight, 62))
+            CGSize(width: compactWidth, height: max(effectiveTopChromeHeight, 54))
         case .hoverIdle:
             CGSize(width: 760, height: 300)
         case .hoverLive:

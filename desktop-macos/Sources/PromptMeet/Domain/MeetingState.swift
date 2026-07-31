@@ -1,5 +1,10 @@
 import Foundation
 
+struct IslandCaption: Equatable, Sendable {
+    let original: String
+    let translation: String?
+}
+
 enum MeetingAction: Equatable {
     case prepareNewMeeting
     case beginSession
@@ -57,8 +62,21 @@ struct MeetingState: Equatable {
     var timeline: [MeetingTimelineEvent] = []
     var conversationTurns: [ConversationTurn] = []
 
+    var islandCaption: IslandCaption {
+        if !activeTranscript.isEmpty {
+            return IslandCaption(original: activeTranscript, translation: nil)
+        }
+        guard let latest = transcript.last else {
+            return IslandCaption(original: "", translation: nil)
+        }
+        return IslandCaption(
+            original: latest.text,
+            translation: latest.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     var activeCaption: String {
-        activeTranscript.isEmpty ? (transcript.last?.text ?? "") : activeTranscript
+        islandCaption.original
     }
 
     var selectedArchivedMeeting: StoredMeeting? {

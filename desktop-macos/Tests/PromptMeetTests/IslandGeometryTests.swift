@@ -14,15 +14,15 @@ final class IslandGeometryTests: XCTestCase {
         )
     }
 
-    func testLiveIslandGrowsToWrapAStableTwoLineCaption() {
+    func testLiveIslandAddsOneCompactTickerRow() {
         let live = IslandGeometry.size(
             for: .live,
             topChromeWidth: 184,
             topChromeHeight: 32
         )
 
-        XCTAssertEqual(live.width, 520)
-        XCTAssertEqual(live.height, 62)
+        XCTAssertEqual(live.width, 460)
+        XCTAssertEqual(live.height, 54)
     }
 
     func testIslandUsesDetectedTopChromeHeight() {
@@ -199,5 +199,38 @@ final class IslandGeometryTests: XCTestCase {
 
         XCTAssertEqual(state.islandPresentation(isHovered: false), .answering)
         XCTAssertEqual(state.activeCaption, "我们先确认今天的讨论目标。")
+    }
+
+    func testTickerStaysLeadingWhenContentFits() {
+        XCTAssertEqual(
+            SubtitleTickerMetrics.offset(
+                elapsed: 20,
+                contentWidth: 180,
+                viewportWidth: 220
+            ),
+            0
+        )
+    }
+
+    func testTickerWaitsBeforeMovingOverflowingCaption() {
+        XCTAssertEqual(
+            SubtitleTickerMetrics.offset(
+                elapsed: SubtitleTickerMetrics.leadingPause / 2,
+                contentWidth: 420,
+                viewportWidth: 220
+            ),
+            0
+        )
+    }
+
+    func testTickerLoopsWithinOneTravelDistance() {
+        let offset = SubtitleTickerMetrics.offset(
+            elapsed: 5,
+            contentWidth: 420,
+            viewportWidth: 220
+        )
+
+        XCTAssertLessThan(offset, 0)
+        XCTAssertGreaterThan(offset, -(420 + SubtitleTickerMetrics.loopGap))
     }
 }

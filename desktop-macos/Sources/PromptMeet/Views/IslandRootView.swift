@@ -78,14 +78,14 @@ struct IslandRootView: View {
                 .frame(height: 1)
                 .padding(.horizontal, 22)
 
-                RollingCaptionView(
-                    text: compactCaption,
+                SubtitleTickerView(
+                    originalText: compactCaption.original,
+                    translatedText: compactCaption.translation,
                     font: .system(size: 12, weight: .medium),
-                    viewportHeight: 24,
-                    topPadding: 4
+                    viewportHeight: 21
                 )
-                .padding(.horizontal, 22)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -216,11 +216,14 @@ struct IslandRootView: View {
             .shadow(color: color.opacity(0.45), radius: 6)
     }
 
-    private var compactCaption: String {
+    private var compactCaption: IslandCaption {
         if store.state.recordingActivity == .paused {
-            return "录音已暂停，会议内容和问答仍保留"
+            return IslandCaption(original: "录音已暂停，会议内容和问答仍保留", translation: nil)
         }
-        return store.state.activeCaption.isEmpty ? "正在等待第一段转写" : store.state.activeCaption
+        let caption = store.state.islandCaption
+        return caption.original.isEmpty
+            ? IslandCaption(original: "正在等待第一段转写", translation: nil)
+            : caption
     }
 
     private var waveform: some View {

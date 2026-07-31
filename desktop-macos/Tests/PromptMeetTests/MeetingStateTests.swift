@@ -64,6 +64,41 @@ final class MeetingStateTests: XCTestCase {
     XCTAssertEqual(state.transcript.first?.translatedText, "大家好")
   }
 
+  func testIslandCaptionKeepsOriginalAndLatestTranslationTogether() {
+    var state = MeetingState()
+    let id = UUID()
+    state.reduce(.transcriptFinal(TranscriptLine(id: id, speaker: "会议", text: "Hello team")))
+
+    state.reduce(.transcriptTranslated(id: id, text: "大家好"))
+
+    XCTAssertEqual(
+      state.islandCaption,
+      IslandCaption(original: "Hello team", translation: "大家好")
+    )
+  }
+
+  func testPartialIslandCaptionDoesNotMislabelPreviousTranslation() {
+    var state = MeetingState()
+    let id = UUID()
+    state.reduce(
+      .transcriptFinal(
+        TranscriptLine(
+          id: id,
+          speaker: "会议",
+          text: "Completed sentence",
+          translatedText: "已完成的句子"
+        )
+      )
+    )
+
+    state.reduce(.transcriptPartial("New partial sentence"))
+
+    XCTAssertEqual(
+      state.islandCaption,
+      IslandCaption(original: "New partial sentence", translation: nil)
+    )
+  }
+
   func testPartialTranscriptReplacesOnlyTheActiveLine() {
     var state = MeetingState.previewLive
 
