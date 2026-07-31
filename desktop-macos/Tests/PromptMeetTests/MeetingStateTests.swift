@@ -21,6 +21,20 @@ final class MeetingStateTests: XCTestCase {
     XCTAssertNil(state.latestInsight)
   }
 
+  func testSuccessfulHistoryReloadClearsOnlyItsStaleFailureMessage() {
+    var state = MeetingState()
+    state.reduce(.suggestion("历史会议暂时无法读取"))
+
+    state.reduce(.meetingHistoryLoaded([]))
+
+    XCTAssertNil(state.latestInsight)
+
+    state.reduce(.suggestion("发布风险仍待确认"))
+    state.reduce(.meetingHistoryLoaded([]))
+
+    XCTAssertEqual(state.latestInsight, "发布风险仍待确认")
+  }
+
   func testSummaryDoesNotOpenOrReplaceAIReader() {
     var state = MeetingState.previewLive
     let summary = MeetingSummaryContent(

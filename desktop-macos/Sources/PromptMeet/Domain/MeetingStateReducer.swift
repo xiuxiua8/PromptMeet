@@ -235,6 +235,9 @@ extension MeetingState {
         switch action {
         case .meetingHistoryLoaded(let meetings):
             meetingHistory = meetings
+            if latestInsight == Self.historyUnavailableInsight {
+                latestInsight = nil
+            }
             if let selectedArchivedMeetingID,
                !meetings.contains(where: { $0.id == selectedArchivedMeetingID }) {
                 self.selectedArchivedMeetingID = nil

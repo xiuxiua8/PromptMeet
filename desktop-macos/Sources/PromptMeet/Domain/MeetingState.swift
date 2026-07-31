@@ -30,6 +30,8 @@ enum MeetingAction: Equatable {
 }
 
 struct MeetingState: Equatable {
+    static let historyUnavailableInsight = "历史会议暂时无法读取"
+
     var phase: MeetingPhase = .idle
     var recordingActivity: RecordingActivity = .inactive
     var screenshotTarget: ScreenshotTargetState = .none

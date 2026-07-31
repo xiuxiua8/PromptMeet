@@ -164,4 +164,19 @@ Build under test: signed packaged app from `c8f13c4` plus the final uncommitted 
 - Disconfirming evidence sought: pause, resume, audio stop, storage, suggestions, and transcript durability all completed normally, isolating the defect to picker lifecycle ownership.
 - Regression proof: `MeetingStoreCaptureLifecycleTests.testEndingMeetingCancelsActiveWindowSelectionAndReturnsToReusableIdle` failed with cancel count `0` and operation `selecting`, then passed with a successful second selection.
 
+### Successful history retry leaves a stale failure insight
+
+- Expected: once meeting history loads, any earlier transient history-unavailable message disappears without clearing unrelated meeting insight.
+- Observed: the history rail contained real meetings while the AI panel still stated `历史会议暂时无法读取`.
+- Repeatability: 2 of 2 cold signed-app launches where the workspace opened while the companion was still warming.
+- Exact setup: signed packaged app, cold companion process, durable local meeting records, idle workspace.
+- Initiating trigger: the initial history request fails transiently, then a later workspace-triggered request succeeds.
+- Masking condition: opening the history rail proves the records are present, but does not remove the contradictory insight.
+- Visible symptom: the interface simultaneously reports successful history content and a history-read failure.
+- Proven path: `/api/meetings` returned the durable records and the native history list rendered them.
+- History comparison: `meetingHistoryLoaded` replaced the record array but did not reconcile the exact error insight written by the prior request.
+- Smallest counterfactual: successful history loading clears only the canonical history-unavailable insight.
+- Disconfirming evidence sought: a non-history insight must survive the same history refresh.
+- Regression proof: `MeetingStateTests.testSuccessfulHistoryReloadClearsOnlyItsStaleFailureMessage` failed before the reducer change and passes while preserving an unrelated insight.
+
 The system picker remained absent from captured pixels and from the accessibility tree during this follow-up. Computer Use could verify app-side state and real pointer selection, but could not faithfully drive the protected Cancel control; automated Escape directed at PromptMeet is not treated as equivalent manual cancellation proof.

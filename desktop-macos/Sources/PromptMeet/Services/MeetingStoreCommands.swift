@@ -143,7 +143,7 @@ extension MeetingStore {
         do {
             state.reduce(.meetingHistoryLoaded(try await backend.fetchMeetingHistory()))
         } catch {
-            state.reduce(.suggestion("历史会议暂时无法读取"))
+            state.reduce(.suggestion(MeetingState.historyUnavailableInsight))
         }
     }
 
