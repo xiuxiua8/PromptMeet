@@ -31,7 +31,6 @@ struct PCMTranscriptionUpdate: Equatable, Sendable {
 struct PCMTranscriptionSegmenter {
   private let targetSampleRate = 16_000
   private let segmentSampleCount: Int
-  private let minimumFlushSampleCount: Int
   private let previewIntervalSampleCount: Int
   private let minimumPreviewSampleCount: Int
   private var gatesBySource: [NativeAudioSource: SpeechActivityGate] = [:]
@@ -45,12 +44,11 @@ struct PCMTranscriptionSegmenter {
 
   init(
     segmentDuration: TimeInterval = 3,
-    minimumFlushDuration: TimeInterval = 0.5,
+    minimumFlushDuration _: TimeInterval = 0.5,
     previewInterval: TimeInterval = 1.25,
     minimumPreviewDuration: TimeInterval = 1
   ) {
     segmentSampleCount = max(1, Int(segmentDuration * 16_000))
-    minimumFlushSampleCount = max(1, Int(minimumFlushDuration * 16_000))
     previewIntervalSampleCount = max(1, Int(previewInterval * 16_000))
     minimumPreviewSampleCount = max(1, Int(minimumPreviewDuration * 16_000))
   }
@@ -189,7 +187,7 @@ struct PCMTranscriptionSegmenter {
 
   private mutating func finalizeRemainder(for source: NativeAudioSource)
     -> [PCMTranscriptionSegment] {
-    guard let remainder = samplesBySource[source], remainder.count >= minimumFlushSampleCount else {
+    guard let remainder = samplesBySource[source], !remainder.isEmpty else {
       clearOutputBuffer(for: source)
       return []
     }

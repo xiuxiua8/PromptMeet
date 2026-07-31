@@ -76,6 +76,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
   private var pendingJobs: [TranscriptionJob] = []
   private var processingTask: Task<Void, Never>?
   private var inactivityTasks: [NativeAudioSource: Task<Void, Never>] = [:]
+  private var inactivityRevisions: [NativeAudioSource: UInt64] = [:]
   private var activeGeneration: UInt64 = 0
 
   init(
@@ -151,8 +152,10 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     invalidateCurrentWork()
     onPartialTranscript?("")
   }
+}
 
-  private func enqueuePreview(_ segment: PCMTranscriptionSegment) {
+private extension LocalTranscriptionService {
+  func enqueuePreview(_ segment: PCMTranscriptionSegment) {
     pendingJobs.removeAll {
       if case .preview = $0.kind {
         return $0.segment.source == segment.source
@@ -169,9 +172,11 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     beginProcessingIfNeeded()
   }
 
-  private func scheduleInactivityClose(for source: NativeAudioSource) {
+  func scheduleInactivityClose(for source: NativeAudioSource) {
     guard source == .system else { return }
     inactivityTasks[source]?.cancel()
+    inactivityRevisions[source, default: 0] &+= 1
+    let revision = inactivityRevisions[source, default: 0]
     let generation = activeGeneration
     inactivityTasks[source] = Task { [weak self] in
       do {
@@ -179,12 +184,23 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
       } catch {
         return
       }
-      await self?.finishInactiveSource(source, generation: generation)
+      await self?.finishInactiveSource(
+        source,
+        generation: generation,
+        revision: revision
+      )
     }
   }
 
-  private func finishInactiveSource(_ source: NativeAudioSource, generation: UInt64) {
-    guard generation == activeGeneration else { return }
+  func finishInactiveSource(
+    _ source: NativeAudioSource,
+    generation: UInt64,
+    revision: UInt64
+  ) {
+    guard
+      generation == activeGeneration,
+      inactivityRevisions[source] == revision
+    else { return }
     inactivityTasks[source] = nil
     let update = segmenter.finishInactiveSource(source)
     if let signalTransition = update.signalTransition {
@@ -193,7 +209,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     enqueueFinals(update.finalized)
   }
 
-  private func enqueueFinals(_ segments: [PCMTranscriptionSegment]) {
+  func enqueueFinals(_ segments: [PCMTranscriptionSegment]) {
     guard !segments.isEmpty else { return }
     let sources = Set(segments.map(\.source))
     pendingJobs.removeAll {
@@ -213,7 +229,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     beginProcessingIfNeeded()
   }
 
-  private func beginProcessingIfNeeded() {
+  func beginProcessingIfNeeded() {
     guard processingTask == nil, !pendingJobs.isEmpty else { return }
     let generation = activeGeneration
     processingTask = Task { [weak self] in
@@ -221,7 +237,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     }
   }
 
-  private func drainQueue(generation: UInt64) async {
+  func drainQueue(generation: UInt64) async {
     while !Task.isCancelled,
       generation == activeGeneration,
       !pendingJobs.isEmpty {
@@ -273,18 +289,19 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     }
   }
 
-  private func invalidateCurrentWork() {
+  func invalidateCurrentWork() {
     activeGeneration &+= 1
     pendingJobs = []
     for task in inactivityTasks.values {
       task.cancel()
     }
     inactivityTasks = [:]
+    inactivityRevisions = [:]
     processingTask?.cancel()
     processingTask = nil
   }
 
-  private func logDiagnostics(boundary: String) {
+  func logDiagnostics(boundary: String) {
     for source in [NativeAudioSource.microphone, .system] {
       let counters = segmenter.diagnostics(for: source)
       guard counters.analyzedFrames > 0 else { continue }
@@ -301,7 +318,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     }
   }
 
-  private static func containsContent(_ text: String) -> Bool {
+  static func containsContent(_ text: String) -> Bool {
     text.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
   }
 }

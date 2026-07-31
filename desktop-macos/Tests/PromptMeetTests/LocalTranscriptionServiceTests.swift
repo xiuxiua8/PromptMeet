@@ -66,6 +66,38 @@ final class LocalTranscriptionServiceTests: XCTestCase {
     XCTAssertEqual(transcripts.values.map(\.source), [.system])
   }
 
+  func testNewSystemPacketSupersedesEarlierInactivityClose() async throws {
+    let engine = RecordingTranscriptionEngine(response: "continuous system speech")
+    let service = LocalTranscriptionService(
+      engineFactory: FixedTranscriptionEngineFactory(engine: engine),
+      segmentDuration: 8
+    )
+    let transcripts = LocalTranscriptRecorder()
+    try await start(service, transcripts: transcripts)
+
+    await service.consume(
+      PCMTestFixtures.packet(
+        PCMTestFixtures.voicedSpeech(duration: 0.35),
+        source: .system
+      )
+    )
+    try await Task.sleep(for: .milliseconds(500))
+    await service.consume(
+      PCMTestFixtures.packet(
+        PCMTestFixtures.voicedSpeech(duration: 0.35),
+        source: .system,
+        capturedAt: Date(timeIntervalSince1970: 100.5),
+        meetingTime: .milliseconds(1_500)
+      )
+    )
+    try await Task.sleep(for: .milliseconds(150))
+
+    XCTAssertTrue(transcripts.values.isEmpty)
+    await waitUntil { transcripts.values.count == 1 }
+    await service.stop()
+    XCTAssertEqual(transcripts.values.map(\.text), ["continuous system speech"])
+  }
+
   func testPauseInvalidatesInFlightResultAndDoesNotReplayBufferedAudio() async throws {
     let engine = RecordingTranscriptionEngine(
       response: "late text",

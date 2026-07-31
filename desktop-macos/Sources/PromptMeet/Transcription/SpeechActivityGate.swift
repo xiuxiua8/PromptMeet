@@ -102,10 +102,11 @@ struct SpeechActivityGate: Sendable {
     while inputBuffer.count >= frameSampleCount {
       let frameSamples = Array(inputBuffer.prefix(frameSampleCount))
       inputBuffer.removeFirst(frameSampleCount)
+      let correctedSamples = Self.removingDCOffset(from: frameSamples)
       events.append(
         contentsOf: processFrame(
-          samples: frameSamples,
-          analysisSamples: frameSamples
+          samples: correctedSamples,
+          analysisSamples: correctedSamples
         ))
       nextFrameSampleIndex += Int64(frameSampleCount)
     }
@@ -115,10 +116,14 @@ struct SpeechActivityGate: Sendable {
   mutating func finish() -> [SpeechGateEvent] {
     var events: [SpeechGateEvent] = []
     if !inputBuffer.isEmpty {
-      let samples = inputBuffer
-      let padded = samples + [Int16](repeating: 0, count: frameSampleCount - samples.count)
-      events.append(contentsOf: processFrame(samples: samples, analysisSamples: padded))
-      nextFrameSampleIndex += Int64(samples.count)
+      let correctedSamples = Self.removingDCOffset(from: inputBuffer)
+      let padded =
+        correctedSamples
+        + [Int16](repeating: 0, count: frameSampleCount - correctedSamples.count)
+      events.append(
+        contentsOf: processFrame(samples: correctedSamples, analysisSamples: padded)
+      )
+      nextFrameSampleIndex += Int64(correctedSamples.count)
       inputBuffer = []
     }
     if isOpen {
@@ -313,6 +318,14 @@ private extension SpeechActivityGate {
     )
   }
 
+  private static func removingDCOffset(from samples: [Int16]) -> [Int16] {
+    guard !samples.isEmpty else { return [] }
+    let mean = samples.reduce(0.0) { $0 + Double($1) } / Double(samples.count)
+    return samples.map {
+      Int16(clamping: Int((Double($0) - mean).rounded()))
+    }
+  }
+
   private static func features(for samples: [Int16]) -> Features {
     guard !samples.isEmpty else {
       return Features(
@@ -322,8 +335,7 @@ private extension SpeechActivityGate {
         differenceRatio: 0
       )
     }
-    let mean = samples.reduce(0.0) { $0 + Double($1) } / Double(samples.count)
-    let centered = samples.map { Double($0) - mean }
+    let centered = samples.map(Double.init)
     let energy = centered.reduce(0.0) { $0 + $1 * $1 }
     let rms = sqrt(energy / Double(centered.count))
     let levelDecibels = Self.levelDecibels(for: rms)
@@ -341,10 +353,8 @@ private extension SpeechActivityGate {
     rms > 0 ? 20 * log10(rms / Double(Int16.max)) : -120
   }
 
-  static func variationFeatures(
-    centered: [Double],
-    rms: Double
-  ) -> (zeroCrossingRate: Double, differenceRatio: Double) {
+  static func variationFeatures(centered: [Double], rms: Double)
+    -> (zeroCrossingRate: Double, differenceRatio: Double) {
     var zeroCrossings = 0
     var differenceEnergy = 0.0
     if centered.count > 1 {

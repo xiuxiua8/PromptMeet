@@ -157,13 +157,14 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     guard !isPaused else { return }
     isPaused = true
     resumableSources = Set(activeSources.keys)
-    await frameDispatcher?.suspend()
+    frameDispatcher?.beginSuspension()
+    await transcription.pause()
     for (source, capture) in activeSources {
       await capture.stop()
       update(source, state: .paused)
     }
     activeSources = [:]
-    await transcription.pause()
+    await frameDispatcher?.finishSuspension()
   }
 
   func resume() async throws {
@@ -212,13 +213,14 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   }
 
   func stop() async {
-    await frameDispatcher?.suspend()
+    frameDispatcher?.beginSuspension()
+    await transcription.stop()
     for (_, source) in activeSources {
       await source.stop()
     }
+    await frameDispatcher?.finishSuspension()
     activeSources = [:]
     resumableSources = []
-    await transcription.stop()
     pump = nil
     frameDispatcher = nil
     backendSessionID = nil

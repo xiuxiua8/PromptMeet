@@ -253,6 +253,42 @@ final class SpeechActivityGateTests: XCTestCase {
     )
   }
 
+  func testBriefSpeechAtStreamStartIsFinalizedAfterHangover() {
+    var segmenter = PCMTranscriptionSegmenter(segmentDuration: 8)
+    let input =
+      PCMTestFixtures.speechBurst(duration: 0.16)
+      + PCMTestFixtures.silence(duration: 0.4)
+
+    let finalized = segmenter.consume(PCMTestFixtures.packet(input)) + segmenter.flush()
+
+    XCTAssertEqual(
+      finalized.count,
+      1,
+      "diagnostics: \(segmenter.diagnostics(for: .microphone))"
+    )
+    guard let segment = finalized.first else { return }
+    XCTAssertTrue(segment.samples.contains { abs(Int($0)) > 500 })
+  }
+
+  func testSpeechSubmittedToWhisperHasDCOffsetRemoved() {
+    var segmenter = PCMTranscriptionSegmenter(
+      segmentDuration: 8,
+      minimumFlushDuration: 0.1
+    )
+    let offsetSpeech = PCMTestFixtures.voicedSpeech(duration: 0.5).map {
+      Int16(clamping: Int($0) + 1_200)
+    }
+    let input = offsetSpeech + PCMTestFixtures.silence(duration: 0.4)
+
+    let finalized = segmenter.consume(PCMTestFixtures.packet(input)) + segmenter.flush()
+
+    XCTAssertEqual(finalized.count, 1)
+    let mean =
+      finalized[0].samples.reduce(0.0) { $0 + Double($1) }
+      / Double(finalized[0].samples.count)
+    XCTAssertEqual(mean, 0, accuracy: 20)
+  }
+
   func testSpeechTimingStartsAtBoundedPreRollAndRemainsMonotonic() {
     var segmenter = PCMTranscriptionSegmenter(
       segmentDuration: 0.4,

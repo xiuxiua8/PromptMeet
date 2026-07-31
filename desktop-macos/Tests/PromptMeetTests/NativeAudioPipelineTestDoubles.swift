@@ -98,8 +98,38 @@ actor DelayedNativeAudioUploader: NativeAudioUploading {
   }
 }
 
+actor NonCooperativeNativeAudioUploader: NativeAudioUploading {
+  private var started = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var completion: CheckedContinuation<Void, Never>?
+
+  func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
+    started = true
+    for waiter in startWaiters {
+      waiter.resume()
+    }
+    startWaiters = []
+    await withCheckedContinuation { continuation in
+      completion = continuation
+    }
+  }
+
+  func waitUntilStarted() async {
+    if started { return }
+    await withCheckedContinuation { continuation in
+      startWaiters.append(continuation)
+    }
+  }
+
+  func complete() {
+    completion?.resume()
+    completion = nil
+  }
+}
+
 actor LocalTranscriptionServiceSpy: LocalTranscriptionServicing {
   private(set) var pauseCount = 0
+  private(set) var stopCount = 0
   private var signalHandler: (@Sendable (NativeAudioSource, AudioSignalState) -> Void)?
 
   func start(
@@ -113,7 +143,7 @@ actor LocalTranscriptionServiceSpy: LocalTranscriptionServicing {
 
   func consume(_ pcm: CapturedPCM) async {}
   func pause() async { pauseCount += 1 }
-  func stop() async {}
+  func stop() async { stopCount += 1 }
 
   func emitSignal(_ source: NativeAudioSource, _ state: AudioSignalState) {
     signalHandler?(source, state)

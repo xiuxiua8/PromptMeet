@@ -1,7 +1,8 @@
 # Native Audio Preprocessing Validation
 
-This record covers the signed macOS bundle built from checkpoint
-`19bb25d04898bce4461bdf9979df9b245139d96b`. Generated stimuli lived under
+This record covers the contributor tree built from checkpoint
+`19bb25d04898bce4461bdf9979df9b245139d96b`; the exact final commit is recorded
+in the integration handoff and Firstmate status. Generated stimuli lived under
 the ignored `build/audio-reproduction/` directory. No captured audio or model
 file is part of the repository.
 
@@ -48,11 +49,13 @@ feeding the segmenter in tests:
 | Ten seconds of steady white noise | The meeting remained at zero transcript events after the noise ended and after the Whisper observation window. |
 | Normal speech after silence | The packaged Whisper path recognized the controlled phrase and displayed it as the live system-audio transcript. |
 | Missing ScreenCaptureKit tail buffers | The walkthrough exposed that an application can stop producing system-audio buffers immediately after speech. The valid preview then remained unfinalized. A regression reproduced this without a trailing silence packet, failed before the boundary fix, and passed after a source-scoped 600 ms inactivity close applied the configured hangover and submitted one final system transcript. |
-| Pause and meeting end | Pause cleared the unfinalized preview without replay. Stop remained prompt. Automated generation-scoped queue tests confirm late results and inactivity tasks cannot publish after pause or stop. |
+| Pause and meeting end | Pause cleared the unfinalized preview without replay. Stop remained prompt. Automated generation-scoped queue tests confirm late results and inactivity tasks cannot publish after pause or stop. Non-cooperative upload tests confirm transcription is invalidated before network shutdown and cannot delay that boundary. |
 
 The final deterministic suite also covers exact silence, empty input, DC offset,
 near-silence, steady white noise, quiet speech, brief speech across chunk
 boundaries, pre-roll, hangover, overlapping sources, source failure,
 pause/resume, monotonic timing, and packaging entitlements. Diagnostics expose
 only aggregate per-source frame and utterance counters and never audio samples or
-recognized content.
+recognized content. Review regressions also cover speech beginning at sample
+zero, DC removal in the PCM actually submitted to Whisper, and a newer system
+packet superseding an older inactivity timer.

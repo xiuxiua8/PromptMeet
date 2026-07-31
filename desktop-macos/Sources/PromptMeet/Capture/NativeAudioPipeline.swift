@@ -204,9 +204,10 @@ actor NativeAudioPacketPump {
     self.sessionID = sessionID
   }
 
-  func suspend() async {
+  func suspend() {
     isSuspended = true
-    _ = try? await pendingUpload?.value
+    pendingUpload?.cancel()
+    pendingUpload = nil
   }
 
   func resume() {
@@ -229,6 +230,7 @@ actor NativeAudioPacketPump {
       if let previousUpload {
         _ = try? await previousUpload.value
       }
+      try Task.checkCancellation()
       try await uploader.upload(packet, sessionID: sessionID)
     }
     pendingUpload = upload
@@ -272,7 +274,7 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
     }
   }
 
-  func suspend() async {
+  func beginSuspension() {
     let pending = lock.withLock {
       isSuspended = true
       generation &+= 1
@@ -283,9 +285,15 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
     }
     pending.0?.cancel()
     pending.1?.cancel()
-    _ = await pending.0?.result
-    _ = await pending.1?.result
+  }
+
+  func finishSuspension() async {
     await packetPump.suspend()
+  }
+
+  func suspend() async {
+    beginSuspension()
+    await finishSuspension()
   }
 
   func resume() async {
