@@ -514,8 +514,10 @@ class DesktopAgentService:
                 if not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
-                if not data or data == "[DONE]":
+                if not data:
                     continue
+                if data == "[DONE]":
+                    break
                 payload = json.loads(data)
                 choices = payload.get("choices") or []
                 if not choices:

@@ -72,6 +72,8 @@ The configured OpenAI-compatible endpoint receives selected screenshot pixels as
 
 Each question has its own request ID, immutable meeting snapshot, streaming state, and durable answer event. Rapid questions can finish in any order without overwriting one another. Selecting another meeting changes which durable record is assembled, preventing cross-meeting evidence leakage.
 
+OpenAI-compatible SSE terminal markers end provider iteration without waiting for transport EOF. The native WebSocket listener coalesces small answer deltas per request before publishing them to SwiftUI, while an authoritative final answer supersedes any unsent partial tail. Reader sizing measures only compact content and returns the fixed maximum size for answers beyond 600 characters. These bounds keep final-state reduction, window interaction, and immediate follow-up questions responsive during long Markdown answers.
+
 ## Native audio capture and recording activity
 
 `CaptureState.swift` keeps meeting phase separate from recording activity and exposes the microphone and system-audio lifecycle independently. Microphone authorization distinguishes not determined, authorized, denied, restricted, unavailable hardware, and runtime failure. Permission is requested only when the user starts or explicitly retries capture. Denied and restricted states provide a route to the matching System Settings privacy pane.

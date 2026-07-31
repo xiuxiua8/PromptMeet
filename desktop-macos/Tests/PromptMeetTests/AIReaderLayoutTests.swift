@@ -26,6 +26,12 @@ final class AIReaderLayoutTests: XCTestCase {
         XCTAssertEqual(size.height, 620)
     }
 
+    func testMaximumReaderContentSkipsFullDocumentMeasurement() {
+        XCTAssertFalse(
+            AIReaderLayout.shouldMeasureContent(String(repeating: "长回答", count: 201))
+        )
+    }
+
     func testExplicitParagraphsGrowReaderMoreThanFlatTextWithSimilarLength() {
         let flat = AIReaderLayout.targetSize(
             content: String(repeating: "内容", count: 40),

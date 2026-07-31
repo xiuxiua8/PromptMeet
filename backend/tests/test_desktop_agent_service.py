@@ -335,6 +335,41 @@ class FakeAgentClient:
         return FakeAgentStreamResponse(type(self).responses.pop(0))
 
 
+class DoneThenUnexpectedReadResponse(FakeAgentStreamResponse):
+    def __init__(self):
+        super().__init__({})
+
+    async def aiter_lines(self):
+        yield 'data: {"choices":[{"delta":{"content":"bounded chunk"}}]}'
+        yield "data: [DONE]"
+        raise AssertionError("stream read beyond terminal marker")
+
+
+class DoneThenUnexpectedReadClient:
+    def stream(self, *args, **kwargs) -> DoneThenUnexpectedReadResponse:
+        return DoneThenUnexpectedReadResponse()
+
+
+def test_agent_stream_stops_at_done_without_waiting_for_transport_eof() -> None:
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    result = asyncio.run(
+        DesktopAgentService._stream_agent_turn(
+            DoneThenUnexpectedReadClient(),
+            "http://127.0.0.1/v1/chat/completions",
+            {},
+            {},
+            collect,
+        )
+    )
+
+    assert result["content"] == "bounded chunk"
+    assert emitted == [{"data": {"delta": "bounded chunk"}}]
+
+
 class ImageRejectingStreamResponse(FakeAgentStreamResponse):
     def __init__(self, endpoint: str):
         super().__init__({})

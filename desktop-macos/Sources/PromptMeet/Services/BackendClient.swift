@@ -275,6 +275,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
 
     private func listen(onEvent: @escaping @Sendable (BackendEvent) -> Void) async {
         guard let socket else { return }
+        var batcher = BackendEventBatcher()
         while !Task.isCancelled {
             do {
                 let message = try await socket.receive()
@@ -288,9 +289,14 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
                 @unknown default:
                     continue
                 }
-                onEvent(try BackendEvent.decode(text))
+                for event in batcher.consume(try BackendEvent.decode(text)) {
+                    onEvent(event)
+                }
             } catch {
                 if !Task.isCancelled {
+                    for event in batcher.finish() {
+                        onEvent(event)
+                    }
                     onEvent(.failure(error.localizedDescription))
                 }
                 return
