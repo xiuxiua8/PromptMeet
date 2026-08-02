@@ -100,6 +100,23 @@ actor DelayedNativeAudioUploader: NativeAudioUploading {
   }
 }
 
+actor CoalescingNativeAudioUploader: NativeAudioUploading {
+  private(set) var packets: [NativeAudioPacket] = []
+
+  func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
+    packets.append(packet)
+    if packets.count == 1 {
+      try await Task.sleep(for: .milliseconds(80))
+    }
+  }
+}
+
+struct CancellableSlowNativeAudioUploader: NativeAudioUploading {
+  func upload(_ packet: NativeAudioPacket, sessionID: String) async throws {
+    try await Task.sleep(for: .seconds(10))
+  }
+}
+
 actor NonCooperativeNativeAudioUploader: NativeAudioUploading {
   private var started = false
   private var startWaiters: [CheckedContinuation<Void, Never>] = []

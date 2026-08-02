@@ -311,9 +311,17 @@ class MeetingContextBuilder:
         if not summaries:
             return None
         value = "较早内容摘要：" + "；".join(summaries)
-        while value and self.token_estimator(value) > token_limit:
-            value = value[:-1]
-        return value.rstrip("；：") or None
+        if self.token_estimator(value) <= token_limit:
+            return value.rstrip("；：") or None
+        low = 0
+        high = len(value)
+        while low < high:
+            midpoint = (low + high + 1) // 2
+            if self.token_estimator(value[:midpoint]) <= token_limit:
+                low = midpoint
+            else:
+                high = midpoint - 1
+        return value[:low].rstrip("；：") or None
 
     @staticmethod
     def _source_label(event: MeetingEvent) -> str:

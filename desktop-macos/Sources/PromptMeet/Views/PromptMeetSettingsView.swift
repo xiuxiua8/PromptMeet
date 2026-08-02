@@ -9,6 +9,7 @@ enum SettingsInputAppearance {
 }
 
 struct PromptMeetSettingsView: View {
+    @ObservedObject var store: MeetingStore
     var onAIConfigurationChanged: () -> Void = {}
     enum Pane: String, CaseIterable, Identifiable {
         case general = "通用"

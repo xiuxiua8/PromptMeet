@@ -144,6 +144,32 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(store.state.latestInsight, "AI 服务配置已更新")
     }
 
+    func testAIConfigurationReloadDefersThroughLiveAndPausedMeetingUntilEnd() async {
+        let companion = CompanionLauncherSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: NativeAudioCaptureSpy(),
+            companion: companion
+        )
+        await store.startMeetingNow()
+
+        await store.reloadCompanionConfigurationNow()
+        await store.pauseMeetingNow()
+        await store.reloadCompanionConfigurationNow()
+
+        XCTAssertEqual(companion.reloadCount, 0)
+        XCTAssertTrue(store.pendingCompanionConfigurationReload)
+        XCTAssertFalse(store.canDeleteMeetingHistory)
+        XCTAssertEqual(store.state.latestInsight, "AI 服务配置已保存，将在会议结束后应用")
+
+        await store.endMeetingNow()
+
+        XCTAssertEqual(companion.reloadCount, 1)
+        XCTAssertFalse(store.pendingCompanionConfigurationReload)
+        XCTAssertTrue(store.canDeleteMeetingHistory)
+        XCTAssertEqual(store.state.latestInsight, "AI 服务配置已更新")
+    }
+
     func testBackendEventsDriveTranscriptAndReader() async throws {
         let backend = BackendClientSpy()
         let store = MeetingStore(

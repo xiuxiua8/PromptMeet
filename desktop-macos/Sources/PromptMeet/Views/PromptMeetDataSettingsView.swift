@@ -61,9 +61,13 @@ extension PromptMeetSettingsView {
     }
 
     func deleteHistory() {
+        guard store.canDeleteMeetingHistory else {
+            saveStatus = "请先结束正在进行的会议"
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "删除全部本地会议历史？"
-        alert.informativeText = "此操作无法撤销。请先结束正在进行的会议，旧版记录也会一并删除。"
+        alert.informativeText = "此操作无法撤销，旧版记录也会一并删除。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "删除")
         alert.addButton(withTitle: "取消")
@@ -75,6 +79,7 @@ extension PromptMeetSettingsView {
                     try FileManager.default.removeItem(at: url)
                 }
             }
+            store.dispatch(.meetingHistoryLoaded([]))
             saveStatus = "本地会议历史已删除"
         } catch {
             saveStatus = error.localizedDescription

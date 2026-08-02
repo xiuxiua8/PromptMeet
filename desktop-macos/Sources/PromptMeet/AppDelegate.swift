@@ -3,7 +3,7 @@ import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let store = MeetingStore()
+    let store = MeetingStore()
     private var islandController: IslandWindowController?
     private var readerController: AIReaderWindowController?
     private var workspaceController: WorkspaceWindowController?
@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        let settings = SettingsWindowController {
+        let settings = SettingsWindowController(store: store) {
             self.store.reloadCompanionConfiguration()
         }
         let workspace = WorkspaceWindowController(store: store) { settings.show() }

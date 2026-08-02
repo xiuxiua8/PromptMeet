@@ -63,6 +63,8 @@ struct NativeAudioSequencer {
 }
 
 struct NativeAudioUploader: Sendable {
+  static let requestTimeout: TimeInterval = 10
+
   private let environment: BackendEnvironment
   private let session: URLSession
 
@@ -108,6 +110,7 @@ struct NativeAudioUploader: Sendable {
       String(packet.meetingTime.millisecondsValue),
       forHTTPHeaderField: "X-PromptMeet-Meeting-Time-Ms"
     )
+    request.timeoutInterval = requestTimeout
     request.httpBody = packet.payload
     return request
   }
@@ -118,6 +121,10 @@ protocol NativeAudioUploading: Sendable {
 }
 
 extension NativeAudioUploader: NativeAudioUploading {}
+
+enum NativeAudioUploadError: Error, Equatable {
+  case timedOut
+}
 
 struct CapturedPCM: Sendable {
   let source: NativeAudioSource
@@ -191,13 +198,20 @@ extension NativeAudioSourceCapture {
 actor NativeAudioPacketPump {
   private var sequencer = NativeAudioSequencer()
   private let uploader: NativeAudioUploading
+  private let uploadTimeout: Duration
   private var sessionID: String?
-  private var pendingUpload: Task<Void, any Error>?
+  private var uploadInProgress = false
+  private var uploadWaiters: [CheckedContinuation<Void, Never>] = []
   private var isSuspended = false
 
-  init(uploader: NativeAudioUploading, sessionID: String? = nil) {
+  init(
+    uploader: NativeAudioUploading,
+    sessionID: String? = nil,
+    uploadTimeout: Duration = .seconds(10)
+  ) {
     self.uploader = uploader
     self.sessionID = sessionID
+    self.uploadTimeout = uploadTimeout
   }
 
   func bind(sessionID: String) {
@@ -206,8 +220,6 @@ actor NativeAudioPacketPump {
 
   func suspend() {
     isSuspended = true
-    pendingUpload?.cancel()
-    pendingUpload = nil
   }
 
   func resume() {
@@ -216,6 +228,10 @@ actor NativeAudioPacketPump {
 
   func consume(_ pcm: CapturedPCM) async throws {
     guard !isSuspended, let sessionID else { return }
+    await acquireUploadSlot()
+    defer { releaseUploadSlot() }
+    try Task.checkCancellation()
+    guard !isSuspended else { return }
     let packet = sequencer.packet(
       source: pcm.source,
       sampleRate: pcm.sampleRate,
@@ -224,17 +240,37 @@ actor NativeAudioPacketPump {
       meetingTime: pcm.meetingTime,
       payload: pcm.payload
     )
-    let previousUpload = pendingUpload
     let uploader = self.uploader
-    let upload = Task {
-      if let previousUpload {
-        _ = try? await previousUpload.value
+    let uploadTimeout = self.uploadTimeout
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask {
+        try await uploader.upload(packet, sessionID: sessionID)
       }
-      try Task.checkCancellation()
-      try await uploader.upload(packet, sessionID: sessionID)
+      group.addTask {
+        try await Task.sleep(for: uploadTimeout)
+        throw NativeAudioUploadError.timedOut
+      }
+      defer { group.cancelAll() }
+      _ = try await group.next()
     }
-    pendingUpload = upload
-    try await upload.value
+  }
+
+  private func acquireUploadSlot() async {
+    if !uploadInProgress {
+      uploadInProgress = true
+      return
+    }
+    await withCheckedContinuation { continuation in
+      uploadWaiters.append(continuation)
+    }
+  }
+
+  private func releaseUploadSlot() {
+    guard !uploadWaiters.isEmpty else {
+      uploadInProgress = false
+      return
+    }
+    uploadWaiters.removeFirst().resume()
   }
 }
 
@@ -317,7 +353,8 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
   private var uploadBatcher = NativeAudioUploadBatcher()
   private var generation: UInt64 = 0
   private var isSuspended = false
-  private var pendingUploadTask: Task<Void, Never>?
+  private var pendingUploadBySource: [NativeAudioSource: (CapturedPCM, UInt64)] = [:]
+  private var uploadWorkerTask: Task<Void, Never>?
   private var pendingTranscriptionTask: Task<Void, Never>?
 
   init(
@@ -333,11 +370,11 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
       guard !isSuspended else { return }
       let expectedGeneration = generation
       for batch in uploadBatcher.append(pcm) {
-        let uploadPredecessor = pendingUploadTask
-        pendingUploadTask = Task { [weak self] in
-          _ = await uploadPredecessor?.result
-          guard let self, isCurrent(expectedGeneration) else { return }
-          try? await packetPump.consume(batch)
+        pendingUploadBySource[batch.source] = (batch, expectedGeneration)
+        if uploadWorkerTask == nil {
+          uploadWorkerTask = Task { [weak self] in
+            await self?.runUploadWorker()
+          }
         }
       }
       let transcriptionPredecessor = pendingTranscriptionTask
@@ -354,8 +391,9 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
       isSuspended = true
       generation &+= 1
       uploadBatcher.reset()
-      let pending = (pendingUploadTask, pendingTranscriptionTask)
-      pendingUploadTask = nil
+      pendingUploadBySource.removeAll(keepingCapacity: true)
+      let pending = (uploadWorkerTask, pendingTranscriptionTask)
+      uploadWorkerTask = nil
       pendingTranscriptionTask = nil
       return pending
     }
@@ -378,9 +416,31 @@ final class NativeAudioFrameDispatcher: @unchecked Sendable {
   }
 
   func drain() async {
-    let pending = lock.withLock { (pendingUploadTask, pendingTranscriptionTask) }
-    _ = await pending.0?.result
-    _ = await pending.1?.result
+    while let uploadWorker = lock.withLock({ uploadWorkerTask }) {
+      _ = await uploadWorker.result
+    }
+    let transcriptionTask = lock.withLock { pendingTranscriptionTask }
+    _ = await transcriptionTask?.result
+  }
+
+  private func runUploadWorker() async {
+    while !Task.isCancelled, let pending = nextPendingUpload() {
+      guard isCurrent(pending.1) else { continue }
+      try? await packetPump.consume(pending.0)
+    }
+  }
+
+  private func nextPendingUpload() -> (CapturedPCM, UInt64)? {
+    lock.withLock {
+      guard !isSuspended,
+            let source = pendingUploadBySource.min(by: {
+              $0.value.0.capturedAt < $1.value.0.capturedAt
+            })?.key else {
+        uploadWorkerTask = nil
+        return nil
+      }
+      return pendingUploadBySource.removeValue(forKey: source)
+    }
   }
 
   private func isCurrent(_ expectedGeneration: UInt64) -> Bool {

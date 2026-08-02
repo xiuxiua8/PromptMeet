@@ -143,6 +143,7 @@ extension MeetingStore {
         modify(\.activeTranscript, to: "")
         modify(\.audioCapture, to: AudioCaptureSnapshot())
         await loadMeetingHistoryNow()
+        await applyPendingCompanionConfigurationReloadNow()
     }
 
     func pauseMeetingNow() async {

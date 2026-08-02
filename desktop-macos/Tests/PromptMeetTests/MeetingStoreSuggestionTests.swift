@@ -58,6 +58,44 @@ extension MeetingStoreTests {
         XCTAssertEqual(store.state.aiReader.content, "当前风险有两项")
     }
 
+    func testPartialGroundedQuestionsReplaceAtomicallyAndEmptyResultPreservesThem() async throws {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+
+        await store.requestQuestionsNow()
+        let partialRequest = try XCTUnwrap(backend.questionRequests.last)
+        backend.emit(
+            .questions(
+                generationID: partialRequest.generationID,
+                contextRevision: partialRequest.contextRevision,
+                questions: ["谁负责上线？", "何时冻结范围？"]
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(store.state.generatedQuestions, ["谁负责上线？", "何时冻结范围？"])
+        XCTAssertEqual(store.state.suggestionRefresh.phase, .ready)
+
+        await store.requestQuestionsNow()
+        let emptyRequest = try XCTUnwrap(backend.questionRequests.last)
+        backend.emit(
+            .questions(
+                generationID: emptyRequest.generationID,
+                contextRevision: emptyRequest.contextRevision,
+                questions: []
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(store.state.generatedQuestions, ["谁负责上线？", "何时冻结范围？"])
+        XCTAssertEqual(store.state.suggestionRefresh.phase, .ready)
+    }
+
     func testEachFinalTranscriptAutomaticallyRefreshesSuggestedQuestions() async {
         let backend = BackendClientSpy()
         let capture = NativeAudioCaptureSpy()

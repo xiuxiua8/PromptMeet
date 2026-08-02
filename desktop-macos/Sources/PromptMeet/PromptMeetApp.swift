@@ -6,7 +6,7 @@ struct PromptMeetApp: App {
 
     var body: some Scene {
         Settings {
-            PromptMeetSettingsView()
+            PromptMeetSettingsView(store: appDelegate.store)
         }
     }
 }

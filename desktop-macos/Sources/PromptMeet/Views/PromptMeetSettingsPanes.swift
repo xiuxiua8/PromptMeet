@@ -20,6 +20,7 @@ extension PromptMeetSettingsView {
                 Button("导出…", action: exportHistory)
                 Button("删除历史…", action: deleteHistory)
                     .foregroundStyle(VisualTokens.danger)
+                    .disabled(!store.canDeleteMeetingHistory)
             }
         }
     }

@@ -75,6 +75,75 @@ final class NativeAudioPipelineTests: XCTestCase {
     XCTAssertEqual(completedSequences, [0, 1])
   }
 
+  func testAudioPumpBoundsOpenUploadWithExplicitDeadline() async {
+    let pump = NativeAudioPacketPump(
+      uploader: CancellableSlowNativeAudioUploader(),
+      sessionID: "remote-session",
+      uploadTimeout: .milliseconds(10)
+    )
+    let pcm = CapturedPCM(
+      source: .system,
+      sampleRate: 16_000,
+      channels: 1,
+      payload: Data(repeating: 0, count: 32_000)
+    )
+
+    do {
+      try await pump.consume(pcm)
+      XCTFail("Expected upload timeout")
+    } catch {
+      XCTAssertEqual(error as? NativeAudioUploadError, .timedOut)
+    }
+  }
+
+  func testFrameDispatcherCoalescesPendingUploadPerSourceWhileTranscriptionContinues() async throws {
+    let uploader = CoalescingNativeAudioUploader()
+    let transcription = OrderedLocalTranscriptionServiceSpy()
+    let dispatcher = NativeAudioFrameDispatcher(
+      packetPump: NativeAudioPacketPump(
+        uploader: uploader,
+        sessionID: "remote-session"
+      ),
+      transcription: transcription
+    )
+
+    dispatcher.enqueue(
+      CapturedPCM(
+        source: .system,
+        sampleRate: 16_000,
+        channels: 1,
+        meetingTime: .milliseconds(100),
+        payload: Data(repeating: 0, count: 32_000)
+      )
+    )
+    for _ in 0..<100 {
+      if await uploader.packets.count == 1 { break }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    for meetingTime in [200, 300] {
+      dispatcher.enqueue(
+        CapturedPCM(
+          source: .system,
+          sampleRate: 16_000,
+          channels: 1,
+          meetingTime: .milliseconds(meetingTime),
+          payload: Data(repeating: 0, count: 32_000)
+        )
+      )
+    }
+
+    await dispatcher.drain()
+
+    let uploadedPackets = await uploader.packets
+    let uploadedTimes = uploadedPackets.map(\.meetingTime)
+    let transcribedTimes = await transcription.meetingTimes
+    XCTAssertEqual(uploadedTimes, [.milliseconds(100), .milliseconds(300)])
+    XCTAssertEqual(
+      transcribedTimes,
+      [.milliseconds(100), .milliseconds(200), .milliseconds(300)]
+    )
+  }
+
   func testFrameDispatcherPreservesTranscriptionOrderAcrossSlowUpload() async throws {
     let uploader = DelayedNativeAudioUploader()
     let packetPump = NativeAudioPacketPump(uploader: uploader, sessionID: "remote-session")
@@ -189,6 +258,7 @@ final class NativeAudioPipelineTests: XCTestCase {
     XCTAssertEqual(request.value(forHTTPHeaderField: "X-PromptMeet-Sequence"), "4")
     XCTAssertEqual(request.value(forHTTPHeaderField: "X-PromptMeet-Source"), "mixed")
     XCTAssertEqual(request.value(forHTTPHeaderField: "X-PromptMeet-Meeting-Time-Ms"), "1250")
+    XCTAssertEqual(request.timeoutInterval, NativeAudioUploader.requestTimeout)
     XCTAssertEqual(request.httpBody, Data([0, 1]))
   }
 

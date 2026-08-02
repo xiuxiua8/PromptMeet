@@ -95,6 +95,35 @@ def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order()
     ]
 
 
+def test_compression_finds_bounded_prefix_without_character_by_character_rescans() -> None:
+    calls = 0
+
+    def estimator(value: str) -> int:
+        nonlocal calls
+        calls += 1
+        return len(value)
+
+    builder = MeetingContextBuilder(token_estimator=estimator)
+    omitted = [
+        event(
+            index,
+            EventKind.TRANSCRIPT,
+            TranscriptPayload(
+                segment_id=f"segment-{index}",
+                speaker="成员",
+                text="很长的历史内容" * 200,
+            ),
+        )
+        for index in range(1, 30)
+    ]
+
+    compressed = builder._compress(omitted, 80)
+
+    assert compressed is not None
+    assert len(compressed) <= 80
+    assert calls < 30
+
+
 def test_relevant_screenshot_analysis_keeps_its_raw_image_ahead_of_unrelated_evidence() -> (
     None
 ):

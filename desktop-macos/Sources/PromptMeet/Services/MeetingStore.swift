@@ -29,6 +29,7 @@ final class MeetingStore: ObservableObject {
     var automationClockTask: Task<Void, Never>?
     var meetingInputRevision = 0
     var meetingInputTokens: Set<String> = []
+    var pendingCompanionConfigurationReload = false
 
     init(
         backend: BackendClientProtocol = BackendClient(),
@@ -55,6 +56,17 @@ final class MeetingStore: ObservableObject {
     var hasMeetingContext: Bool {
         backendSessionID != nil || uiPreviewMode != nil
     }
+
+    var isMeetingActive: Bool {
+        switch state.phase {
+        case .idle, .failed:
+            return state.recordingActivity != .inactive
+        case .connecting, .live, .stopping:
+            return true
+        }
+    }
+
+    var canDeleteMeetingHistory: Bool { !isMeetingActive }
 
     var nextMeetingCaptureDescription: String {
         meetingPreferences.includeLocalMicrophone

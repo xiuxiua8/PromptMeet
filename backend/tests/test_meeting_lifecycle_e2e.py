@@ -371,6 +371,12 @@ def test_unsuccessful_suggestion_generation_never_overwrites_last_good_set(
     configure(main_service, root, monkeypatch)
     agent = FakeMeetingAgent()
     monkeypatch.setattr(main_service, "desktop_agent_service", agent)
+    generated_payloads = []
+
+    async def capture_generated(session_id, payload):
+        generated_payloads.append(payload)
+
+    monkeypatch.setattr(main_service, "on_questions_generated", capture_generated)
     client = TestClient(main_service.app)
     meeting_id = client.post("/api/sessions").json()["session_id"]
     client.post(
@@ -389,23 +395,38 @@ def test_unsuccessful_suggestion_generation_never_overwrites_last_good_set(
         json={"generation_id": "generation-good", "context_revision": 1},
     )
     assert good.status_code == 200
+    agent.questions = [
+        {"question": "谁负责上线？"},
+        {"question": "何时冻结范围？"},
+    ]
+    partial = client.post(
+        f"/api/sessions/{meeting_id}/generate-questions",
+        json={"generation_id": "generation-partial", "context_revision": 2},
+    )
+    assert partial.status_code == 200
+    assert partial.json()["accepted"] is True
     agent.questions = []
     empty = client.post(
         f"/api/sessions/{meeting_id}/generate-questions",
-        json={"generation_id": "generation-empty", "context_revision": 2},
+        json={"generation_id": "generation-empty", "context_revision": 3},
     )
     assert empty.status_code == 200
+    assert empty.json()["accepted"] is False
 
     record = client.get(f"/api/meetings/{meeting_id}").json()
     suggestion_events = [
         event for event in record["events"] if event["kind"] == "suggestions"
     ]
-    assert len(suggestion_events) == 1
-    assert suggestion_events[0]["payload"]["questions"] == [
+    assert len(suggestion_events) == 2
+    assert suggestion_events[-1]["payload"]["questions"] == [
         "谁负责上线？",
         "何时冻结范围？",
-        "回滚标准是什么？",
     ]
+    assert generated_payloads[-1] == {
+        "questions": [],
+        "generation_id": "generation-empty",
+        "context_revision": 3,
+    }
 
 
 def test_summary_milestones_store_revision_and_source_coverage_without_double_fire(
@@ -486,6 +507,82 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     assert len(summaries[1]["payload"]["source_event_ids"]) == 2
     assert summaries[1]["provenance"]["provider"] == "openai"
     assert summaries[1]["provenance"]["model"] == "summary-model"
+
+
+def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    root = tmp_path / "meeting-data"
+    configure(main_service, root, monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    transcript = client.post(
+        f"/api/sessions/{meeting_id}/native-transcript",
+        json={
+            "id": "6E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "冻结范围",
+            "speaker": "林晨",
+            "source": "microphone",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+    assert transcript.status_code == 200
+
+    async def exercise() -> tuple[list[dict], int]:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingSummaryAgent(FakeMeetingAgent):
+            call_count = 0
+
+            async def summarize_meeting(self, record, source_events):
+                self.call_count += 1
+                started.set()
+                await release.wait()
+                return MeetingSummaryResult(
+                    summary={
+                        "summary_text": "并发摘要",
+                        "tasks": [],
+                        "key_points": ["冻结范围"],
+                        "decisions": [],
+                    },
+                    provider="openai",
+                    model="summary-model",
+                )
+
+        agent = BlockingSummaryAgent()
+        monkeypatch.setattr(main_service, "desktop_agent_service", agent)
+        first = asyncio.create_task(
+            main_service.generate_summary(
+                meeting_id,
+                main_service.SummaryGenerationRequest(trigger="manual"),
+            )
+        )
+        await started.wait()
+        second = asyncio.create_task(
+            main_service.generate_summary(
+                meeting_id,
+                main_service.SummaryGenerationRequest(
+                    trigger="milestone", active_minutes=5
+                ),
+            )
+        )
+        await asyncio.sleep(0)
+        release.set()
+        return list(await asyncio.gather(first, second)), agent.call_count
+
+    responses, call_count = asyncio.run(exercise())
+
+    assert [response["status"] for response in responses] == [
+        "generated",
+        "no_action",
+    ]
+    assert call_count == 1
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+    summaries = [event for event in record["events"] if event["kind"] == "summary"]
+    assert [event["payload"]["revision"] for event in summaries] == [1]
 
 
 def test_summary_generation_accepts_screenshot_only_meeting_input(

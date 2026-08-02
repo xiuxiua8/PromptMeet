@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 import os
@@ -104,6 +105,7 @@ class _DuckDuckGoResultParser(HTMLParser):
 
 class DesktopAgentService:
     MAX_TOOL_ROUNDS = 3
+    STREAM_COMPLETION_TIMEOUT_SECONDS = 120.0
 
     def __init__(
         self,
@@ -502,55 +504,72 @@ class DesktopAgentService:
         headers: dict[str, str],
         request_payload: dict[str, object],
         emit: Callable[[dict], Awaitable[None]],
+        *,
+        completion_timeout: float = STREAM_COMPLETION_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
         content_parts: list[str] = []
         calls_by_index: dict[int, dict[str, object]] = {}
-        async with client.stream(
-            "POST",
-            endpoint,
-            headers=headers,
-            json=request_payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data:
-                    continue
-                if data == "[DONE]":
-                    break
-                payload = json.loads(data)
-                choices = payload.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                content = delta.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-                    await emit({"data": {"delta": content}})
-                for raw_call in delta.get("tool_calls") or []:
-                    index = raw_call.get("index", len(calls_by_index))
-                    if not isinstance(index, int):
+        async with asyncio.timeout(completion_timeout):
+            async with client.stream(
+                "POST",
+                endpoint,
+                headers=headers,
+                json=request_payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
                         continue
-                    call = calls_by_index.setdefault(
-                        index,
-                        {
-                            "id": "",
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        },
-                    )
-                    if raw_call.get("id"):
-                        call["id"] = raw_call["id"]
-                    if raw_call.get("type"):
-                        call["type"] = raw_call["type"]
-                    raw_function = raw_call.get("function") or {}
-                    function = call["function"]
-                    if raw_function.get("name"):
-                        function["name"] = raw_function["name"]
-                    if raw_function.get("arguments"):
-                        function["arguments"] += raw_function["arguments"]
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        break
+                    payload = json.loads(data)
+                    event_type = payload.get("type")
+                    if event_type in {
+                        "response.failed",
+                        "response.cancelled",
+                    }:
+                        raise RuntimeError("AI provider terminated the stream")
+                    if event_type in {
+                        "message_stop",
+                        "response.completed",
+                    }:
+                        break
+                    choices = payload.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        content_parts.append(content)
+                        await emit({"data": {"delta": content}})
+                    for raw_call in delta.get("tool_calls") or []:
+                        index = raw_call.get("index", len(calls_by_index))
+                        if not isinstance(index, int):
+                            continue
+                        call = calls_by_index.setdefault(
+                            index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
+                        if raw_call.get("id"):
+                            call["id"] = raw_call["id"]
+                        if raw_call.get("type"):
+                            call["type"] = raw_call["type"]
+                        raw_function = raw_call.get("function") or {}
+                        function = call["function"]
+                        if raw_function.get("name"):
+                            function["name"] = raw_function["name"]
+                        if raw_function.get("arguments"):
+                            function["arguments"] += raw_function["arguments"]
+                    if choice.get("finish_reason") is not None:
+                        break
 
         message: dict[str, object] = {
             "role": "assistant",
@@ -795,7 +814,7 @@ class DesktopAgentService:
                 continue
             seen.add(normalized)
             unique_questions.append(question)
-        return unique_questions if len(unique_questions) == 3 else []
+        return unique_questions[:3]
 
     def _answer_messages(
         self,
@@ -839,13 +858,14 @@ class DesktopAgentService:
     @staticmethod
     def _question_messages(context: str) -> list[dict[str, str]]:
         system_prompt = (
-            "从实时会议中生成恰好3个最新、具体且适合立即交给AI回答的问题。\n"
+            "从实时会议中生成最多3个最新、具体且适合立即交给AI回答的问题。\n"
             "重点识别：参会者明确提出的问题、大家都没有思路的共同疑问、面试官要求说明的思路、"
             "需要完成的编程任务，以及阻碍讨论继续的知识缺口。优先最近的会议片段；"
             "旧问题只有在仍未解决且仍与当前议题相关时才保留。\n"
             "问题必须基于会议内容，并附上一段连续原文作为 evidence；答案不需要出现在会议记录中，"
             "后续回答器会使用模型知识和联网搜索。优先尚未解决的问题；如果原文没有三个明确疑问，"
             "可围绕原文中的决定、风险和下一步生成澄清问题，但不得编造原文没有的事实。"
+            "证据不足时只返回能够严格引用原文的问题，允许返回1到2项或空数组，不得为凑数放宽依据。"
             "不要生成已经被明确回答的问题，也不要生成泛泛的主题复述。\n"
             "只输出JSON数组，每项格式为"
             '{"question":"可直接交给AI回答的问题","evidence":"会议原文中的连续短句"}。'

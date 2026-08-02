@@ -23,12 +23,31 @@ extension MeetingStore {
     }
 
     func reloadCompanionConfigurationNow() async {
+        guard !isMeetingActive else {
+            pendingCompanionConfigurationReload = true
+            dispatch(.suggestion("AI 服务配置已保存，将在会议结束后应用"))
+            return
+        }
+        pendingCompanionConfigurationReload = true
+        await applyPendingCompanionConfigurationReloadNow()
+    }
+
+    func applyPendingCompanionConfigurationReloadNow() async {
+        guard pendingCompanionConfigurationReload, !isMeetingActive else { return }
+        if await applyCompanionConfigurationReloadNow() {
+            pendingCompanionConfigurationReload = false
+        }
+    }
+
+    private func applyCompanionConfigurationReloadNow() async -> Bool {
         do {
             try await companion.reloadConfiguration()
             dispatch(.companionConnected)
             dispatch(.suggestion("AI 服务配置已更新"))
+            return true
         } catch {
             dispatch(.suggestion(error.localizedDescription))
+            return false
         }
     }
 
@@ -171,6 +190,7 @@ extension MeetingStore {
         suggestionGenerationTask = nil
         pendingSuggestionRevision = nil
         activeSuggestionGenerationID = nil
+        pendingCompanionConfigurationReload = false
         automationClockTask?.cancel()
         automationClockTask = nil
         backend.disconnect()
@@ -185,6 +205,7 @@ extension MeetingStore {
         suggestionGenerationTask = nil
         pendingSuggestionRevision = nil
         activeSuggestionGenerationID = nil
+        pendingCompanionConfigurationReload = false
         automationClockTask?.cancel()
         automationClockTask = nil
         await capture.stop()

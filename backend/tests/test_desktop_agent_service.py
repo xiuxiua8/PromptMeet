@@ -205,6 +205,63 @@ def test_generate_questions_returns_structured_desktop_questions(monkeypatch) ->
     assert FakeClient.last_payload["model"] == "deepseek-chat"
 
 
+def test_generate_questions_keeps_one_or_two_strictly_grounded_results(
+    monkeypatch,
+) -> None:
+    class PartialResponse(FakeResponse):
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "question": "谁负责上线？",
+                                        "evidence": "周岚负责上线",
+                                    },
+                                    {
+                                        "question": "何时冻结？",
+                                        "evidence": "周五冻结范围",
+                                    },
+                                    {
+                                        "question": "无依据？",
+                                        "evidence": "不存在的原文",
+                                    },
+                                ],
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class PartialClient(FakeClient):
+        async def post(self, *args, **kwargs) -> PartialResponse:
+            type(self).last_payload = kwargs["json"]
+            return PartialResponse()
+
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: PartialClient(),
+    )
+    service = DesktopAgentService(environment={"DEEPSEEK_API_KEY": "test-key"})
+    transcript = [
+        type(
+            "Segment",
+            (),
+            {"speaker": "项目", "text": "周岚负责上线，周五冻结范围"},
+        )()
+    ]
+
+    questions = asyncio.run(service.generate_questions(transcript))
+
+    assert questions == [
+        {"question": "谁负责上线？"},
+        {"question": "何时冻结？"},
+    ]
+
+
 def test_question_prompt_captures_unresolved_questions_from_latest_context(
     monkeypatch,
 ) -> None:
@@ -225,7 +282,8 @@ def test_question_prompt_captures_unresolved_questions_from_latest_context(
     assert "共同疑问" in system_prompt
     assert "编程任务" in system_prompt
     assert "答案不需要出现在会议记录中" in system_prompt
-    assert "恰好3个" in system_prompt.replace(" ", "")
+    assert "最多3个" in system_prompt.replace(" ", "")
+    assert "允许返回1到2项或空数组" in system_prompt
     assert '"evidence"' in system_prompt
 
 
@@ -368,6 +426,72 @@ def test_agent_stream_stops_at_done_without_waiting_for_transport_eof() -> None:
 
     assert result["content"] == "bounded chunk"
     assert emitted == [{"data": {"delta": "bounded chunk"}}]
+
+
+class FinishReasonThenUnexpectedReadResponse(FakeAgentStreamResponse):
+    def __init__(self):
+        super().__init__({})
+
+    async def aiter_lines(self):
+        yield 'data: {"choices":[{"delta":{"content":"finished"},"finish_reason":"stop"}]}'
+        raise AssertionError("stream read beyond finish_reason")
+
+
+class FinishReasonThenUnexpectedReadClient:
+    def stream(self, *args, **kwargs) -> FinishReasonThenUnexpectedReadResponse:
+        return FinishReasonThenUnexpectedReadResponse()
+
+
+def test_agent_stream_stops_at_provider_finish_reason() -> None:
+    emitted = []
+
+    async def collect(message: dict) -> None:
+        emitted.append(message)
+
+    result = asyncio.run(
+        DesktopAgentService._stream_agent_turn(
+            FinishReasonThenUnexpectedReadClient(),
+            "http://127.0.0.1/v1/chat/completions",
+            {},
+            {},
+            collect,
+        )
+    )
+
+    assert result["content"] == "finished"
+    assert emitted == [{"data": {"delta": "finished"}}]
+
+
+class KeepaliveStreamResponse(FakeAgentStreamResponse):
+    def __init__(self):
+        super().__init__({})
+
+    async def aiter_lines(self):
+        while True:
+            await asyncio.sleep(0)
+            yield ": keepalive"
+
+
+class KeepaliveStreamClient:
+    def stream(self, *args, **kwargs) -> KeepaliveStreamResponse:
+        return KeepaliveStreamResponse()
+
+
+def test_agent_stream_has_absolute_completion_deadline() -> None:
+    async def collect(message: dict) -> None:
+        pass
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            DesktopAgentService._stream_agent_turn(
+                KeepaliveStreamClient(),
+                "http://127.0.0.1/v1/chat/completions",
+                {},
+                {},
+                collect,
+                completion_timeout=0.01,
+            )
+        )
 
 
 class ImageRejectingStreamResponse(FakeAgentStreamResponse):

@@ -4,9 +4,14 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private(set) var window: NSWindow?
+    private let store: MeetingStore
     private let onAIConfigurationChanged: () -> Void
 
-    init(onAIConfigurationChanged: @escaping () -> Void = {}) {
+    init(
+        store: MeetingStore,
+        onAIConfigurationChanged: @escaping () -> Void = {}
+    ) {
+        self.store = store
         self.onAIConfigurationChanged = onAIConfigurationChanged
     }
 
@@ -25,6 +30,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             created.appearance = NSAppearance(named: .darkAqua)
             created.contentViewController = NSHostingController(
                 rootView: PromptMeetSettingsView(
+                    store: store,
                     onAIConfigurationChanged: onAIConfigurationChanged
                 )
             )

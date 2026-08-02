@@ -132,6 +132,6 @@ enum SuggestedQuestionSet {
                 result.append(trimmed)
             }
         }
-        return normalized.count == 3 ? normalized : nil
+        return (1...3).contains(normalized.count) ? normalized : nil
     }
 }

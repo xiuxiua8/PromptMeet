@@ -10,7 +10,7 @@ final class SettingsWindowControllerTests: XCTestCase {
     }
 
     func testSettingsControllerCreatesReusableNativeWindow() {
-        let controller = SettingsWindowController()
+        let controller = SettingsWindowController(store: MeetingStore())
 
         controller.show()
         let firstWindow = controller.window

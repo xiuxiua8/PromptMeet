@@ -48,7 +48,7 @@ final class MeetingHistoryTests: XCTestCase {
                 + #""meeting_id":"meeting-suggestions","sequence":1,"occurred_at":"2026-07-26T10:00:01Z","#
                 + #""kind":"suggestions","provenance":{"source":"suggestion_service"},"#
                 + #""payload":{"type":"suggestions","generation_id":"22222222-2222-2222-2222-222222222222","#
-                + #""context_revision":2,"questions":["谁负责上线？","何时冻结范围？","回滚标准是什么？"]}},{"#
+                + #""context_revision":2,"questions":["谁负责上线？","何时冻结范围？"]}},{"#
                 + #""event_id":"event-2","meeting_id":"meeting-suggestions","sequence":2,"#
                 + #""occurred_at":"2026-07-26T10:00:02Z","kind":"suggestions","#
                 + #""provenance":{"source":"suggestion_service"},"payload":{"type":"suggestions","#
@@ -59,7 +59,7 @@ final class MeetingHistoryTests: XCTestCase {
 
         let meeting = try XCTUnwrap(StoredMeeting.parseList(data).first)
 
-        XCTAssertEqual(meeting.suggestions, ["谁负责上线？", "何时冻结范围？", "回滚标准是什么？"])
+        XCTAssertEqual(meeting.suggestions, ["谁负责上线？", "何时冻结范围？"])
     }
 
     func testUntitledVersionTwoRecordKeepsStableDisplayFallbackWithoutChangingSchemaValue() throws {
