@@ -27,7 +27,7 @@ class NativeTranscript(BaseModel):
 
 def build_native_transcript_router(
     session_lookup: Callable[[str], object],
-    dispatch: Callable[[str, dict], Awaitable[None]],
+    dispatch: Callable[[str, dict], Awaitable[bool]],
 ) -> APIRouter:
     router = APIRouter()
 
@@ -39,7 +39,8 @@ def build_native_transcript_router(
         if not session_lookup(session_id):
             raise HTTPException(status_code=404, detail="会话不存在")
         payload = transcript.model_dump(mode="json")
-        await dispatch(session_id, payload)
+        if not await dispatch(session_id, payload):
+            raise HTTPException(status_code=500, detail="转写持久化失败")
         return {"success": True, "id": str(transcript.id)}
 
     return router

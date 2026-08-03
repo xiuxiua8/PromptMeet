@@ -56,6 +56,11 @@ class MeetingIngestionService:
         return record
 
     def transcript(self, meeting_id: str, transcript: dict) -> MeetingEvent:
+        return self.transcript_with_status(meeting_id, transcript)[0]
+
+    def transcript_with_status(
+        self, meeting_id: str, transcript: dict
+    ) -> tuple[MeetingEvent, bool]:
         event = MeetingEvent(
             occurred_at=self._date(transcript.get("timestamp")),
             kind=EventKind.TRANSCRIPT,
@@ -69,7 +74,7 @@ class MeetingIngestionService:
                 meeting_time_ms=transcript.get("meeting_time_ms"),
             ),
         )
-        return self.repository.append(meeting_id, event).events[-1]
+        return self.repository.append_transcript(meeting_id, event)
 
     def translate_transcript(
         self,
@@ -230,6 +235,7 @@ class MeetingIngestionService:
         *,
         revision: int = 1,
         source_event_ids: list[str] | None = None,
+        source_progress: dict[str, int] | None = None,
         source_revision: int = 0,
         trigger: str = "legacy",
         active_minutes: int | None = None,
@@ -251,6 +257,7 @@ class MeetingIngestionService:
                 decisions=list(summary.get("decisions") or []),
                 revision=revision,
                 source_event_ids=source_event_ids or [],
+                source_progress=source_progress or {},
                 source_revision=source_revision,
                 trigger=trigger,
                 active_minutes=active_minutes,

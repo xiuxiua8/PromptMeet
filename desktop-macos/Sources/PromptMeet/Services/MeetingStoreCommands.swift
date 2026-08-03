@@ -215,6 +215,9 @@ extension MeetingStore {
         reconnectTask?.cancel()
         reconnectTask = nil
         meetingGeneration = UUID()
+        transcriptSyncTask?.cancel()
+        transcriptSyncTask = nil
+        transcriptSyncGeneration = nil
         backend.disconnect()
         companion.stopOwnedProcess()
     }
@@ -231,6 +234,9 @@ extension MeetingStore {
         automationClockTask?.cancel()
         automationClockTask = nil
         await cancelCompanionReconnectNow()
+        transcriptSyncTask?.cancel()
+        transcriptSyncTask = nil
+        transcriptSyncGeneration = nil
         await capture.stop()
         backend.disconnect()
         companion.stopOwnedProcess()

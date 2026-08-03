@@ -134,7 +134,9 @@ Assistant answers, generated summaries, key points, decisions, and structured ta
 
 `MeetingAutomationScheduler.swift` uses active recording time, not wall-clock polling. The default cadence fires at 5 minutes, 10 minutes, and every 5 active minutes thereafter. Settings persist off, 3, 5, or 10-minute cadence choices. Pause time does not count, a long suspension advances to only the latest crossed milestone, and each milestone fires at most once. A model request is skipped when no meaningful meeting input revision has changed.
 
-Each accepted generation produces both a structured summary and actionable tasks in one append-only summary event. Summary generation is serialized per meeting and rechecks existing source coverage after the model returns before assigning the next revision. Capture continues while the workspace reports waiting, generating, completed, no-action, failed, and manual retry states.
+Each accepted generation produces both a structured summary and actionable tasks in one append-only summary event. Summary generation is serialized per meeting, carries the complete prior structured revision, and persists `source_progress` character offsets for each evidence chunk before rechecking coverage and assigning the next revision. Oversized events therefore advance across milestones without marking unread tails complete. Capture continues while the workspace reports waiting, generating, completed, no-action, failed, and manual retry states.
+
+Native transcripts are written to a meeting-scoped local outbox before upload. Entries preserve their UUID, source, meeting time, text, and translation target across app or companion outages, replay chronologically only after same-ID rehydration and WebSocket validation, and are removed only after the idempotent transcript endpoint acknowledges persistence.
 
 ## Provider settings and secrets
 

@@ -61,6 +61,37 @@ class MeetingRepository:
             self._write(updated)
             return updated
 
+    def append_transcript(
+        self, meeting_id: str, event: MeetingEvent
+    ) -> tuple[MeetingEvent, bool]:
+        if not isinstance(event.payload, TranscriptPayload):
+            raise ValueError("仅可通过转写幂等接口追加转写事件")
+        with self._lock:
+            record = self.get(meeting_id)
+            if record is None or record.status == MeetingStatus.RECOVERY_REQUIRED:
+                raise MeetingNotFoundError(meeting_id)
+            existing = next(
+                (
+                    item
+                    for item in record.events
+                    if item.kind == EventKind.TRANSCRIPT
+                    and isinstance(item.payload, TranscriptPayload)
+                    and item.payload.segment_id == event.payload.segment_id
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing, False
+            sequence = record.events[-1].sequence + 1 if record.events else 1
+            bound_event = event.model_copy(
+                update={"meeting_id": meeting_id, "sequence": sequence}
+            )
+            updated = record.model_copy(
+                update={"events": [*record.events, bound_event]}
+            )
+            self._write(updated)
+            return bound_event, True
+
     def finish(
         self,
         meeting_id: str,

@@ -92,6 +92,13 @@ extension MeetingStore {
         switch event {
         case .connectionEstablished:
             dispatch(.companionConnected)
+            if let backendSessionID {
+                Task { @MainActor [weak self] in
+                    await self?.synchronizeTranscriptOutboxNow(
+                        sessionID: backendSessionID
+                    )
+                }
+            }
         case .ignored:
             break
         case .meetingEvent, .transcript, .translation:
@@ -213,6 +220,9 @@ extension MeetingStore {
             dispatch(.screenshotInsight(insight))
             scheduleSuggestionRefresh(contextToken: "screenshot-insight:\(insight)")
         case .companionDisconnected(let message):
+            transcriptSyncTask?.cancel()
+            transcriptSyncTask = nil
+            transcriptSyncGeneration = nil
             dispatch(
                 .companionDisconnected(
                     "本地录音继续，AI 服务连接已中断：\(message)。请重新连接 AI 服务"
@@ -239,14 +249,75 @@ extension MeetingStore {
             )
         )
         registerMeetingInput(token: "transcript:\(transcript.id.uuidString.lowercased())")
-        if let backendSessionID {
+        guard let backendSessionID else { return }
+        do {
+            try await transcriptOutbox.enqueue(
+                transcript,
+                meetingID: backendSessionID
+            )
+        } catch {
+            dispatch(.suggestion("本机转写同步队列保存失败：\(error.localizedDescription)"))
+            return
+        }
+        if state.isCompanionConnected {
+            await synchronizeTranscriptOutboxNow(sessionID: backendSessionID)
+        }
+    }
+
+    func synchronizeTranscriptOutboxNow(sessionID: String) async {
+        guard backendSessionID == sessionID, state.isCompanionConnected else { return }
+        if let task = transcriptSyncTask {
+            _ = await task.value
+            return
+        }
+        let generation = UUID()
+        transcriptSyncGeneration = generation
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            return await self.drainTranscriptOutbox(sessionID: sessionID)
+        }
+        transcriptSyncTask = task
+        let succeeded = await task.value
+        guard transcriptSyncGeneration == generation else { return }
+        transcriptSyncTask = nil
+        transcriptSyncGeneration = nil
+        guard succeeded,
+              backendSessionID == sessionID,
+              state.isCompanionConnected,
+              let pending = try? await transcriptOutbox.pending(meetingID: sessionID),
+              !pending.isEmpty else { return }
+        await synchronizeTranscriptOutboxNow(sessionID: sessionID)
+    }
+
+    private func drainTranscriptOutbox(sessionID: String) async -> Bool {
+        while !Task.isCancelled,
+              backendSessionID == sessionID,
+              state.isCompanionConnected {
+            let pending: [LocalTranscript]
             do {
-                try await backend.submitTranscript(transcript, sessionID: backendSessionID)
+                pending = try await transcriptOutbox.pending(meetingID: sessionID)
+            } catch {
+                dispatch(.suggestion("本机转写同步队列读取失败：\(error.localizedDescription)"))
+                return false
+            }
+            guard let transcript = pending.first else { return true }
+            do {
+                try await backend.submitTranscript(transcript, sessionID: sessionID)
+                try await transcriptOutbox.acknowledge(
+                    transcript.id,
+                    meetingID: sessionID
+                )
+                scheduleSuggestionRefresh(
+                    contextToken: "transcript:\(transcript.id.uuidString)"
+                )
+            } catch is CancellationError {
+                return false
             } catch {
                 dispatch(.suggestion("转写已保留在本机，暂未同步到会议服务"))
+                return false
             }
         }
-        scheduleSuggestionRefresh(contextToken: "transcript:\(transcript.id.uuidString)")
+        return false
     }
 
     func scheduleSuggestionRefresh(contextToken: String) {

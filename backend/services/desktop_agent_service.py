@@ -59,6 +59,7 @@ class MeetingSummaryResult:
     model: str
     source_event_ids: list[str]
     source_revision: int
+    source_progress: dict[str, int]
 
 
 class _DuckDuckGoResultParser(HTMLParser):
@@ -624,6 +625,7 @@ class DesktopAgentService:
         self,
         record: MeetingRecord,
         source_events: list,
+        source_progress: dict[str, int] | None = None,
     ) -> MeetingSummaryResult:
         configuration = ProviderConfiguration.from_environment(
             dict(self.environment), purpose="summary"
@@ -638,51 +640,64 @@ class DesktopAgentService:
         context_lines = []
         spent = 0
         covered_events = []
-        previous_summary = next(
+        progress = source_progress or {}
+        advanced_progress: dict[str, int] = {}
+        previous_summary = max(
             (
                 event
                 for event in source_events
                 if isinstance(event.payload, SummaryPayload)
             ),
-            None,
+            key=lambda event: (event.payload.revision, event.sequence),
+            default=None,
         )
         if previous_summary is not None:
-            value = f"此前摘要：{previous_summary.payload.summary_text}"
-            summary_limit = token_limit // 3
-            if estimator(value) > summary_limit:
-                low = 0
-                high = len(value)
-                while low < high:
-                    midpoint = (low + high + 1) // 2
-                    if estimator(value[:midpoint]) <= summary_limit:
-                        low = midpoint
-                    else:
-                        high = midpoint - 1
-                value = value[:low].rstrip()
-            if value:
-                context_lines.append(value)
-                spent += estimator(value)
+            value = self.structured_summary_text(previous_summary.payload)
+            cost = estimator(value)
+            if cost >= token_limit:
+                raise ValueError("此前结构化摘要超过会议摘要上下文预算")
+            context_lines.append(value)
+            spent += cost
         for event in source_events:
             payload = event.payload
             if isinstance(payload, SummaryPayload):
                 continue
-            if isinstance(payload, TranscriptPayload) and payload.text:
-                speaker = payload.speaker
-                line = f"[{event.sequence}] {speaker}：{payload.text}"
-            elif isinstance(payload, ScreenshotAnalysisPayload) and payload.text:
-                line = f"[{event.sequence}] [截图分析结果]：{payload.text}"
-            elif isinstance(payload, ScreenshotPayload):
-                line = (
-                    f"[{event.sequence}] 截图资产 {payload.asset_id}，类型 {payload.mime_type}"
-                )
+            line = self.summary_event_text(event)
+            if not line:
+                continue
+            offset = min(max(0, progress.get(event.event_id, 0)), len(line))
+            if offset >= len(line):
+                continue
+            header = f"证据事件 {event.sequence}，字符 {offset} 起："
+            remaining = line[offset:]
+            available = token_limit - spent
+            if estimator(header) >= available:
+                break
+            if estimator(f"{header}{remaining}") <= available:
+                chunk = remaining
             else:
-                continue
-            cost = estimator(line)
-            if spent + cost > token_limit:
-                continue
-            context_lines.append(line)
-            spent += cost
-            covered_events.append(event)
+                low = 0
+                high = len(remaining)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    if estimator(f"{header}{remaining[:midpoint]}") <= available:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                chunk = remaining[:low]
+            if not chunk:
+                break
+            rendered = f"{header}{chunk}"
+            context_lines.append(rendered)
+            spent += estimator(rendered)
+            next_offset = offset + len(chunk)
+            advanced_progress[event.event_id] = next_offset
+            if next_offset == len(line):
+                covered_events.append(event)
+            else:
+                break
+        if not advanced_progress:
+            raise ValueError("没有可在当前预算内推进的会议证据")
         response_content = ""
         try:
             async with httpx.AsyncClient(timeout=90) as client:
@@ -698,6 +713,8 @@ class DesktopAgentService:
                                     "你是会议总结助手。只输出 JSON 对象，字段为 summary_text、tasks、"
                                     "key_points、decisions。tasks 每项包含 task、describe、priority、"
                                     "assignee、deadline、status。没有行动项时 tasks 为空数组，不得编造。"
+                                    "输入中的此前结构化摘要是上一修订的完整状态；保留仍有效的待办、"
+                                    "关键点与决策，并结合新增证据更新。"
                                 ),
                             },
                             {
@@ -743,6 +760,31 @@ class DesktopAgentService:
             source_revision=max(
                 (event.sequence for event in covered_events), default=0
             ),
+            source_progress=advanced_progress,
+        )
+
+    @staticmethod
+    def summary_event_text(event) -> str:
+        payload = event.payload
+        if isinstance(payload, TranscriptPayload) and payload.text:
+            return f"[{event.sequence}] {payload.speaker}：{payload.text}"
+        if isinstance(payload, ScreenshotAnalysisPayload) and payload.text:
+            return f"[{event.sequence}] [截图分析结果]：{payload.text}"
+        if isinstance(payload, ScreenshotPayload):
+            return f"[{event.sequence}] 截图资产 {payload.asset_id}，类型 {payload.mime_type}"
+        return ""
+
+    @staticmethod
+    def structured_summary_text(payload: SummaryPayload) -> str:
+        return "此前结构化摘要：" + json.dumps(
+            {
+                "summary_text": payload.summary_text,
+                "tasks": payload.tasks,
+                "key_points": payload.key_points,
+                "decisions": payload.decisions,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
     async def generate_meeting_title(self, record: MeetingRecord) -> str:

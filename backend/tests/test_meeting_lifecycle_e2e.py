@@ -2,15 +2,29 @@ import asyncio
 import importlib
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from models.meeting_context import EventKind, EvidenceSource, MeetingStatus
-from services.desktop_agent_service import MeetingAnswerResult, MeetingSummaryResult
+from services.desktop_agent_service import (
+    DesktopAgentService,
+    MeetingAnswerResult,
+    MeetingSummaryResult,
+)
 from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
 from services.meeting_repository import MeetingRepository
 from services.desktop_storage import HybridSessionStorage
 
 PNG = b"\x89PNG\r\n\x1a\nPromptMeet screenshot"
+
+
+def full_summary_progress(source_events) -> dict[str, int]:
+    return {
+        event.event_id: len(DesktopAgentService.summary_event_text(event))
+        for event in source_events
+        if event.kind != EventKind.SUMMARY
+    }
 
 
 class FakeMeetingAgent:
@@ -440,7 +454,9 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     class SummaryAgent(FakeMeetingAgent):
         calls = []
 
-        async def summarize_meeting(self, record, source_events):
+        async def summarize_meeting(
+            self, record, source_events, source_progress=None
+        ):
             self.calls.append(list(source_events))
             revision = 1 + len(
                 [event for event in record.events if event.kind == EventKind.SUMMARY]
@@ -448,9 +464,13 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
             return MeetingSummaryResult(
                 summary={
                     "summary_text": f"第 {revision} 版摘要",
-                    "tasks": [{"task": "完成回滚演练", "status": "pending"}],
-                    "key_points": ["冻结范围"],
-                    "decisions": ["周五发布"],
+                    "tasks": (
+                        [{"task": "完成回滚演练", "status": "pending"}]
+                        if revision == 1
+                        else []
+                    ),
+                    "key_points": ["冻结范围"] if revision == 1 else [],
+                    "decisions": ["周五发布"] if revision == 1 else [],
                 },
                 provider="openai",
                 model="summary-model",
@@ -467,6 +487,7 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
                     ),
                     default=0,
                 ),
+                source_progress=full_summary_progress(source_events),
             )
 
     agent = SummaryAgent()
@@ -524,11 +545,70 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     assert len(summaries[1]["payload"]["source_event_ids"]) == 1
     assert summaries[1]["provenance"]["provider"] == "openai"
     assert summaries[1]["provenance"]["model"] == "summary-model"
+    assert summaries[1]["payload"]["tasks"][0]["task"] == "完成回滚演练"
+    assert summaries[1]["payload"]["key_points"] == ["冻结范围"]
+    assert summaries[1]["payload"]["decisions"] == ["周五发布"]
+    assert summaries[1]["payload"]["source_progress"]
     assert [event.kind for event in agent.calls[1]] == [
         EventKind.SUMMARY,
         EventKind.TRANSCRIPT,
     ]
     assert agent.calls[1][1].payload.text == "完成回滚演练"
+
+
+def test_summary_partial_progress_persists_and_advances_without_no_action(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+
+    class ChunkSummaryAgent(FakeMeetingAgent):
+        async def summarize_meeting(
+            self, record, source_events, source_progress=None
+        ):
+            evidence = next(
+                event for event in source_events if event.kind == EventKind.TRANSCRIPT
+            )
+            current = (source_progress or {}).get(evidence.event_id, 0)
+            total = len(DesktopAgentService.summary_event_text(evidence))
+            advanced = min(total, current + 12)
+            return MeetingSummaryResult(
+                summary={
+                    "summary_text": f"已处理到 {advanced}",
+                    "tasks": [],
+                    "key_points": [],
+                    "decisions": [],
+                },
+                provider="openai",
+                model="summary-model",
+                source_event_ids=[evidence.event_id] if advanced == total else [],
+                source_revision=evidence.sequence if advanced == total else 0,
+                source_progress={evidence.event_id: advanced},
+            )
+
+    monkeypatch.setattr(main_service, "desktop_agent_service", ChunkSummaryAgent())
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    transcript = client.post(
+        f"/api/sessions/{meeting_id}/native-transcript",
+        json={
+            "id": "9E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "很长的会议证据" * 20,
+            "speaker": "林晨",
+            "source": "system",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+    assert transcript.status_code == 200
+
+    first = client.post(f"/api/sessions/{meeting_id}/generate-summary").json()
+    second = client.post(f"/api/sessions/{meeting_id}/generate-summary").json()
+
+    assert [first["status"], second["status"]] == ["generated", "generated"]
+    first_progress = next(iter(first["event"]["payload"]["source_progress"].values()))
+    second_progress = next(iter(second["event"]["payload"]["source_progress"].values()))
+    assert second_progress > first_progress > 0
 
 
 def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
@@ -541,7 +621,9 @@ def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
     class ValidatingSummaryAgent(FakeMeetingAgent):
         call_count = 0
 
-        async def summarize_meeting(self, record, source_events):
+        async def summarize_meeting(
+            self, record, source_events, source_progress=None
+        ):
             self.call_count += 1
             evidence = [
                 event for event in source_events if event.kind != EventKind.SUMMARY
@@ -561,6 +643,7 @@ def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
                 model="summary-model",
                 source_event_ids=[event.event_id for event in evidence],
                 source_revision=max((event.sequence for event in evidence), default=0),
+                source_progress=full_summary_progress(source_events),
             )
 
     agent = ValidatingSummaryAgent()
@@ -643,6 +726,59 @@ def test_rehydrate_rejects_missing_and_completed_records(monkeypatch, tmp_path) 
     assert completed.status_code == 409
 
 
+def test_websocket_rejects_session_lost_after_rehydrate(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    main_service.session_manager.remove_session(meeting_id)
+    restored = client.post(
+        f"/api/sessions/{meeting_id}/rehydrate", json={"is_paused": False}
+    )
+    assert restored.status_code == 200
+    main_service.session_manager.remove_session(meeting_id)
+
+    with pytest.raises(WebSocketDisconnect) as captured:
+        with client.websocket_connect(f"/ws/{meeting_id}") as websocket:
+            websocket.receive_json()
+
+    assert captured.value.code == 4404
+
+
+def test_native_transcript_replay_is_idempotent_by_stable_segment_id(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    payload = {
+        "id": "AE2CB506-925E-4A6E-BB68-E5006AB09BDF",
+        "text": "断线期间的系统音频",
+        "speaker": "会议",
+        "source": "system",
+        "timestamp": "2026-07-25T10:00:00+00:00",
+    }
+
+    first = client.post(
+        f"/api/sessions/{meeting_id}/native-transcript", json=payload
+    )
+    replay = client.post(
+        f"/api/sessions/{meeting_id}/native-transcript", json=payload
+    )
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+    session = client.get(f"/api/sessions/{meeting_id}").json()["session"]
+    transcripts = [event for event in record["events"] if event["kind"] == "transcript"]
+
+    assert first.status_code == replay.status_code == 200
+    assert len(transcripts) == 1
+    assert len(session["transcript_segments"]) == 1
+    assert transcripts[0]["payload"]["segment_id"] == payload["id"]
+    assert transcripts[0]["payload"]["source"] == "system"
+
+
 def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
     monkeypatch, tmp_path
 ) -> None:
@@ -671,7 +807,9 @@ def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
         class BlockingSummaryAgent(FakeMeetingAgent):
             call_count = 0
 
-            async def summarize_meeting(self, record, source_events):
+            async def summarize_meeting(
+                self, record, source_events, source_progress=None
+            ):
                 self.call_count += 1
                 started.set()
                 await release.wait()
@@ -697,6 +835,7 @@ def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
                         ),
                         default=0,
                     ),
+                    source_progress=full_summary_progress(source_events),
                 )
 
         agent = BlockingSummaryAgent()
@@ -741,7 +880,9 @@ def test_summary_generation_accepts_screenshot_only_meeting_input(
     configure(main_service, root, monkeypatch)
 
     class SummaryAgent(FakeMeetingAgent):
-        async def summarize_meeting(self, record, source_events):
+        async def summarize_meeting(
+            self, record, source_events, source_progress=None
+        ):
             return MeetingSummaryResult(
                 summary={
                     "summary_text": "截图会议摘要",
@@ -764,6 +905,7 @@ def test_summary_generation_accepts_screenshot_only_meeting_input(
                     ),
                     default=0,
                 ),
+                source_progress=full_summary_progress(source_events),
             )
 
     monkeypatch.setattr(main_service, "desktop_agent_service", SummaryAgent())

@@ -17,6 +17,7 @@ final class MeetingStore: ObservableObject {
     let screenshotController: ScreenshotCaptureControlling
     let suggestionDebounce: Duration
     let meetingPreferences: MeetingPreferences
+    let transcriptOutbox: TranscriptOutboxStoring
     let now: @MainActor () -> Date
     var suggestionDebounceTask: Task<Void, Never>?
     var suggestionGenerationTask: Task<Void, Never>?
@@ -33,6 +34,8 @@ final class MeetingStore: ObservableObject {
     var reconnectTask: Task<Void, Never>?
     var reconnectInProgress = false
     var meetingGeneration = UUID()
+    var transcriptSyncTask: Task<Bool, Never>?
+    var transcriptSyncGeneration: UUID?
 
     init(
         backend: BackendClientProtocol = BackendClient(),
@@ -41,6 +44,7 @@ final class MeetingStore: ObservableObject {
         screenshotController: ScreenshotCaptureControlling = ScreenCaptureController(),
         suggestionDebounce: Duration = .milliseconds(350),
         meetingPreferences: MeetingPreferences = MeetingPreferences(),
+        transcriptOutbox: TranscriptOutboxStoring = TranscriptOutboxStore(),
         now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.backend = backend
@@ -49,6 +53,7 @@ final class MeetingStore: ObservableObject {
         self.screenshotController = screenshotController
         self.suggestionDebounce = suggestionDebounce
         self.meetingPreferences = meetingPreferences
+        self.transcriptOutbox = transcriptOutbox
         self.now = now
     }
 

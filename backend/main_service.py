@@ -437,10 +437,12 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
     )
 
 
-async def process_native_transcript(session_id: str, transcript: dict) -> None:
-    await on_transcript_received(session_id, transcript)
+async def process_native_transcript(session_id: str, transcript: dict) -> bool:
+    inserted = await on_transcript_received(session_id, transcript)
+    if inserted is None:
+        return False
     target = transcript.get("translation_target")
-    if DESKTOP_MODE and desktop_agent_service is not None and target:
+    if inserted and DESKTOP_MODE and desktop_agent_service is not None and target:
         asyncio.create_task(
             translate_native_transcript(
                 session_id,
@@ -449,6 +451,7 @@ async def process_native_transcript(session_id: str, transcript: dict) -> None:
                 target,
             )
         )
+    return True
 
 
 async def translate_native_transcript(
@@ -793,6 +796,80 @@ async def stop_recording(session_id: str):
         return {"success": False, "message": f"录音停止失败: {str(e)}"}
 
 
+def accumulated_summary_progress(
+    summaries: list[MeetingEvent], source_events: list[MeetingEvent]
+) -> dict[str, int]:
+    sources = {event.event_id: event for event in source_events}
+    progress: dict[str, int] = {}
+    for summary_event in sorted(
+        summaries, key=lambda event: (event.payload.revision, event.sequence)
+    ):
+        payload = summary_event.payload
+        if payload.source_progress or payload.trigger == "legacy":
+            for event_id in payload.source_event_ids:
+                event = sources.get(event_id)
+                if event is not None:
+                    progress[event_id] = len(
+                        DesktopAgentService.summary_event_text(event)
+                    )
+        for event_id, offset in payload.source_progress.items():
+            event = sources.get(event_id)
+            if event is None:
+                continue
+            total = len(DesktopAgentService.summary_event_text(event))
+            bounded = min(max(0, offset), total)
+            progress[event_id] = max(progress.get(event_id, 0), bounded)
+    return progress
+
+
+def merge_incremental_summary(
+    session_id: str,
+    raw_summary: dict,
+    previous_summary: SummaryPayload | None,
+) -> MeetingSummary:
+    generated = MeetingSummary(
+        session_id=session_id,
+        summary_text=raw_summary["summary_text"],
+        tasks=[TaskItem(**task) for task in raw_summary.get("tasks", [])],
+        key_points=raw_summary.get("key_points", []),
+        decisions=raw_summary.get("decisions", []),
+        generated_at=datetime.now(),
+    )
+    if previous_summary is None:
+        return generated
+    tasks = list(generated.tasks)
+    task_names = {task.task.strip().casefold() for task in tasks}
+    for value in previous_summary.tasks:
+        try:
+            task = TaskItem(**value)
+        except ValueError:
+            continue
+        identity = task.task.strip().casefold()
+        if task.status == "completed" or identity in task_names:
+            continue
+        tasks.append(task)
+        task_names.add(identity)
+
+    def retained(previous: list[str], current: list[str]) -> list[str]:
+        values = []
+        seen = set()
+        for value in [*previous, *current]:
+            normalized = value.strip().casefold()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            values.append(value)
+        return values
+
+    return generated.model_copy(
+        update={
+            "tasks": tasks,
+            "key_points": retained(previous_summary.key_points, generated.key_points),
+            "decisions": retained(previous_summary.decisions, generated.decisions),
+        }
+    )
+
+
 async def generate_desktop_summary(
     session_id: str,
     session: SessionState,
@@ -817,13 +894,13 @@ async def generate_desktop_summary(
         if event.kind == EventKind.SUMMARY
         and isinstance(event.payload, SummaryPayload)
     ]
-    covered_source_ids = {
-        source_id
-        for event in previous_summaries
-        for source_id in event.payload.source_event_ids
-    }
+    source_by_id = {event.event_id: event for event in source_events}
+    source_progress = accumulated_summary_progress(previous_summaries, source_events)
     uncovered_events = [
-        event for event in source_events if event.event_id not in covered_source_ids
+        event
+        for event in source_events
+        if source_progress.get(event.event_id, 0)
+        < len(DesktopAgentService.summary_event_text(event))
     ]
     if not uncovered_events:
         return {
@@ -841,7 +918,9 @@ async def generate_desktop_summary(
         if latest_previous_summary is not None
         else uncovered_events
     )
-    result = await desktop_agent_service.summarize_meeting(record, summary_inputs)
+    result = await desktop_agent_service.summarize_meeting(
+        record, summary_inputs, source_progress
+    )
     latest_record = meeting_repository.get(session_id)
     if latest_record is None:
         raise HTTPException(status_code=404, detail="会议持久记录不存在")
@@ -851,19 +930,19 @@ async def generate_desktop_summary(
         if event.kind == EventKind.SUMMARY
         and isinstance(event.payload, SummaryPayload)
     ]
-    latest_covered_ids = {
-        source_id
-        for event in latest_summaries
-        for source_id in event.payload.source_event_ids
-    }
-    result_source_ids = set(result.source_event_ids)
-    covered_events = [
-        event
-        for event in uncovered_events
-        if event.event_id in result_source_ids
-        and event.event_id not in latest_covered_ids
-    ]
-    if not covered_events:
+    latest_progress = accumulated_summary_progress(latest_summaries, source_events)
+    advanced_progress: dict[str, int] = {}
+    for event_id, proposed in result.source_progress.items():
+        event = source_by_id.get(event_id)
+        if event is None or not isinstance(proposed, int) or isinstance(proposed, bool):
+            raise ValueError("摘要服务返回了无效的证据进度")
+        total = len(DesktopAgentService.summary_event_text(event))
+        current = latest_progress.get(event_id, 0)
+        if proposed > total:
+            raise ValueError("摘要服务返回的证据进度超过原始内容")
+        if proposed > current:
+            advanced_progress[event_id] = proposed
+    if not advanced_progress:
         return {
             "success": True,
             "status": "no_action",
@@ -876,14 +955,23 @@ async def generate_desktop_summary(
         )
         + 1
     )
-    raw_summary = result.summary
-    summary = MeetingSummary(
-        session_id=session_id,
-        summary_text=raw_summary["summary_text"],
-        tasks=[TaskItem(**task) for task in raw_summary.get("tasks", [])],
-        key_points=raw_summary.get("key_points", []),
-        decisions=raw_summary.get("decisions", []),
-        generated_at=datetime.now(),
+    completed_event_ids = [
+        event.event_id
+        for event in source_events
+        if advanced_progress.get(event.event_id)
+        == len(DesktopAgentService.summary_event_text(event))
+    ]
+    if set(result.source_event_ids) != set(completed_event_ids):
+        raise ValueError("摘要服务返回的完成证据与进度不一致")
+    latest_previous_summary = max(
+        latest_summaries,
+        key=lambda event: (event.payload.revision, event.sequence),
+        default=None,
+    )
+    summary = merge_incremental_summary(
+        session_id,
+        result.summary,
+        latest_previous_summary.payload if latest_previous_summary else None,
     )
     summary_data = {
         "summary_text": summary.summary_text,
@@ -891,12 +979,22 @@ async def generate_desktop_summary(
         "key_points": summary.key_points,
         "decisions": summary.decisions,
     }
-    source_revision = max(event.sequence for event in covered_events)
+    combined_progress = {**latest_progress, **advanced_progress}
+    source_revision = max(
+        (
+            event.sequence
+            for event in source_events
+            if combined_progress.get(event.event_id, 0)
+            == len(DesktopAgentService.summary_event_text(event))
+        ),
+        default=0,
+    )
     timeline_event = meeting_ingestion.summary(
         session_id,
         summary_data,
         revision=revision,
-        source_event_ids=[event.event_id for event in covered_events],
+        source_event_ids=completed_event_ids,
+        source_progress=advanced_progress,
         source_revision=source_revision,
         trigger=request.trigger if request else "manual",
         active_minutes=request.active_minutes if request else None,
@@ -1311,7 +1409,14 @@ async def ask_meeting_question(meeting_id: str, request: MeetingQuestionRequest)
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket连接端点"""
+    if session_manager.get_session(session_id) is None:
+        await websocket.close(code=4404, reason="会话不存在")
+        return
     await websocket_manager.connect(websocket, session_id)
+    if session_manager.get_session(session_id) is None:
+        websocket_manager.disconnect(websocket, session_id)
+        await websocket.close(code=4404, reason="会话不存在")
+        return
 
     try:
         logger.info(f"WebSocket 连接建立: session={session_id}")
@@ -1563,7 +1668,9 @@ async def export_session(session_id: str):
 # ============= IPC 回调处理 =============
 
 
-async def on_transcript_received(session_id: str, transcript_data: dict):
+async def on_transcript_received(
+    session_id: str, transcript_data: dict
+) -> bool | None:
     """收到转录结果的回调"""
     try:
         # 创建转录片段对象
@@ -1578,7 +1685,11 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             source=transcript_data.get("source"),
             meeting_time_ms=transcript_data.get("meeting_time_ms"),
         )
-        timeline_event = meeting_ingestion.transcript(session_id, transcript_data)
+        timeline_event, inserted = meeting_ingestion.transcript_with_status(
+            session_id, transcript_data
+        )
+        if not inserted:
+            return False
 
         # 更新会话状态
         session = session_manager.get_session(session_id)
@@ -1602,9 +1713,11 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             f"转录片段已添加: session={session_id}, text={segment.text[:50]}..."
         )
         await persist_session(session_id)
+        return True
 
     except Exception as e:
         logger.error(f"处理转录结果失败: {e}")
+        return None
 
 
 async def on_summary_generated(session_id: str, summary_data: dict):

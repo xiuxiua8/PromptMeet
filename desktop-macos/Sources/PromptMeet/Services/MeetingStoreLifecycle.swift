@@ -28,6 +28,9 @@ extension MeetingStore {
         reconnectTask = nil
         reconnectInProgress = false
         meetingGeneration = UUID()
+        transcriptSyncTask?.cancel()
+        transcriptSyncTask = nil
+        transcriptSyncGeneration = nil
         if backendSessionID != nil {
             backend.disconnect()
             backendSessionID = nil
@@ -221,6 +224,9 @@ extension MeetingStore {
 
     func endMeetingNow() async {
         await cancelCompanionReconnectNow()
+        if let backendSessionID, state.isCompanionConnected {
+            await synchronizeTranscriptOutboxNow(sessionID: backendSessionID)
+        }
         screenshotController.cancelSelection()
         if state.screenshotOperation == .selecting {
             modify(\.screenshotOperation, to: .idle)

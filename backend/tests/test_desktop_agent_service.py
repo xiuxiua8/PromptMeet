@@ -202,11 +202,21 @@ def test_summary_runtime_failure_names_workflow_provider_model_without_credentia
     record = MeetingRecord(
         meeting_id="runtime-failure",
         started_at=datetime(2026, 7, 29, tzinfo=UTC),
-        events=[],
+        events=[
+            MeetingEvent(
+                event_id="runtime-source",
+                meeting_id="runtime-failure",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 29, tzinfo=UTC),
+                kind=EventKind.TRANSCRIPT,
+                provenance=EventProvenance(source="test"),
+                payload=TranscriptPayload(segment_id="runtime", text="会议证据"),
+            )
+        ],
     )
 
     with pytest.raises(RuntimeError) as captured:
-        asyncio.run(service.summarize_meeting(record, []))
+        asyncio.run(service.summarize_meeting(record, record.events))
 
     message = str(captured.value)
     assert "summary" in message
@@ -216,7 +226,9 @@ def test_summary_runtime_failure_names_workflow_provider_model_without_credentia
     assert "secret-runtime-key" not in message
 
 
-def test_summary_reports_only_source_events_rendered_within_budget(monkeypatch) -> None:
+def test_summary_chunks_oversized_events_with_monotonic_exact_progress(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
         lambda **kwargs: SummaryClient(),
@@ -235,7 +247,12 @@ def test_summary_reports_only_source_events_rendered_within_budget(monkeypatch) 
         occurred_at=datetime(2026, 7, 29, tzinfo=UTC),
         kind=EventKind.SUMMARY,
         provenance=EventProvenance(source="test"),
-        payload=SummaryPayload(summary_text="此前摘要"),
+        payload=SummaryPayload(
+            summary_text="此前摘要",
+            tasks=[{"task": "完成回滚演练", "status": "pending"}],
+            key_points=["冻结范围"],
+            decisions=["周五发布"],
+        ),
     )
     oversized = MeetingEvent(
         event_id="oversized",
@@ -261,14 +278,29 @@ def test_summary_reports_only_source_events_rendered_within_budget(monkeypatch) 
         events=[prior, oversized, fitting],
     )
 
-    result = asyncio.run(service.summarize_meeting(record, record.events))
+    progress = {}
+    offsets = []
+    completed = set()
+    for _ in range(10):
+        result = asyncio.run(
+            service.summarize_meeting(record, record.events, progress)
+        )
+        assert result.source_progress
+        for event_id, offset in result.source_progress.items():
+            assert offset > progress.get(event_id, 0)
+            progress[event_id] = offset
+            offsets.append((event_id, offset))
+        completed.update(result.source_event_ids)
+        if completed == {"oversized", "fitting"}:
+            break
 
-    assert result.source_event_ids == ["fitting"]
-    assert result.source_revision == 4
+    assert completed == {"oversized", "fitting"}
+    assert [event_id for event_id, _ in offsets[:2]] == ["oversized", "oversized"]
     content = SummaryClient.last_payload["messages"][1]["content"]
-    assert "此前摘要" in content
-    assert "新证据" in content
-    assert "超长内容" not in content
+    assert '"tasks"' in content
+    assert "完成回滚演练" in content
+    assert "冻结范围" in content
+    assert "周五发布" in content
 
 
 def test_generate_questions_returns_structured_desktop_questions(monkeypatch) -> None:

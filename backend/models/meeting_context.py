@@ -131,6 +131,7 @@ class SummaryPayload(BaseModel):
     derived: bool = False
     revision: int = Field(default=1, ge=1)
     source_event_ids: list[str] = Field(default_factory=list)
+    source_progress: dict[str, int] = Field(default_factory=dict)
     source_revision: int = Field(default=0, ge=0)
     trigger: Literal["manual", "milestone", "legacy"] = "legacy"
     active_minutes: int | None = Field(default=None, ge=0)

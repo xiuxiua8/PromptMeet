@@ -190,6 +190,7 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var connectedSessionID: String?
     var prompts: [Prompt] = []
     var submittedTranscripts: [LocalTranscript] = []
+    var transcriptSubmissionError: (any Error)?
     var disconnectCount = 0
     var history: [StoredMeeting] = []
     var performDelay: Duration?
@@ -284,6 +285,9 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
 
     func submitTranscript(_ transcript: LocalTranscript, sessionID: String) async throws {
         await MainActor.run { submittedTranscripts.append(transcript) }
+        if let error = transcriptSubmissionError {
+            throw error
+        }
     }
 
     func fetchMeetingHistory() async throws -> [StoredMeeting] {
