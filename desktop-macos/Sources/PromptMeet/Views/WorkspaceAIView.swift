@@ -228,8 +228,8 @@ extension WorkspaceView {
             .foregroundStyle(VisualTokens.sky)
             .padding(.bottom, 8)
 
-            if store.state.displayedGeneratedQuestions.count == 3 {
-                ForEach(store.state.displayedGeneratedQuestions, id: \.self) { question in
+            if !visibleSuggestionQuestions.isEmpty {
+                ForEach(visibleSuggestionQuestions, id: \.self) { question in
                     Button {
                         store.setQuickPromptDraft(question)
                     } label: {
@@ -274,6 +274,10 @@ extension WorkspaceView {
                     .padding(.vertical, 8)
             }
         }
+    }
+
+    var visibleSuggestionQuestions: [String] {
+        Array(store.state.displayedGeneratedQuestions.prefix(3))
     }
 
     func aiSection<Content: View>(

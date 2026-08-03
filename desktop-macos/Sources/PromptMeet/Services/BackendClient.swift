@@ -273,6 +273,11 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         socket = nil
     }
 
+    static func connectionFailureEvent(_ error: any Error) -> BackendEvent {
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .companionDisconnected(detail.isEmpty ? "连接已中断" : detail)
+    }
+
     private func listen(onEvent: @escaping @Sendable (BackendEvent) -> Void) async {
         guard let socket else { return }
         var batcher = BackendEventBatcher()
@@ -297,7 +302,7 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
                     for event in batcher.finish() {
                         onEvent(event)
                     }
-                    onEvent(.failure(error.localizedDescription))
+                    onEvent(Self.connectionFailureEvent(error))
                 }
                 return
             }

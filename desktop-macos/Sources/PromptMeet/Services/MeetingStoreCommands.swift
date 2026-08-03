@@ -22,6 +22,10 @@ extension MeetingStore {
         Task { await reloadCompanionConfigurationNow() }
     }
 
+    func reconnectCompanion() {
+        Task { await reconnectCompanionNow() }
+    }
+
     func reloadCompanionConfigurationNow() async {
         guard !isMeetingActive else {
             pendingCompanionConfigurationReload = true
@@ -40,9 +44,14 @@ extension MeetingStore {
     }
 
     private func applyCompanionConfigurationReloadNow() async -> Bool {
+        backend.disconnect()
+        backendSessionID = nil
+        dispatch(.companionDisconnected("AI 服务配置正在应用"))
         do {
             try await companion.reloadConfiguration()
+            try await backend.healthCheck()
             dispatch(.companionConnected)
+            await loadMeetingHistoryNow()
             dispatch(.suggestion("AI 服务配置已更新"))
             return true
         } catch {

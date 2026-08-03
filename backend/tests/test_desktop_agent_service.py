@@ -481,7 +481,7 @@ def test_agent_stream_has_absolute_completion_deadline() -> None:
     async def collect(message: dict) -> None:
         pass
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(RuntimeError) as captured:
         asyncio.run(
             DesktopAgentService._stream_agent_turn(
                 KeepaliveStreamClient(),
@@ -492,6 +492,8 @@ def test_agent_stream_has_absolute_completion_deadline() -> None:
                 completion_timeout=0.01,
             )
         )
+
+    assert str(captured.value) == "AI 服务响应超时，请重试或检查提供方连接"
 
 
 class ImageRejectingStreamResponse(FakeAgentStreamResponse):

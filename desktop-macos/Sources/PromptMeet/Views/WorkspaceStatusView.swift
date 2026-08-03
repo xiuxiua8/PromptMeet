@@ -8,6 +8,11 @@ extension WorkspaceView {
         }
         switch store.state.phase {
         case .live:
+            if !store.state.isCompanionConnected {
+                return store.state.recordingActivity == .paused
+                    ? "录音已暂停，AI 服务等待重连"
+                    : "本地录音中，AI 服务等待重连"
+            }
             switch store.state.recordingActivity {
             case .paused: return "录音已暂停，会议上下文仍保留"
             case .pausing: return "正在暂停录音"
@@ -29,6 +34,7 @@ extension WorkspaceView {
         if isViewingHistory { return VisualTokens.secondaryText }
         switch store.state.phase {
         case .live:
+            if !store.state.isCompanionConnected { return VisualTokens.amber }
             return store.state.recordingActivity == .paused ? VisualTokens.amber : VisualTokens.live
         case .connecting, .stopping:
             return VisualTokens.amber

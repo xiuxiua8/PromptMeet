@@ -210,6 +210,14 @@ extension WorkspaceView {
                 toolbarButton("重试麦克风采集", icon: "arrow.clockwise", action: store.retryMicrophone)
                     .accessibilityLabel("重试麦克风采集")
             }
+            if showsCompanionReconnectAction {
+                toolbarButton(
+                    "重新连接 AI 服务",
+                    icon: "network",
+                    action: store.reconnectCompanion
+                )
+                .accessibilityLabel("重新连接 AI 服务，本地录音将继续")
+            }
 
             Rectangle()
                 .fill(VisualTokens.line)
@@ -262,6 +270,10 @@ extension WorkspaceView {
 
             Spacer(minLength: 0)
         }
+    }
+
+    var showsCompanionReconnectAction: Bool {
+        store.isMeetingActive && !store.state.isCompanionConnected
     }
 
     func captureSourceBadge(_ source: CaptureStatusPresentation.Source) -> some View {

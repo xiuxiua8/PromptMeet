@@ -74,7 +74,7 @@ The configured OpenAI-compatible endpoint receives selected screenshot pixels as
 
 Each question has its own request ID, immutable meeting snapshot, streaming state, and durable answer event. Rapid questions can finish in any order without overwriting one another. Selecting another meeting changes which durable record is assembled, preventing cross-meeting evidence leakage.
 
-OpenAI-compatible SSE terminal markers and an absolute per-turn deadline end provider iteration without waiting for transport EOF. Periodic keepalives cannot extend that deadline. The native WebSocket listener coalesces small answer deltas per request before publishing them to SwiftUI, while an authoritative final answer supersedes any unsent partial tail. Reader sizing measures only compact content and returns the fixed maximum size for answers beyond 600 characters. These bounds keep final-state reduction, window interaction, and immediate follow-up questions responsive during long Markdown answers.
+OpenAI-compatible SSE terminal markers and an absolute per-turn deadline end provider iteration without waiting for transport EOF. Periodic keepalives cannot extend that deadline, and expiration becomes an actionable non-secret error. The native WebSocket listener coalesces small answer deltas per request before publishing them to SwiftUI, while an authoritative final answer supersedes any unsent partial tail. Reader sizing measures only compact content and returns the fixed maximum size for answers beyond 600 characters. These bounds keep final-state reduction, window interaction, and immediate follow-up questions responsive during long Markdown answers.
 
 ## Native audio capture and recording activity
 
@@ -89,6 +89,8 @@ Microphone PCM is always semantic source `microphone` and renders as `我`. Syst
 After the backend meeting is created and connected, the app marks native recording active and prebinds the transport before starting protected native sources. This prevents an active system source from producing unbound chunks while microphone permission is pending. If every native source fails, recording is stopped again and the durable attempt is marked incomplete.
 
 One source may remain active when the other is denied, unavailable, or fails at runtime. Pausing stops every currently active native source, suspends transport, discards unfinished preview audio, and appends a durable lifecycle event while the meeting stays active. Resume first restores the companion state, then restarts previously active sources. If native restart fails, the companion is rolled back to paused. Stop is valid while paused. After app relaunch, prior meeting data remains durable, but protected audio capture is inactive until a new explicit user action.
+
+Companion WebSocket transport or message-decoding failure is a degraded AI-service state, not a capture failure. Native recording or pause state, stop controls, and history-deletion protection remain unchanged. Orphaned AI turns become terminal failures instead of streaming forever, while the workspace exposes an explicit reconnect action.
 
 ### Transcription backend evaluation
 
@@ -142,7 +144,7 @@ OpenAI-compatible and DeepSeek endpoints are shared by their provider workflows.
 
 API keys are added, updated, checked for presence, and removed through macOS Keychain service `com.promptmeet.desktop`. The settings UI uses Keychain metadata to display only configured or not configured. It reads a stored key only for an explicit validation request or companion launch and never renders the value.
 
-Saving AI configuration during an active or paused meeting persists the new preferences and Keychain state but defers companion reload until the meeting ends. Local history deletion is disabled for the same lifecycle window so active record and asset writes cannot be removed underneath capture.
+Saving AI configuration during an active or paused meeting persists the new preferences and Keychain state but defers companion reload until the meeting ends and persistence finishes. The app then disconnects and clears the old backend socket and session identity before restart, verifies companion health, and only then refreshes history. Local history deletion is disabled for the same lifecycle window so active record and asset writes cannot be removed underneath capture.
 
 The OpenAI-compatible boundary accepts HTTPS endpoints and plain HTTP only for exact loopback hosts `localhost`, `127.0.0.1`, and `::1`. DeepSeek endpoints require HTTPS. Both remove trailing slashes and derive exactly `<base>/chat/completions`. Connection validation posts a minimal request with the selected workflow model to that exact endpoint. Validation and runtime configuration errors identify workflow, provider, and model after removing the credential. Routing never falls back to another provider or endpoint. The local companion reads the selected key from Keychain only when constructing its child-process environment. Raw keys are excluded from ordinary app state, serialized meeting data, backend events, descriptions, feedback, and logs.
 

@@ -81,6 +81,38 @@ extension MeetingStore {
         }
     }
 
+    func reconnectCompanionNow() async {
+        guard isMeetingActive else {
+            await prepareCompanionNow()
+            return
+        }
+        guard let remoteSessionID = backendSessionID else {
+            let remoteRecordingStarted = await connectMeetingCompanion()
+            if remoteRecordingStarted,
+               state.recordingActivity == .paused,
+               let backendSessionID {
+                try? await backend.perform(
+                    sessionID: backendSessionID,
+                    action: "pause-native-recording"
+                )
+            }
+            return
+        }
+        dispatch(.companionDisconnected("本地录音继续，正在重新连接 AI 服务"))
+        do {
+            try await companion.ensureRunning()
+            try await backend.healthCheck()
+            try connectBackendEvents(sessionID: remoteSessionID)
+        } catch {
+            backend.disconnect()
+            dispatch(
+                .companionDisconnected(
+                    "本地录音继续，AI 服务重连失败：\(error.localizedDescription)"
+                )
+            )
+        }
+    }
+
     private func startCaptureSession(localSessionID: String) async throws {
         try await capture.start(
             request: NativeAudioCaptureRequest(
@@ -142,8 +174,11 @@ extension MeetingStore {
         modify(\.recordingActivity, to: .inactive)
         modify(\.activeTranscript, to: "")
         modify(\.audioCapture, to: AudioCaptureSnapshot())
-        await loadMeetingHistoryNow()
-        await applyPendingCompanionConfigurationReloadNow()
+        if pendingCompanionConfigurationReload {
+            await applyPendingCompanionConfigurationReloadNow()
+        } else {
+            await loadMeetingHistoryNow()
+        }
     }
 
     func pauseMeetingNow() async {

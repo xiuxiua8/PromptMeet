@@ -3,6 +3,31 @@ import XCTest
 @testable import PromptMeet
 
 final class WorkspaceProjectionTests: XCTestCase {
+    @MainActor
+    func testWorkspaceRendersOneToThreeAcceptedSuggestions() {
+        let suggestions = timelineEvent(
+            sequence: 1,
+            kind: .suggestions,
+            payload: .suggestions(
+                TimelineSuggestionPayload(
+                    generationID: "generation-1",
+                    contextRevision: 1,
+                    questions: ["谁负责上线？", "何时冻结范围？"]
+                )
+            )
+        )
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy()
+        )
+        store.dispatch(.meetingHistoryLoaded([projectionMeeting(timeline: [suggestions])]))
+        store.selectArchivedMeeting("meeting-1")
+        let view = WorkspaceView(store: store, openSettings: {})
+
+        XCTAssertEqual(view.visibleSuggestionQuestions, ["谁负责上线？", "何时冻结范围？"])
+    }
+
     func testLiveTranslationSideChannelEnrichesMatchingTimelineSegment() {
         let segmentID = UUID(uuidString: "11111111-1111-1111-1111-111111111119")!
         let event = transcriptEvent(

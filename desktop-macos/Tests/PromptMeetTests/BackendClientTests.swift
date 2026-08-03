@@ -3,6 +3,21 @@ import XCTest
 @testable import PromptMeet
 
 final class BackendClientTests: XCTestCase {
+    func testWebSocketDecodeAndTransportFailuresBecomeCompanionDisconnects() {
+        let decodeError = DecodingError.dataCorrupted(
+            .init(codingPath: [], debugDescription: "invalid envelope")
+        )
+        let transportError = URLError(.networkConnectionLost)
+
+        for error in [decodeError, transportError] as [any Error] {
+            guard case .companionDisconnected(let message) =
+                BackendClient.connectionFailureEvent(error) else {
+                return XCTFail("Expected a companion disconnect event")
+            }
+            XCTAssertFalse(message.isEmpty)
+        }
+    }
+
     func testCreateSessionRequestPreservesExistingRoute() throws {
         let environment = BackendEnvironment(baseURL: URL(string: "http://127.0.0.1:8000")!)
 

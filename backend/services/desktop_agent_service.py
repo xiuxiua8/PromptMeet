@@ -5,6 +5,7 @@ import os
 import base64
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
@@ -28,6 +29,17 @@ from services.context_builder import (
 from services.meeting_ingestion import ScreenshotAnalysisResult
 from services.model_provider import ProviderConfiguration
 from services.prompt_builder import MeetingPromptBuilder, ProviderContentPart
+
+
+@asynccontextmanager
+async def _completion_deadline(seconds: float):
+    try:
+        async with asyncio.timeout(seconds):
+            yield
+    except TimeoutError as error:
+        raise RuntimeError(
+            "AI 服务响应超时，请重试或检查提供方连接"
+        ) from error
 
 
 @dataclass(frozen=True)
@@ -509,7 +521,7 @@ class DesktopAgentService:
     ) -> dict[str, object]:
         content_parts: list[str] = []
         calls_by_index: dict[int, dict[str, object]] = {}
-        async with asyncio.timeout(completion_timeout):
+        async with _completion_deadline(completion_timeout):
             async with client.stream(
                 "POST",
                 endpoint,

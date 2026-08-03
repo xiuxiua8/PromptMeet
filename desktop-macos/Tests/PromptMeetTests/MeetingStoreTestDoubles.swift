@@ -130,9 +130,11 @@ final class CompanionLauncherSpy: CompanionLaunching {
     var ensureCount = 0
     var reloadCount = 0
     private let error: (any Error)?
+    private let onReload: (() -> Void)?
 
-    init(error: (any Error)? = nil) {
+    init(error: (any Error)? = nil, onReload: (() -> Void)? = nil) {
         self.error = error
+        self.onReload = onReload
     }
 
     func ensureRunning() async throws {
@@ -144,6 +146,8 @@ final class CompanionLauncherSpy: CompanionLaunching {
 
     func reloadConfiguration() async throws {
         reloadCount += 1
+        onReload?()
+        if let error { throw error }
     }
 }
 
@@ -173,6 +177,9 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     )
 
     var performedActions: [String] = []
+    var healthCheckCount = 0
+    var fetchHistoryCount = 0
+    var connectCount = 0
     var connectedSessionID: String?
     var prompts: [Prompt] = []
     var submittedTranscripts: [LocalTranscript] = []
@@ -187,7 +194,9 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var historicalQuestions: [HistoricalQuestion] = []
     private var eventHandler: (@Sendable (BackendEvent) -> Void)?
 
-    func healthCheck() async throws {}
+    func healthCheck() async throws {
+        await MainActor.run { healthCheckCount += 1 }
+    }
 
     func createSession() async throws -> String {
         await MainActor.run { createSessionCount += 1 }
@@ -239,6 +248,7 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
 
     func connect(sessionID: String, onEvent: @escaping @Sendable (BackendEvent) -> Void) throws {
         connectedSessionID = sessionID
+        connectCount += 1
         eventHandler = onEvent
     }
 
@@ -251,7 +261,10 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     }
 
     func fetchMeetingHistory() async throws -> [StoredMeeting] {
-        await MainActor.run { history }
+        await MainActor.run {
+            fetchHistoryCount += 1
+            return history
+        }
     }
 
     func fetchMeeting(id: String) async throws -> StoredMeeting {
@@ -284,6 +297,8 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
 
     func disconnect() {
         disconnectCount += 1
+        connectedSessionID = nil
+        eventHandler = nil
     }
 
     func emit(_ event: BackendEvent) {

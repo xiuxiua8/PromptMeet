@@ -87,12 +87,26 @@ extension MeetingState {
         case .companionConnected:
             isCompanionConnected = true
             if latestInsight?.contains("AI companion") == true
-                || latestInsight?.contains("AI 服务连接") == true {
+                || latestInsight?.contains("AI 服务连接") == true
+                || latestInsight?.contains("重新连接 AI 服务") == true
+                || latestInsight?.contains("AI 服务重连") == true
+                || latestInsight?.contains("AI 服务配置正在应用") == true {
                 latestInsight = nil
             }
         case .companionDisconnected(let message):
             isCompanionConnected = false
             latestInsight = message
+            for index in conversationTurns.indices
+            where conversationTurns[index].phase == .submitting
+                || conversationTurns[index].phase == .streaming {
+                conversationTurns[index].phase = .failed
+                conversationTurns[index].errorMessage = message
+            }
+            if aiRequest.isBusy {
+                aiRequest.phase = .failed
+                aiRequest.errorMessage = message
+                aiReader.isStreaming = false
+            }
         default:
             break
         }

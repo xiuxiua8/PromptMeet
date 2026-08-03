@@ -145,9 +145,15 @@ final class MeetingStoreTests: XCTestCase {
     }
 
     func testAIConfigurationReloadDefersThroughLiveAndPausedMeetingUntilEnd() async {
-        let companion = CompanionLauncherSpy()
+        let backend = BackendClientSpy()
+        var actionsAtReload: [String] = []
+        var disconnectsAtReload = 0
+        let companion = CompanionLauncherSpy(onReload: {
+            actionsAtReload = backend.performedActions
+            disconnectsAtReload = backend.disconnectCount
+        })
         let store = MeetingStore(
-            backend: BackendClientSpy(),
+            backend: backend,
             capture: NativeAudioCaptureSpy(),
             companion: companion
         )
@@ -165,9 +171,65 @@ final class MeetingStoreTests: XCTestCase {
         await store.endMeetingNow()
 
         XCTAssertEqual(companion.reloadCount, 1)
+        XCTAssertEqual(actionsAtReload.last, "store-session")
+        XCTAssertEqual(disconnectsAtReload, 1)
+        XCTAssertEqual(backend.disconnectCount, 1)
+        XCTAssertEqual(backend.healthCheckCount, 2)
+        XCTAssertEqual(backend.fetchHistoryCount, 1)
+        XCTAssertNil(store.backendSessionID)
         XCTAssertFalse(store.pendingCompanionConfigurationReload)
         XCTAssertTrue(store.canDeleteMeetingHistory)
         XCTAssertEqual(store.state.latestInsight, "AI 服务配置已更新")
+    }
+
+    func testCompanionTransportLossPreservesRecordingAndOffersReconnect() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+        await store.submitPromptNow("总结当前风险")
+
+        backend.emit(.companionDisconnected("连接已关闭"))
+        await Task.yield()
+
+        XCTAssertEqual(store.state.phase, .live)
+        XCTAssertEqual(store.state.recordingActivity, .recording)
+        XCTAssertEqual(capture.stopCount, 0)
+        XCTAssertFalse(store.canDeleteMeetingHistory)
+        XCTAssertFalse(store.state.isCompanionConnected)
+        XCTAssertEqual(store.state.aiRequest.phase, .failed)
+        XCTAssertEqual(store.state.conversationTurns.last?.phase, .failed)
+        XCTAssertTrue(store.state.latestInsight?.contains("重新连接 AI 服务") == true)
+        XCTAssertTrue(WorkspaceView(store: store, openSettings: {}).showsCompanionReconnectAction)
+        XCTAssertTrue(
+            MeetingControlPresentation(
+                phase: store.state.phase,
+                recordingActivity: store.state.recordingActivity
+            ).canStop
+        )
+
+        await store.pauseMeetingNow()
+        backend.emit(.companionDisconnected("消息解析失败"))
+        await Task.yield()
+
+        XCTAssertEqual(store.state.phase, .live)
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+
+        await store.reconnectCompanionNow()
+        XCTAssertFalse(store.state.isCompanionConnected)
+        XCTAssertEqual(backend.connectCount, 2)
+        backend.emit(.connectionEstablished)
+        await Task.yield()
+
+        XCTAssertTrue(store.state.isCompanionConnected)
+        XCTAssertNil(store.state.latestInsight)
+        XCTAssertFalse(WorkspaceView(store: store, openSettings: {}).showsCompanionReconnectAction)
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(capture.stopCount, 0)
     }
 
     func testBackendEventsDriveTranscriptAndReader() async throws {

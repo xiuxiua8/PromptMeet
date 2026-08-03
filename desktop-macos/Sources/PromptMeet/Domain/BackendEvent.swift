@@ -13,6 +13,7 @@ enum BackendEvent: Equatable, Sendable {
     case suggestion(String)
     case summary(MeetingSummaryContent)
     case screenshotInsight(String)
+    case companionDisconnected(String)
     case failure(String)
     case ignored
 

@@ -90,7 +90,9 @@ extension MeetingStore {
 
     func receive(_ event: BackendEvent) {
         switch event {
-        case .connectionEstablished, .ignored:
+        case .connectionEstablished:
+            dispatch(.companionConnected)
+        case .ignored:
             break
         case .meetingEvent, .transcript, .translation:
             receiveEvidenceEvent(event)
@@ -98,7 +100,7 @@ extension MeetingStore {
             receiveAnswerEvent(event)
         case .question, .questions, .suggestion:
             receiveSuggestionEvent(event)
-        case .summary, .screenshotInsight, .failure:
+        case .summary, .screenshotInsight, .companionDisconnected, .failure:
             receiveInsightEvent(event)
         }
     }
@@ -210,6 +212,12 @@ extension MeetingStore {
         case .screenshotInsight(let insight):
             dispatch(.screenshotInsight(insight))
             scheduleSuggestionRefresh(contextToken: "screenshot-insight:\(insight)")
+        case .companionDisconnected(let message):
+            dispatch(
+                .companionDisconnected(
+                    "本地录音继续，AI 服务连接已中断：\(message)。请重新连接 AI 服务"
+                )
+            )
         case .failure(let message):
             dispatch(.failure(message))
         default:
