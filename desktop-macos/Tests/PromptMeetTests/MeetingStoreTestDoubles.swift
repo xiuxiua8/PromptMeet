@@ -129,6 +129,7 @@ final class BlockingScreenshotCaptureControllerSpy: ScreenshotCaptureControlling
 final class CompanionLauncherSpy: CompanionLaunching {
     var ensureCount = 0
     var reloadCount = 0
+    var ensureDelay: Duration?
     private let error: (any Error)?
     private let onReload: (() -> Void)?
 
@@ -139,6 +140,7 @@ final class CompanionLauncherSpy: CompanionLaunching {
 
     func ensureRunning() async throws {
         ensureCount += 1
+        if let ensureDelay { try await Task.sleep(for: ensureDelay) }
         if let error { throw error }
     }
 
@@ -169,6 +171,11 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
         let contextRevision: Int
     }
 
+    struct RehydrateRequest: Equatable {
+        let sessionID: String
+        let isPaused: Bool
+    }
+
     var summaryRequests: [SummaryGenerationRequest] = []
     var summaryResponse = SummaryGenerationResponse(
         success: true,
@@ -191,6 +198,9 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var questionCompletionCount = 0
     var questionCancellationCount = 0
     var createSessionCount = 0
+    var rehydrateDelay: Duration?
+    var rehydrateRequests: [RehydrateRequest] = []
+    var rehydrateCancellationCount = 0
     var historicalQuestions: [HistoricalQuestion] = []
     private var eventHandler: (@Sendable (BackendEvent) -> Void)?
 
@@ -201,6 +211,22 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     func createSession() async throws -> String {
         await MainActor.run { createSessionCount += 1 }
         return "session-1"
+    }
+
+    func rehydrateSession(sessionID: String, isPaused: Bool) async throws {
+        await MainActor.run {
+            rehydrateRequests.append(
+                RehydrateRequest(sessionID: sessionID, isPaused: isPaused)
+            )
+        }
+        do {
+            if let rehydrateDelay = await MainActor.run(body: { self.rehydrateDelay }) {
+                try await Task.sleep(for: rehydrateDelay)
+            }
+        } catch is CancellationError {
+            await MainActor.run { rehydrateCancellationCount += 1 }
+            throw CancellationError()
+        }
     }
 
     func perform(sessionID: String, action: String) async throws {

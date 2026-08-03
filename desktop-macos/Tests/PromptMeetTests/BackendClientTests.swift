@@ -27,6 +27,31 @@ final class BackendClientTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "POST")
     }
 
+    func testRehydrateSessionUsesSameIDAndPausedState() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendClientURLProtocol.self]
+        BackendClientURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/sessions/session-1/rehydrate")
+            let body = try requestBodyData(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["is_paused"] as? Bool, true)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (
+                response,
+                Data(#"{"success":true,"session_id":"session-1"}"#.utf8)
+            )
+        }
+        let client = BackendClient(
+            environment: BackendEnvironment(baseURL: URL(string: "http://127.0.0.1:8000")!),
+            session: URLSession(configuration: configuration)
+        )
+
+        try await client.rehydrateSession(sessionID: "session-1", isPaused: true)
+    }
+
     func testWebSocketURLUsesExistingSessionRoute() throws {
         let environment = BackendEnvironment(baseURL: URL(string: "http://127.0.0.1:8000")!)
 

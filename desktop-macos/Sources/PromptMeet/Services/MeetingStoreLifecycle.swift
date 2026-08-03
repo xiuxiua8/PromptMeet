@@ -24,6 +24,10 @@ extension MeetingStore {
     }
 
     private func resetMeetingStartState() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectInProgress = false
+        meetingGeneration = UUID()
         if backendSessionID != nil {
             backend.disconnect()
             backendSessionID = nil
@@ -82,35 +86,106 @@ extension MeetingStore {
     }
 
     func reconnectCompanionNow() async {
+        await reconnectCompanionNow(
+            expectedGeneration: meetingGeneration,
+            expectedLocalSessionID: sessionID
+        )
+    }
+
+    func reconnectCompanionNow(
+        expectedGeneration: UUID,
+        expectedLocalSessionID: String?
+    ) async {
         guard isMeetingActive else {
             await prepareCompanionNow()
             return
         }
+        guard !reconnectInProgress else { return }
+        guard reconnectMatches(
+            generation: expectedGeneration,
+            localSessionID: expectedLocalSessionID
+        ) else { return }
         guard let remoteSessionID = backendSessionID else {
-            let remoteRecordingStarted = await connectMeetingCompanion()
-            if remoteRecordingStarted,
-               state.recordingActivity == .paused,
-               let backendSessionID {
-                try? await backend.perform(
-                    sessionID: backendSessionID,
-                    action: "pause-native-recording"
+            dispatch(
+                .companionDisconnected(
+                    "本地录音继续，但没有可恢复的会议服务会话，请结束并保存本地会议"
                 )
-            }
+            )
             return
         }
+        reconnectInProgress = true
+        defer { reconnectInProgress = false }
+        let isPaused = state.recordingActivity == .paused
         dispatch(.companionDisconnected("本地录音继续，正在重新连接 AI 服务"))
         do {
             try await companion.ensureRunning()
+            guard reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) else { return }
             try await backend.healthCheck()
+            guard reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) else { return }
+            try await backend.rehydrateSession(
+                sessionID: remoteSessionID,
+                isPaused: isPaused
+            )
+            guard reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) else { return }
             try connectBackendEvents(sessionID: remoteSessionID)
+            guard reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) else {
+                backend.disconnect()
+                return
+            }
+            await capture.bindBackendSession(remoteSessionID)
+            guard reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) else {
+                backend.disconnect()
+                return
+            }
+        } catch is CancellationError {
+            return
         } catch {
             backend.disconnect()
-            dispatch(
-                .companionDisconnected(
-                    "本地录音继续，AI 服务重连失败：\(error.localizedDescription)"
+            if reconnectMatches(
+                generation: expectedGeneration,
+                localSessionID: expectedLocalSessionID
+            ) {
+                dispatch(
+                    .companionDisconnected(
+                        "本地录音继续，AI 服务重连失败：\(error.localizedDescription)"
+                    )
                 )
-            )
+            }
         }
+    }
+
+    private func reconnectMatches(
+        generation: UUID,
+        localSessionID: String?
+    ) -> Bool {
+        !Task.isCancelled
+            && meetingGeneration == generation
+            && sessionID == localSessionID
+            && isMeetingActive
+    }
+
+    func cancelCompanionReconnectNow() async {
+        meetingGeneration = UUID()
+        let task = reconnectTask
+        reconnectTask = nil
+        task?.cancel()
+        await task?.value
+        reconnectInProgress = false
     }
 
     private func startCaptureSession(localSessionID: String) async throws {
@@ -145,6 +220,7 @@ extension MeetingStore {
     }
 
     func endMeetingNow() async {
+        await cancelCompanionReconnectNow()
         screenshotController.cancelSelection()
         if state.screenshotOperation == .selecting {
             modify(\.screenshotOperation, to: .idle)

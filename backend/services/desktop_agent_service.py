@@ -57,6 +57,8 @@ class MeetingSummaryResult:
     summary: dict
     provider: str
     model: str
+    source_event_ids: list[str]
+    source_revision: int
 
 
 class _DuckDuckGoResultParser(HTMLParser):
@@ -635,8 +637,35 @@ class DesktopAgentService:
         estimator = MeetingContextBuilder._estimate_tokens
         context_lines = []
         spent = 0
+        covered_events = []
+        previous_summary = next(
+            (
+                event
+                for event in source_events
+                if isinstance(event.payload, SummaryPayload)
+            ),
+            None,
+        )
+        if previous_summary is not None:
+            value = f"此前摘要：{previous_summary.payload.summary_text}"
+            summary_limit = token_limit // 3
+            if estimator(value) > summary_limit:
+                low = 0
+                high = len(value)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    if estimator(value[:midpoint]) <= summary_limit:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                value = value[:low].rstrip()
+            if value:
+                context_lines.append(value)
+                spent += estimator(value)
         for event in source_events:
             payload = event.payload
+            if isinstance(payload, SummaryPayload):
+                continue
             if isinstance(payload, TranscriptPayload) and payload.text:
                 speaker = payload.speaker
                 line = f"[{event.sequence}] {speaker}：{payload.text}"
@@ -650,9 +679,10 @@ class DesktopAgentService:
                 continue
             cost = estimator(line)
             if spent + cost > token_limit:
-                break
+                continue
             context_lines.append(line)
             spent += cost
+            covered_events.append(event)
         response_content = ""
         try:
             async with httpx.AsyncClient(timeout=90) as client:
@@ -709,6 +739,10 @@ class DesktopAgentService:
             },
             provider=configuration.provider,
             model=configuration.model,
+            source_event_ids=[event.event_id for event in covered_events],
+            source_revision=max(
+                (event.sequence for event in covered_events), default=0
+            ),
         )
 
     async def generate_meeting_title(self, record: MeetingRecord) -> str:

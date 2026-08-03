@@ -239,6 +239,58 @@ def test_screenshot_query_uses_only_latest_asset_and_its_completed_analysis() ->
     assert [source.source_id for source in selection.sources] == ["M4", "M5"]
 
 
+def test_visual_selection_truncates_rendered_ocr_to_the_actual_budget() -> None:
+    record = MeetingRecord(
+        meeting_id="meeting-a",
+        started_at=START,
+        events=[
+            event(
+                1,
+                EventKind.SCREENSHOT,
+                ScreenshotPayload(
+                    asset_id="latest",
+                    relative_path="assets/meeting-a/latest.png",
+                    mime_type="image/png",
+                    sha256="latest-sha",
+                    local_ocr_text="截图 OCR " * 2_000,
+                    ocr_engine="apple_vision",
+                ),
+            ),
+            event(
+                2,
+                EventKind.SCREENSHOT_ANALYSIS,
+                ScreenshotAnalysisPayload(
+                    asset_id="latest",
+                    status="completed",
+                    text="截图分析 " * 2_000,
+                    vision_used=True,
+                    evidence_kind="vision",
+                ),
+            ),
+        ],
+    )
+    builder = MeetingContextBuilder(token_estimator=len)
+    budget = ContextBudget(total_tokens=180, answer_reserve=40)
+
+    selection = builder.select(record, "最新截图写了什么？", budget)
+    request = MeetingPromptBuilder().build(
+        selection,
+        "最新截图写了什么？",
+        ProviderCapabilities(
+            provider="deepseek", model="deepseek-chat", supports_vision=False
+        ),
+    )
+    evidence = "\n".join(
+        f"[M{item.sequence}] {selection.rendered_event(item)}"
+        for item in selection.events
+    )
+
+    assert selection.estimated_tokens == len(evidence)
+    assert selection.estimated_tokens <= budget.evidence_tokens
+    assert len(request.messages[1].content) < 1_000
+    assert "截图分析 " * 100 not in request.messages[1].content
+
+
 def test_screenshot_query_excludes_pending_failed_empty_and_mismatched_analysis() -> (
     None
 ):

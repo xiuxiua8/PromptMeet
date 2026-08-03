@@ -47,7 +47,7 @@ class MeetingPromptBuilder:
         capabilities: ProviderCapabilities,
     ) -> ProviderRequest:
         evidence_lines = [
-            f"[M{event.sequence}] {MeetingContextBuilder.render_event(event)}"
+            f"[M{event.sequence}] {selection.rendered_event(event)}"
             for event in selection.events
         ]
         if selection.derived_summary:

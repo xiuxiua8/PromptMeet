@@ -23,7 +23,17 @@ extension MeetingStore {
     }
 
     func reconnectCompanion() {
-        Task { await reconnectCompanionNow() }
+        guard reconnectTask == nil else { return }
+        let generation = meetingGeneration
+        let localSessionID = sessionID
+        reconnectTask = Task { [weak self] in
+            await self?.reconnectCompanionNow(
+                expectedGeneration: generation,
+                expectedLocalSessionID: localSessionID
+            )
+            guard let self, self.meetingGeneration == generation else { return }
+            self.reconnectTask = nil
+        }
     }
 
     func reloadCompanionConfigurationNow() async {
@@ -202,6 +212,9 @@ extension MeetingStore {
         pendingCompanionConfigurationReload = false
         automationClockTask?.cancel()
         automationClockTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        meetingGeneration = UUID()
         backend.disconnect()
         companion.stopOwnedProcess()
     }
@@ -217,6 +230,7 @@ extension MeetingStore {
         pendingCompanionConfigurationReload = false
         automationClockTask?.cancel()
         automationClockTask = nil
+        await cancelCompanionReconnectNow()
         await capture.stop()
         backend.disconnect()
         companion.stopOwnedProcess()

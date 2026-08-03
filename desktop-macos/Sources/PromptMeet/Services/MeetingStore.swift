@@ -30,6 +30,9 @@ final class MeetingStore: ObservableObject {
     var meetingInputRevision = 0
     var meetingInputTokens: Set<String> = []
     var pendingCompanionConfigurationReload = false
+    var reconnectTask: Task<Void, Never>?
+    var reconnectInProgress = false
+    var meetingGeneration = UUID()
 
     init(
         backend: BackendClientProtocol = BackendClient(),

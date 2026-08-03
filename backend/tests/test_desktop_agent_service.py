@@ -91,6 +91,43 @@ class TitleClient:
         return TitleResponse()
 
 
+class SummaryResponse:
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "summary_text": "增量摘要",
+                                "tasks": [],
+                                "key_points": ["新证据"],
+                                "decisions": [],
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+
+class SummaryClient:
+    last_payload = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, *args, **kwargs) -> SummaryResponse:
+        type(self).last_payload = kwargs["json"]
+        return SummaryResponse()
+
+
 def test_generate_meeting_title_uses_only_the_record_content(monkeypatch) -> None:
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",
@@ -177,6 +214,61 @@ def test_summary_runtime_failure_names_workflow_provider_model_without_credentia
     assert "summary-model" in message
     assert "503" in message
     assert "secret-runtime-key" not in message
+
+
+def test_summary_reports_only_source_events_rendered_within_budget(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: SummaryClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SUMMARY_PROVIDER": "openai",
+            "PROMPTMEET_SUMMARY_MODEL": "summary-model",
+            "OPENAI_API_KEY": "test-key",
+        }
+    )
+    prior = MeetingEvent(
+        event_id="summary-1",
+        meeting_id="summary-budget",
+        sequence=2,
+        occurred_at=datetime(2026, 7, 29, tzinfo=UTC),
+        kind=EventKind.SUMMARY,
+        provenance=EventProvenance(source="test"),
+        payload=SummaryPayload(summary_text="此前摘要"),
+    )
+    oversized = MeetingEvent(
+        event_id="oversized",
+        meeting_id="summary-budget",
+        sequence=3,
+        occurred_at=datetime(2026, 7, 29, 0, 1, tzinfo=UTC),
+        kind=EventKind.TRANSCRIPT,
+        provenance=EventProvenance(source="test"),
+        payload=TranscriptPayload(segment_id="large", text="超长内容" * 20_000),
+    )
+    fitting = MeetingEvent(
+        event_id="fitting",
+        meeting_id="summary-budget",
+        sequence=4,
+        occurred_at=datetime(2026, 7, 29, 0, 2, tzinfo=UTC),
+        kind=EventKind.TRANSCRIPT,
+        provenance=EventProvenance(source="test"),
+        payload=TranscriptPayload(segment_id="small", text="新证据"),
+    )
+    record = MeetingRecord(
+        meeting_id="summary-budget",
+        started_at=datetime(2026, 7, 29, tzinfo=UTC),
+        events=[prior, oversized, fitting],
+    )
+
+    result = asyncio.run(service.summarize_meeting(record, record.events))
+
+    assert result.source_event_ids == ["fitting"]
+    assert result.source_revision == 4
+    content = SummaryClient.last_payload["messages"][1]["content"]
+    assert "此前摘要" in content
+    assert "新证据" in content
+    assert "超长内容" not in content
 
 
 def test_generate_questions_returns_structured_desktop_questions(monkeypatch) -> None:

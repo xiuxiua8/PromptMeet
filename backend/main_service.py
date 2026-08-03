@@ -170,6 +170,10 @@ class SummaryGenerationRequest(BaseModel):
         return value
 
 
+class SessionRehydrateRequest(BaseModel):
+    is_paused: bool = False
+
+
 meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
 question_generation_tasks: dict[str, asyncio.Task] = {}
@@ -604,6 +608,76 @@ async def get_session(session_id: str):
     return {"success": True, "session": session.model_dump(mode="json")}
 
 
+@app.post("/api/sessions/{session_id}/rehydrate")
+async def rehydrate_session(
+    session_id: str, request: SessionRehydrateRequest
+):
+    record = meeting_repository.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="会议持久记录不存在")
+    if record.status != MeetingStatus.ACTIVE or record.ended_at is not None:
+        raise HTTPException(status_code=409, detail="仅可恢复仍在进行的会议")
+    transcript_segments = [
+        TranscriptSegment(
+            id=event.payload.segment_id,
+            text=event.payload.text,
+            timestamp=event.occurred_at,
+            confidence=1.0,
+            speaker=event.payload.speaker,
+            source=(
+                event.payload.source
+                if event.payload.source in {"system", "microphone", "mixed"}
+                else None
+            ),
+            meeting_time_ms=event.payload.meeting_time_ms,
+        )
+        for event in record.events
+        if event.kind == EventKind.TRANSCRIPT
+        and isinstance(event.payload, TranscriptPayload)
+    ]
+    current_summary = None
+    summary_events = sorted(
+        (
+            event
+            for event in record.events
+            if event.kind == EventKind.SUMMARY
+            and isinstance(event.payload, SummaryPayload)
+        ),
+        key=lambda event: (event.payload.revision, event.sequence),
+        reverse=True,
+    )
+    for event in summary_events:
+        try:
+            current_summary = MeetingSummary(
+                session_id=session_id,
+                summary_text=event.payload.summary_text,
+                tasks=[TaskItem(**task) for task in event.payload.tasks],
+                key_points=event.payload.key_points,
+                decisions=event.payload.decisions,
+                generated_at=event.occurred_at,
+            )
+            break
+        except ValueError:
+            continue
+    existing = session_manager.get_session(session_id)
+    restored = SessionState(
+        session_id=session_id,
+        is_recording=True,
+        is_paused=request.is_paused,
+        start_time=record.started_at,
+        end_time=None,
+        transcript_segments=transcript_segments,
+        current_summary=current_summary,
+        participant_count=existing.participant_count if existing else 0,
+        audio_file_path=existing.audio_file_path if existing else None,
+    )
+    if existing is None:
+        session_manager.add_session(restored)
+    else:
+        session_manager.update_session(restored)
+    return {"success": True, "session_id": session_id, "rehydrated": True}
+
+
 @app.post("/api/sessions/{session_id}/mark-incomplete")
 async def mark_session_incomplete(session_id: str):
     if meeting_repository.get(session_id) is None:
@@ -737,24 +811,37 @@ async def generate_desktop_summary(
             EventKind.SCREENSHOT_ANALYSIS,
         }
     ]
-    source_revision = max((event.sequence for event in source_events), default=0)
     previous_summaries = [
         event
         for event in record.events
         if event.kind == EventKind.SUMMARY
         and isinstance(event.payload, SummaryPayload)
     ]
-    previous_source_revision = max(
-        (event.payload.source_revision for event in previous_summaries),
-        default=0,
-    )
-    if not source_events or source_revision <= previous_source_revision:
+    covered_source_ids = {
+        source_id
+        for event in previous_summaries
+        for source_id in event.payload.source_event_ids
+    }
+    uncovered_events = [
+        event for event in source_events if event.event_id not in covered_source_ids
+    ]
+    if not uncovered_events:
         return {
             "success": True,
             "status": "no_action",
             "message": "没有新的会议输入，已跳过本次摘要与待办生成",
         }
-    result = await desktop_agent_service.summarize_meeting(record, source_events)
+    latest_previous_summary = max(
+        previous_summaries,
+        key=lambda event: (event.payload.revision, event.sequence),
+        default=None,
+    )
+    summary_inputs = (
+        [latest_previous_summary, *uncovered_events]
+        if latest_previous_summary is not None
+        else uncovered_events
+    )
+    result = await desktop_agent_service.summarize_meeting(record, summary_inputs)
     latest_record = meeting_repository.get(session_id)
     if latest_record is None:
         raise HTTPException(status_code=404, detail="会议持久记录不存在")
@@ -764,11 +851,19 @@ async def generate_desktop_summary(
         if event.kind == EventKind.SUMMARY
         and isinstance(event.payload, SummaryPayload)
     ]
-    latest_source_revision = max(
-        (event.payload.source_revision for event in latest_summaries),
-        default=0,
-    )
-    if source_revision <= latest_source_revision:
+    latest_covered_ids = {
+        source_id
+        for event in latest_summaries
+        for source_id in event.payload.source_event_ids
+    }
+    result_source_ids = set(result.source_event_ids)
+    covered_events = [
+        event
+        for event in uncovered_events
+        if event.event_id in result_source_ids
+        and event.event_id not in latest_covered_ids
+    ]
+    if not covered_events:
         return {
             "success": True,
             "status": "no_action",
@@ -781,25 +876,32 @@ async def generate_desktop_summary(
         )
         + 1
     )
-    summary_data = result.summary
+    raw_summary = result.summary
+    summary = MeetingSummary(
+        session_id=session_id,
+        summary_text=raw_summary["summary_text"],
+        tasks=[TaskItem(**task) for task in raw_summary.get("tasks", [])],
+        key_points=raw_summary.get("key_points", []),
+        decisions=raw_summary.get("decisions", []),
+        generated_at=datetime.now(),
+    )
+    summary_data = {
+        "summary_text": summary.summary_text,
+        "tasks": [task.model_dump(mode="json") for task in summary.tasks],
+        "key_points": summary.key_points,
+        "decisions": summary.decisions,
+    }
+    source_revision = max(event.sequence for event in covered_events)
     timeline_event = meeting_ingestion.summary(
         session_id,
         summary_data,
         revision=revision,
-        source_event_ids=[event.event_id for event in source_events],
+        source_event_ids=[event.event_id for event in covered_events],
         source_revision=source_revision,
         trigger=request.trigger if request else "manual",
         active_minutes=request.active_minutes if request else None,
         provider=result.provider,
         model=result.model,
-    )
-    summary = MeetingSummary(
-        session_id=session_id,
-        summary_text=summary_data["summary_text"],
-        tasks=[TaskItem(**task) for task in summary_data.get("tasks", [])],
-        key_points=summary_data.get("key_points", []),
-        decisions=summary_data.get("decisions", []),
-        generated_at=datetime.now(),
     )
     session.current_summary = summary
     session_manager.update_session(session)

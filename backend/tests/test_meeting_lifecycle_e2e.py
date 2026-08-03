@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from models.meeting_context import EventKind, EvidenceSource
+from models.meeting_context import EventKind, EvidenceSource, MeetingStatus
 from services.desktop_agent_service import MeetingAnswerResult, MeetingSummaryResult
 from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
 from services.meeting_repository import MeetingRepository
@@ -438,7 +438,10 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     configure(main_service, root, monkeypatch)
 
     class SummaryAgent(FakeMeetingAgent):
+        calls = []
+
         async def summarize_meeting(self, record, source_events):
+            self.calls.append(list(source_events))
             revision = 1 + len(
                 [event for event in record.events if event.kind == EventKind.SUMMARY]
             )
@@ -451,9 +454,23 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
                 },
                 provider="openai",
                 model="summary-model",
+                source_event_ids=[
+                    event.event_id
+                    for event in source_events
+                    if event.kind != EventKind.SUMMARY
+                ],
+                source_revision=max(
+                    (
+                        event.sequence
+                        for event in source_events
+                        if event.kind != EventKind.SUMMARY
+                    ),
+                    default=0,
+                ),
             )
 
-    monkeypatch.setattr(main_service, "desktop_agent_service", SummaryAgent())
+    agent = SummaryAgent()
+    monkeypatch.setattr(main_service, "desktop_agent_service", agent)
     client = TestClient(main_service.app)
     meeting_id = client.post("/api/sessions").json()["session_id"]
 
@@ -504,9 +521,126 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
         > summaries[0]["payload"]["source_revision"]
     )
     assert len(summaries[0]["payload"]["source_event_ids"]) == 1
-    assert len(summaries[1]["payload"]["source_event_ids"]) == 2
+    assert len(summaries[1]["payload"]["source_event_ids"]) == 1
     assert summaries[1]["provenance"]["provider"] == "openai"
     assert summaries[1]["provenance"]["model"] == "summary-model"
+    assert [event.kind for event in agent.calls[1]] == [
+        EventKind.SUMMARY,
+        EventKind.TRANSCRIPT,
+    ]
+    assert agent.calls[1][1].payload.text == "完成回滚演练"
+
+
+def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+
+    class ValidatingSummaryAgent(FakeMeetingAgent):
+        call_count = 0
+
+        async def summarize_meeting(self, record, source_events):
+            self.call_count += 1
+            evidence = [
+                event for event in source_events if event.kind != EventKind.SUMMARY
+            ]
+            return MeetingSummaryResult(
+                summary={
+                    "summary_text": "摘要",
+                    "tasks": (
+                        [{"describe": "follow up"}]
+                        if self.call_count == 1
+                        else [{"task": "follow up"}]
+                    ),
+                    "key_points": [],
+                    "decisions": [],
+                },
+                provider="openai",
+                model="summary-model",
+                source_event_ids=[event.event_id for event in evidence],
+                source_revision=max((event.sequence for event in evidence), default=0),
+            )
+
+    agent = ValidatingSummaryAgent()
+    monkeypatch.setattr(main_service, "desktop_agent_service", agent)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    client.post(
+        f"/api/sessions/{meeting_id}/native-transcript",
+        json={
+            "id": "7E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "需要跟进",
+            "speaker": "林晨",
+            "source": "microphone",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+
+    invalid = client.post(f"/api/sessions/{meeting_id}/generate-summary")
+    after_invalid = client.get(f"/api/meetings/{meeting_id}").json()
+    valid = client.post(f"/api/sessions/{meeting_id}/generate-summary")
+
+    assert invalid.json()["status"] == "failed"
+    assert not [event for event in after_invalid["events"] if event["kind"] == "summary"]
+    assert valid.json()["status"] == "generated"
+    assert valid.json()["event"]["payload"]["source_event_ids"]
+
+
+def test_rehydrate_restores_the_same_active_durable_session(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    client.post(
+        f"/api/sessions/{meeting_id}/native-transcript",
+        json={
+            "id": "8E2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "恢复同一会议",
+            "speaker": "林晨",
+            "source": "system",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+    main_service.session_manager.remove_session(meeting_id)
+
+    response = client.post(
+        f"/api/sessions/{meeting_id}/rehydrate", json={"is_paused": True}
+    )
+    restored = client.get(f"/api/sessions/{meeting_id}").json()["session"]
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == meeting_id
+    assert restored["session_id"] == meeting_id
+    assert restored["is_recording"] is True
+    assert restored["is_paused"] is True
+    assert [segment["text"] for segment in restored["transcript_segments"]] == [
+        "恢复同一会议"
+    ]
+
+
+def test_rehydrate_rejects_missing_and_completed_records(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    missing = client.post(
+        "/api/sessions/missing/rehydrate", json={"is_paused": False}
+    )
+    meeting_id = client.post("/api/sessions").json()["session_id"]
+    main_service.meeting_repository.finish(
+        meeting_id, datetime.now(UTC), MeetingStatus.COMPLETED
+    )
+    main_service.session_manager.remove_session(meeting_id)
+
+    completed = client.post(
+        f"/api/sessions/{meeting_id}/rehydrate", json={"is_paused": False}
+    )
+
+    assert missing.status_code == 404
+    assert completed.status_code == 409
 
 
 def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
@@ -550,6 +684,19 @@ def test_concurrent_summary_requests_append_one_revision_for_the_same_source(
                     },
                     provider="openai",
                     model="summary-model",
+                    source_event_ids=[
+                        event.event_id
+                        for event in source_events
+                        if event.kind != EventKind.SUMMARY
+                    ],
+                    source_revision=max(
+                        (
+                            event.sequence
+                            for event in source_events
+                            if event.kind != EventKind.SUMMARY
+                        ),
+                        default=0,
+                    ),
                 )
 
         agent = BlockingSummaryAgent()
@@ -604,6 +751,19 @@ def test_summary_generation_accepts_screenshot_only_meeting_input(
                 },
                 provider="openai",
                 model="vision-summary-model",
+                source_event_ids=[
+                    event.event_id
+                    for event in source_events
+                    if event.kind != EventKind.SUMMARY
+                ],
+                source_revision=max(
+                    (
+                        event.sequence
+                        for event in source_events
+                        if event.kind != EventKind.SUMMARY
+                    ),
+                    default=0,
+                ),
             )
 
     monkeypatch.setattr(main_service, "desktop_agent_service", SummaryAgent())

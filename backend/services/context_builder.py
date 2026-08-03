@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Callable
 
@@ -40,6 +40,12 @@ class ContextSelection:
     estimated_tokens: int
     omitted_count: int
     derived_summary: str | None
+    rendered_event_text: dict[str, str] = field(default_factory=dict)
+
+    def rendered_event(self, event: MeetingEvent) -> str:
+        if event.event_id in self.rendered_event_text:
+            return self.rendered_event_text[event.event_id]
+        return MeetingContextBuilder.render_event(event)
 
 
 class MeetingContextBuilder:
@@ -207,13 +213,41 @@ class MeetingContextBuilder:
             if analyses
             else None
         )
-        selected = [screenshot] + ([analysis] if analysis is not None else [])
-        selected.sort(
+        visual_events = [screenshot] + ([analysis] if analysis is not None else [])
+        visual_events.sort(
             key=lambda event: (event.sequence, event.occurred_at, event.event_id)
         )
-        estimated = sum(
-            self.token_estimator(self.render_event(event)) for event in selected
-        )
+        selected: list[MeetingEvent] = []
+        rendered_event_text: dict[str, str] = {}
+        evidence_lines: list[str] = []
+        for event in visual_events:
+            rendered = self.render_event(event)
+            prefix = f"[M{event.sequence}] "
+            candidate_lines = [*evidence_lines, f"{prefix}{rendered}"]
+            if self.token_estimator("\n".join(candidate_lines)) <= budget.evidence_tokens:
+                bounded = rendered
+            else:
+                low = 0
+                high = len(rendered)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    candidate_lines = [*evidence_lines, f"{prefix}{rendered[:midpoint]}"]
+                    if (
+                        self.token_estimator("\n".join(candidate_lines))
+                        <= budget.evidence_tokens
+                    ):
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                bounded = rendered[:low].rstrip()
+            if not bounded:
+                continue
+            selected.append(event)
+            rendered_event_text[event.event_id] = bounded
+            evidence_lines.append(f"{prefix}{bounded}")
+        if not selected:
+            return None
+        estimated = self.token_estimator("\n".join(evidence_lines))
         sources = [
             EvidenceSource(
                 source_id=f"M{event.sequence}",
@@ -226,9 +260,10 @@ class MeetingContextBuilder:
             meeting_id=record.meeting_id,
             events=selected,
             sources=sources,
-            estimated_tokens=min(estimated, budget.evidence_tokens),
+            estimated_tokens=estimated,
             omitted_count=max(0, len(candidates) - len(selected)),
             derived_summary=None,
+            rendered_event_text=rendered_event_text,
         )
 
     @staticmethod

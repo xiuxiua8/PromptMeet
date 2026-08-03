@@ -58,6 +58,7 @@ struct SummaryGenerationResponse: Decodable, Equatable, Sendable {
 protocol BackendClientProtocol: AnyObject, Sendable {
     func healthCheck() async throws
     func createSession() async throws -> String
+    func rehydrateSession(sessionID: String, isPaused: Bool) async throws
     func perform(sessionID: String, action: String) async throws
     func generateQuestions(
         sessionID: String,
@@ -120,6 +121,24 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
             throw BackendClientError.missingSessionID
         }
         return result.sessionID
+    }
+
+    func rehydrateSession(sessionID: String, isPaused: Bool) async throws {
+        var request = environment.sessionActionRequest(
+            sessionID: sessionID,
+            action: "rehydrate"
+        )
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["is_paused": isPaused]
+        )
+        let (data, response) = try await session.data(for: request)
+        try validate(response)
+        guard let result = try? JSONDecoder().decode(
+            BackendCreateSessionResponse.self,
+            from: data
+        ), result.sessionID == sessionID else {
+            throw BackendClientError.invalidResponse
+        }
     }
 
     func perform(sessionID: String, action: String) async throws {

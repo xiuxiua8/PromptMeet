@@ -222,6 +222,11 @@ final class MeetingStoreTests: XCTestCase {
         await store.reconnectCompanionNow()
         XCTAssertFalse(store.state.isCompanionConnected)
         XCTAssertEqual(backend.connectCount, 2)
+        XCTAssertEqual(
+            backend.rehydrateRequests,
+            [.init(sessionID: "session-1", isPaused: true)]
+        )
+        XCTAssertEqual(backend.createSessionCount, 1)
         backend.emit(.connectionEstablished)
         await Task.yield()
 
@@ -230,6 +235,33 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertFalse(WorkspaceView(store: store, openSettings: {}).showsCompanionReconnectAction)
         XCTAssertEqual(store.state.recordingActivity, .paused)
         XCTAssertEqual(capture.stopCount, 0)
+    }
+
+    func testReconnectClicksAreDeduplicatedAndEndCancelsPendingRehydrate() async {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy()
+        )
+        await store.startMeetingNow()
+        backend.emit(.companionDisconnected("连接已关闭"))
+        backend.rehydrateDelay = .seconds(5)
+
+        store.reconnectCompanion()
+        store.reconnectCompanion()
+        for _ in 0..<100 {
+            if !backend.rehydrateRequests.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(backend.rehydrateRequests.count, 1)
+
+        await store.endMeetingNow()
+
+        XCTAssertEqual(backend.rehydrateCancellationCount, 1)
+        XCTAssertEqual(backend.connectCount, 1)
+        XCTAssertEqual(store.state.phase, .idle)
+        XCTAssertEqual(backend.createSessionCount, 1)
     }
 
     func testBackendEventsDriveTranscriptAndReader() async throws {
