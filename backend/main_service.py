@@ -174,6 +174,25 @@ class SessionRehydrateRequest(BaseModel):
     is_paused: bool = False
 
 
+class SessionCreateRequest(BaseModel):
+    session_id: str | None = None
+    started_at: datetime | None = None
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("session_id 不能为空")
+        try:
+            uuid.UUID(normalized)
+        except ValueError as error:
+            raise ValueError("session_id 必须是 UUID") from error
+        return normalized
+
+
 meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
 question_generation_tasks: dict[str, asyncio.Task] = {}
@@ -577,13 +596,34 @@ async def get_available_windows():
 
 
 @app.post("/api/sessions")
-async def create_session():
+async def create_session(request: SessionCreateRequest | None = None):
     """创建新的会议会话"""
-    session_id = str(uuid.uuid4())
+    session_id = (
+        request.session_id
+        if request and request.session_id
+        else str(uuid.uuid4())
+    )
+    existing_session = session_manager.get_session(session_id)
+    if existing_session is not None:
+        return {"success": True, "session_id": session_id, "message": "会话已存在"}
+    existing_record = meeting_repository.get(session_id)
+    if existing_record is not None:
+        if (
+            existing_record.status != MeetingStatus.ACTIVE
+            or existing_record.ended_at is not None
+        ):
+            raise HTTPException(status_code=409, detail="会议已结束，不能重新绑定")
+        await rehydrate_session(session_id, SessionRehydrateRequest(is_paused=False))
+        return {"success": True, "session_id": session_id, "message": "会话已恢复"}
+    started_at = (
+        request.started_at
+        if request and request.started_at is not None
+        else datetime.now(UTC)
+    )
     session = SessionState(
         session_id=session_id,
         is_recording=False,
-        start_time=datetime.now(),
+        start_time=started_at,
         end_time=None,
         current_summary=None,
         participant_count=0,
@@ -805,13 +845,12 @@ def accumulated_summary_progress(
         summaries, key=lambda event: (event.payload.revision, event.sequence)
     ):
         payload = summary_event.payload
-        if payload.source_progress or payload.trigger == "legacy":
-            for event_id in payload.source_event_ids:
-                event = sources.get(event_id)
-                if event is not None:
-                    progress[event_id] = len(
-                        DesktopAgentService.summary_event_text(event)
-                    )
+        for event_id in payload.source_event_ids:
+            event = sources.get(event_id)
+            if event is not None:
+                progress[event_id] = len(
+                    DesktopAgentService.summary_event_text(event)
+                )
         for event_id, offset in payload.source_progress.items():
             event = sources.get(event_id)
             if event is None:
@@ -837,6 +876,9 @@ def merge_incremental_summary(
     )
     if previous_summary is None:
         return generated
+    summary_text = generated.summary_text
+    if previous_summary.summary_text.strip() not in summary_text:
+        summary_text = f"{previous_summary.summary_text.rstrip()}\n\n{summary_text}"
     tasks = list(generated.tasks)
     task_names = {task.task.strip().casefold() for task in tasks}
     for value in previous_summary.tasks:
@@ -863,6 +905,7 @@ def merge_incremental_summary(
 
     return generated.model_copy(
         update={
+            "summary_text": summary_text,
             "tasks": tasks,
             "key_points": retained(previous_summary.key_points, generated.key_points),
             "decisions": retained(previous_summary.decisions, generated.decisions),

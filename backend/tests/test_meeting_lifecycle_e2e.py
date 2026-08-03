@@ -546,6 +546,8 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     assert summaries[1]["provenance"]["provider"] == "openai"
     assert summaries[1]["provenance"]["model"] == "summary-model"
     assert summaries[1]["payload"]["tasks"][0]["task"] == "完成回滚演练"
+    assert "第 1 版摘要" in summaries[1]["payload"]["summary_text"]
+    assert "第 2 版摘要" in summaries[1]["payload"]["summary_text"]
     assert summaries[1]["payload"]["key_points"] == ["冻结范围"]
     assert summaries[1]["payload"]["decisions"] == ["周五发布"]
     assert summaries[1]["payload"]["source_progress"]
@@ -609,6 +611,65 @@ def test_summary_partial_progress_persists_and_advances_without_no_action(
     first_progress = next(iter(first["event"]["payload"]["source_progress"].values()))
     second_progress = next(iter(second["event"]["payload"]["source_progress"].values()))
     assert second_progress > first_progress > 0
+
+
+def test_pre_progress_summary_source_ids_migrate_as_full_coverage(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    repository = MeetingRepository(tmp_path / "meeting-data")
+    ingestion = MeetingIngestionService(repository)
+    meeting_id = "legacy-progress"
+    ingestion.start(meeting_id, datetime(2026, 7, 25, tzinfo=UTC))
+    source = ingestion.transcript(
+        meeting_id,
+        {
+            "id": "BE2CB506-925E-4A6E-BB68-E5006AB09BDF",
+            "text": "已经总结过的证据",
+            "speaker": "林晨",
+            "source": "system",
+            "timestamp": "2026-07-25T10:00:00+00:00",
+        },
+    )
+    summary = ingestion.summary(
+        meeting_id,
+        {"summary_text": "旧版摘要"},
+        source_event_ids=[source.event_id],
+        trigger="milestone",
+    )
+
+    progress = main_service.accumulated_summary_progress([summary], [source])
+
+    assert progress[source.event_id] == len(
+        DesktopAgentService.summary_event_text(source)
+    )
+
+
+def test_create_session_accepts_canonical_client_meeting_identity(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = "CE2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    started_at = "2026-07-25T10:00:00+00:00"
+
+    created = client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    )
+    main_service.session_manager.remove_session(meeting_id)
+    rebound = client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    )
+
+    assert created.status_code == rebound.status_code == 200
+    assert created.json()["session_id"] == meeting_id
+    assert rebound.json()["session_id"] == meeting_id
+    assert client.get(f"/api/sessions/{meeting_id}").status_code == 200
 
 
 def test_invalid_summary_tasks_do_not_advance_persisted_coverage(

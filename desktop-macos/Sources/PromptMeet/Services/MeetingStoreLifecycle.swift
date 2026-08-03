@@ -9,12 +9,17 @@ extension MeetingStore {
         resetMeetingStartState()
         dispatch(.prepareNewMeeting)
         dispatch(.beginSession)
-        let localSessionID = "local-\(UUID().uuidString)"
-        let remoteRecordingStarted = await connectMeetingCompanion()
+        let meetingID = UUID().uuidString
+        let startedAt = now()
+        sessionID = meetingID
+        meetingStartedAt = startedAt
+        let remoteRecordingStarted = await connectMeetingCompanion(
+            meetingID: meetingID,
+            startedAt: startedAt
+        )
 
         do {
-            try await startCaptureSession(localSessionID: localSessionID)
-            sessionID = localSessionID
+            try await startCaptureSession(localSessionID: meetingID)
             dispatch(.connectionReady)
             startAutomationClock(at: now())
         } catch {
@@ -49,13 +54,20 @@ extension MeetingStore {
         automationClockTask?.cancel()
         automationClockTask = nil
         automationScheduler = nil
+        meetingStartedAt = nil
     }
 
-    private func connectMeetingCompanion() async -> Bool {
+    private func connectMeetingCompanion(
+        meetingID: String,
+        startedAt: Date
+    ) async -> Bool {
         do {
             try await companion.ensureRunning()
             try await backend.healthCheck()
-            let remoteSessionID = try await backend.createSession()
+            let remoteSessionID = try await backend.createSession(
+                sessionID: meetingID,
+                startedAt: startedAt
+            )
             backendSessionID = remoteSessionID
             try connectBackendEvents(sessionID: remoteSessionID)
             dispatch(.companionConnected)
@@ -108,14 +120,6 @@ extension MeetingStore {
             generation: expectedGeneration,
             localSessionID: expectedLocalSessionID
         ) else { return }
-        guard let remoteSessionID = backendSessionID else {
-            dispatch(
-                .companionDisconnected(
-                    "本地录音继续，但没有可恢复的会议服务会话，请结束并保存本地会议"
-                )
-            )
-            return
-        }
         reconnectInProgress = true
         defer { reconnectInProgress = false }
         let isPaused = state.recordingActivity == .paused
@@ -131,10 +135,36 @@ extension MeetingStore {
                 generation: expectedGeneration,
                 localSessionID: expectedLocalSessionID
             ) else { return }
-            try await backend.rehydrateSession(
-                sessionID: remoteSessionID,
-                isPaused: isPaused
-            )
+            let remoteSessionID: String
+            if let existingSessionID = backendSessionID {
+                try await backend.rehydrateSession(
+                    sessionID: existingSessionID,
+                    isPaused: isPaused
+                )
+                remoteSessionID = existingSessionID
+            } else {
+                guard let localSessionID = expectedLocalSessionID,
+                      let meetingStartedAt else { return }
+                remoteSessionID = try await backend.createSession(
+                    sessionID: localSessionID,
+                    startedAt: meetingStartedAt
+                )
+                guard reconnectMatches(
+                    generation: expectedGeneration,
+                    localSessionID: expectedLocalSessionID
+                ) else { return }
+                backendSessionID = remoteSessionID
+                try await backend.perform(
+                    sessionID: remoteSessionID,
+                    action: "start-native-recording"
+                )
+                if isPaused {
+                    try await backend.perform(
+                        sessionID: remoteSessionID,
+                        action: "pause-native-recording"
+                    )
+                }
+            }
             guard reconnectMatches(
                 generation: expectedGeneration,
                 localSessionID: expectedLocalSessionID
@@ -215,6 +245,7 @@ extension MeetingStore {
     private func rollbackFailedCaptureStart(remoteRecordingStarted: Bool) async {
         await capture.stop()
         sessionID = nil
+        meetingStartedAt = nil
         guard let backendSessionID else { return }
         if remoteRecordingStarted {
             try? await backend.perform(sessionID: backendSessionID, action: "stop-native-recording")
@@ -223,10 +254,23 @@ extension MeetingStore {
     }
 
     func endMeetingNow() async {
-        await cancelCompanionReconnectNow()
-        if let backendSessionID, state.isCompanionConnected {
-            await synchronizeTranscriptOutboxNow(sessionID: backendSessionID)
+        let endingMeetingID = sessionID
+        let endingStartedAt = meetingStartedAt
+        let stopTask = Task { @MainActor [capture] in await capture.stop() }
+        if let endingMeetingID, let endingStartedAt {
+            do {
+                try await transcriptOutbox.markPendingFinalization(
+                    PendingMeetingFinalization(
+                        meetingID: endingMeetingID,
+                        startedAt: endingStartedAt
+                    )
+                )
+            } catch {
+                dispatch(.suggestion("会议结束状态保存失败：\(error.localizedDescription)"))
+            }
         }
+        await stopTask.value
+        await cancelCompanionReconnectNow()
         screenshotController.cancelSelection()
         if state.screenshotOperation == .selecting {
             modify(\.screenshotOperation, to: .idle)
@@ -241,25 +285,88 @@ extension MeetingStore {
         suggestionGenerationTask = nil
         pendingSuggestionRevision = nil
         activeSuggestionGenerationID = nil
-        await capture.stop()
-        if let backendSessionID {
-            try? await backend.perform(sessionID: backendSessionID, action: "stop-native-recording")
-            do {
-                try await backend.perform(sessionID: backendSessionID, action: "store-session")
-                dispatch(.suggestion("会议已保存，可继续生成摘要或向 AI 提问"))
-            } catch {
-                dispatch(.suggestion("会议已结束，但保存失败：\(error.localizedDescription)"))
-            }
+        var finalized = false
+        if let endingMeetingID, let endingStartedAt, state.isCompanionConnected {
+            finalized = await finalizePendingMeetingNow(
+                PendingMeetingFinalization(
+                    meetingID: endingMeetingID,
+                    startedAt: endingStartedAt
+                )
+            )
         }
         sessionID = nil
+        meetingStartedAt = nil
         modify(\.phase, to: .idle)
         modify(\.recordingActivity, to: .inactive)
         modify(\.activeTranscript, to: "")
         modify(\.audioCapture, to: AudioCaptureSnapshot())
+        if !finalized, endingMeetingID != nil {
+            dispatch(.suggestion("会议已在本机结束，等待 AI 服务恢复后同步保存"))
+        }
         if pendingCompanionConfigurationReload {
             await applyPendingCompanionConfigurationReloadNow()
         } else {
             await loadMeetingHistoryNow()
+        }
+    }
+
+    func finalizePendingMeetingsNow() async {
+        let pending: [PendingMeetingFinalization]
+        do {
+            pending = try await transcriptOutbox.pendingFinalizations()
+        } catch {
+            dispatch(.suggestion("待保存会议无法读取：\(error.localizedDescription)"))
+            return
+        }
+        for finalization in pending {
+            guard await finalizePendingMeetingNow(finalization) else { return }
+        }
+    }
+
+    private func finalizePendingMeetingNow(
+        _ finalization: PendingMeetingFinalization
+    ) async -> Bool {
+        do {
+            let remoteSessionID: String
+            if backendSessionID == finalization.meetingID,
+               sessionID == finalization.meetingID,
+               state.isCompanionConnected {
+                remoteSessionID = finalization.meetingID
+            } else {
+                try await backend.healthCheck()
+                remoteSessionID = try await backend.createSession(
+                    sessionID: finalization.meetingID,
+                    startedAt: finalization.startedAt
+                )
+                guard remoteSessionID == finalization.meetingID else {
+                    throw BackendClientError.invalidResponse
+                }
+                try await backend.perform(
+                    sessionID: remoteSessionID,
+                    action: "start-native-recording"
+                )
+            }
+            guard await replayTranscriptOutboxForFinalizationNow(
+                sessionID: remoteSessionID
+            ) else { return false }
+            try await backend.perform(
+                sessionID: remoteSessionID,
+                action: "stop-native-recording"
+            )
+            try await backend.perform(
+                sessionID: remoteSessionID,
+                action: "store-session"
+            )
+            try await transcriptOutbox.completeFinalization(
+                meetingID: finalization.meetingID
+            )
+            dispatch(.suggestion("会议已保存，可继续生成摘要或向 AI 提问"))
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            dispatch(.suggestion("会议仍等待同步保存：\(error.localizedDescription)"))
+            return false
         }
     }
 

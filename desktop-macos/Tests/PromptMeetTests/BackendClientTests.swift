@@ -27,6 +27,38 @@ final class BackendClientTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "POST")
     }
 
+    func testCreateSessionSendsCanonicalMeetingIdentityAndStartTime() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendClientURLProtocol.self]
+        let meetingID = "CE2CB506-925E-4A6E-BB68-E5006AB09BDF"
+        let startedAt = Date(timeIntervalSince1970: 40)
+        BackendClientURLProtocol.handler = { request in
+            let body = try requestBodyData(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["session_id"] as? String, meetingID)
+            XCTAssertNotNil(json["started_at"] as? String)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (
+                response,
+                Data(#"{"success":true,"session_id":"CE2CB506-925E-4A6E-BB68-E5006AB09BDF"}"#.utf8)
+            )
+        }
+        let client = BackendClient(
+            environment: BackendEnvironment(baseURL: URL(string: "http://127.0.0.1:8000")!),
+            session: URLSession(configuration: configuration)
+        )
+
+        let created = try await client.createSession(
+            sessionID: meetingID,
+            startedAt: startedAt
+        )
+
+        XCTAssertEqual(created, meetingID)
+    }
+
     func testRehydrateSessionUsesSameIDAndPausedState() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BackendClientURLProtocol.self]

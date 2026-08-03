@@ -639,6 +639,11 @@ class DesktopAgentService:
         estimator = MeetingContextBuilder._estimate_tokens
         context_lines = []
         spent = 0
+        evidence_reserve = min(
+            token_limit,
+            max(256, min(2_048, token_limit // 3)),
+        )
+        prior_budget = max(0, token_limit - evidence_reserve)
         covered_events = []
         progress = source_progress or {}
         advanced_progress: dict[str, int] = {}
@@ -651,13 +656,22 @@ class DesktopAgentService:
             key=lambda event: (event.payload.revision, event.sequence),
             default=None,
         )
-        if previous_summary is not None:
+        if previous_summary is not None and prior_budget > 0:
             value = self.structured_summary_text(previous_summary.payload)
-            cost = estimator(value)
-            if cost >= token_limit:
-                raise ValueError("此前结构化摘要超过会议摘要上下文预算")
-            context_lines.append(value)
-            spent += cost
+            if estimator(value) > prior_budget:
+                low = 0
+                high = len(value)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    candidate = f"{value[:midpoint]}…"
+                    if estimator(candidate) <= prior_budget:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                value = f"{value[:low].rstrip()}…" if low else ""
+            if value:
+                context_lines.append(value)
+                spent += estimator(value)
         for event in source_events:
             payload = event.payload
             if isinstance(payload, SummaryPayload):
@@ -713,8 +727,8 @@ class DesktopAgentService:
                                     "你是会议总结助手。只输出 JSON 对象，字段为 summary_text、tasks、"
                                     "key_points、decisions。tasks 每项包含 task、describe、priority、"
                                     "assignee、deadline、status。没有行动项时 tasks 为空数组，不得编造。"
-                                    "输入中的此前结构化摘要是上一修订的完整状态；保留仍有效的待办、"
-                                    "关键点与决策，并结合新增证据更新。"
+                                    "输入中若包含此前结构化摘要，保留其中仍有效的待办、关键点与决策，"
+                                    "并结合新增证据更新。"
                                 ),
                             },
                             {

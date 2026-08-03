@@ -57,7 +57,7 @@ struct SummaryGenerationResponse: Decodable, Equatable, Sendable {
 
 protocol BackendClientProtocol: AnyObject, Sendable {
     func healthCheck() async throws
-    func createSession() async throws -> String
+    func createSession(sessionID: String, startedAt: Date) async throws -> String
     func rehydrateSession(sessionID: String, isPaused: Bool) async throws
     func perform(sessionID: String, action: String) async throws
     func generateQuestions(
@@ -112,13 +112,23 @@ final class BackendClient: BackendClientProtocol, @unchecked Sendable {
         try validate(response)
     }
 
-    func createSession() async throws -> String {
-        let (data, response) = try await session.data(
-            for: environment.request(path: "/api/sessions", method: "POST")
+    func createSession(sessionID: String, startedAt: Date) async throws -> String {
+        var request = environment.request(path: "/api/sessions", method: "POST")
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "session_id": sessionID,
+                "started_at": formatter.string(from: startedAt)
+            ]
         )
+        let (data, response) = try await session.data(for: request)
         try validate(response)
         guard let result = try? JSONDecoder().decode(BackendCreateSessionResponse.self, from: data) else {
             throw BackendClientError.missingSessionID
+        }
+        guard result.sessionID == sessionID else {
+            throw BackendClientError.invalidResponse
         }
         return result.sessionID
     }

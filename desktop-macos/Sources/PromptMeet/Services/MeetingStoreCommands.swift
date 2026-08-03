@@ -12,6 +12,7 @@ extension MeetingStore {
     func prepareCompanionNow() async {
         do {
             try await companion.ensureRunning()
+            await finalizePendingMeetingsNow()
             await loadMeetingHistoryNow()
         } catch {
             dispatch(.suggestion("AI companion 暂未连接：\(error.localizedDescription)"))
@@ -61,6 +62,7 @@ extension MeetingStore {
             try await companion.reloadConfiguration()
             try await backend.healthCheck()
             dispatch(.companionConnected)
+            await finalizePendingMeetingsNow()
             await loadMeetingHistoryNow()
             dispatch(.suggestion("AI 服务配置已更新"))
             return true
@@ -223,6 +225,11 @@ extension MeetingStore {
     }
 
     func shutdownNow() async {
+        if isMeetingActive {
+            await endMeetingNow()
+        } else {
+            await capture.stop()
+        }
         screenshotController.cancelSelection()
         suggestionDebounceTask?.cancel()
         suggestionDebounceTask = nil
@@ -237,7 +244,6 @@ extension MeetingStore {
         transcriptSyncTask?.cancel()
         transcriptSyncTask = nil
         transcriptSyncGeneration = nil
-        await capture.stop()
         backend.disconnect()
         companion.stopOwnedProcess()
     }

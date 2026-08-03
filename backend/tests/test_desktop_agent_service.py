@@ -303,6 +303,58 @@ def test_summary_chunks_oversized_events_with_monotonic_exact_progress(
     assert "周五发布" in content
 
 
+def test_large_structured_summary_cannot_consume_new_evidence_allocation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: SummaryClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SUMMARY_PROVIDER": "openai",
+            "PROMPTMEET_SUMMARY_MODEL": "summary-model",
+            "OPENAI_API_KEY": "test-key",
+        }
+    )
+    prior = MeetingEvent(
+        event_id="summary-large",
+        meeting_id="summary-reserve",
+        sequence=2,
+        occurred_at=datetime(2026, 7, 29, tzinfo=UTC),
+        kind=EventKind.SUMMARY,
+        provenance=EventProvenance(source="test"),
+        payload=SummaryPayload(
+            summary_text="历史摘要" * 20_000,
+            tasks=[{"task": "保留任务" * 2_000, "status": "pending"}],
+            key_points=["保留要点" * 2_000],
+            decisions=["保留决策" * 2_000],
+        ),
+    )
+    evidence = MeetingEvent(
+        event_id="new-evidence",
+        meeting_id="summary-reserve",
+        sequence=3,
+        occurred_at=datetime(2026, 7, 29, 0, 1, tzinfo=UTC),
+        kind=EventKind.TRANSCRIPT,
+        provenance=EventProvenance(source="test"),
+        payload=TranscriptPayload(segment_id="new", text="必须推进的新证据"),
+    )
+    record = MeetingRecord(
+        meeting_id="summary-reserve",
+        started_at=datetime(2026, 7, 29, tzinfo=UTC),
+        events=[prior, evidence],
+    )
+
+    result = asyncio.run(service.summarize_meeting(record, record.events, {}))
+
+    assert result.source_progress["new-evidence"] > 0
+    assert result.source_event_ids == ["new-evidence"]
+    content = SummaryClient.last_payload["messages"][1]["content"]
+    assert "必须推进的新证据" in content
+    assert len(content) < 30_000
+
+
 def test_generate_questions_returns_structured_desktop_questions(monkeypatch) -> None:
     monkeypatch.setattr(
         "services.desktop_agent_service.httpx.AsyncClient",

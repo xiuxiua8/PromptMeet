@@ -249,18 +249,18 @@ extension MeetingStore {
             )
         )
         registerMeetingInput(token: "transcript:\(transcript.id.uuidString.lowercased())")
-        guard let backendSessionID else { return }
+        guard let meetingID = sessionID else { return }
         do {
             try await transcriptOutbox.enqueue(
                 transcript,
-                meetingID: backendSessionID
+                meetingID: meetingID
             )
         } catch {
             dispatch(.suggestion("本机转写同步队列保存失败：\(error.localizedDescription)"))
             return
         }
-        if state.isCompanionConnected {
-            await synchronizeTranscriptOutboxNow(sessionID: backendSessionID)
+        if state.isCompanionConnected, backendSessionID == meetingID {
+            await synchronizeTranscriptOutboxNow(sessionID: meetingID)
         }
     }
 
@@ -314,6 +314,26 @@ extension MeetingStore {
                 return false
             } catch {
                 dispatch(.suggestion("转写已保留在本机，暂未同步到会议服务"))
+                return false
+            }
+        }
+        return false
+    }
+
+    func replayTranscriptOutboxForFinalizationNow(sessionID: String) async -> Bool {
+        while !Task.isCancelled {
+            do {
+                guard let transcript = try await transcriptOutbox
+                    .pending(meetingID: sessionID).first else { return true }
+                try await backend.submitTranscript(transcript, sessionID: sessionID)
+                try await transcriptOutbox.acknowledge(
+                    transcript.id,
+                    meetingID: sessionID
+                )
+            } catch is CancellationError {
+                return false
+            } catch {
+                dispatch(.suggestion("转写已保留在本机，会议仍等待同步保存"))
                 return false
             }
         }

@@ -9,6 +9,7 @@ final class MeetingStore: ObservableObject {
     @Published var topChromeWidth: CGFloat = 200
     @Published var topChromeHeight: CGFloat = 34
     var backendSessionID: String?
+    var meetingStartedAt: Date?
     var uiPreviewMode: String?
 
     let backend: BackendClientProtocol

@@ -4,6 +4,14 @@ protocol TranscriptOutboxStoring: Sendable {
     func enqueue(_ transcript: LocalTranscript, meetingID: String) async throws
     func pending(meetingID: String) async throws -> [LocalTranscript]
     func acknowledge(_ transcriptID: UUID, meetingID: String) async throws
+    func markPendingFinalization(_ finalization: PendingMeetingFinalization) async throws
+    func pendingFinalizations() async throws -> [PendingMeetingFinalization]
+    func completeFinalization(meetingID: String) async throws
+}
+
+struct PendingMeetingFinalization: Codable, Equatable, Sendable {
+    let meetingID: String
+    let startedAt: Date
 }
 
 enum TranscriptOutboxError: LocalizedError {
@@ -51,10 +59,12 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
     private struct Document: Codable {
         let version: Int
         var entries: [Entry]
+        var finalizations: [PendingMeetingFinalization]?
     }
 
     private let fileURL: URL
     private var entries: [Entry] = []
+    private var finalizations: [PendingMeetingFinalization] = []
     private var loaded = false
 
     init(fileURL: URL? = nil) {
@@ -97,6 +107,31 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
         }
     }
 
+    func markPendingFinalization(
+        _ finalization: PendingMeetingFinalization
+    ) async throws {
+        try loadIfNeeded()
+        guard !finalizations.contains(where: { $0.meetingID == finalization.meetingID }) else {
+            return
+        }
+        finalizations.append(finalization)
+        try persist()
+    }
+
+    func pendingFinalizations() async throws -> [PendingMeetingFinalization] {
+        try loadIfNeeded()
+        return finalizations.sorted { $0.startedAt < $1.startedAt }
+    }
+
+    func completeFinalization(meetingID: String) async throws {
+        try loadIfNeeded()
+        let previousCount = finalizations.count
+        finalizations.removeAll { $0.meetingID == meetingID }
+        if finalizations.count != previousCount {
+            try persist()
+        }
+    }
+
     private func loadIfNeeded() throws {
         guard !loaded else { return }
         loaded = true
@@ -106,8 +141,11 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
                 Document.self,
                 from: Data(contentsOf: fileURL)
             )
-            guard document.version == 1 else { throw TranscriptOutboxError.invalidData }
+            guard (1...2).contains(document.version) else {
+                throw TranscriptOutboxError.invalidData
+            }
             entries = document.entries
+            finalizations = document.finalizations ?? []
         } catch {
             loaded = false
             throw TranscriptOutboxError.invalidData
@@ -121,7 +159,9 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(Document(version: 1, entries: entries))
+        let data = try encoder.encode(
+            Document(version: 2, entries: entries, finalizations: finalizations)
+        )
         try data.write(to: fileURL, options: .atomic)
     }
 

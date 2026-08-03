@@ -176,6 +176,11 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
         let isPaused: Bool
     }
 
+    struct CreatedSessionRequest: Equatable {
+        let sessionID: String
+        let startedAt: Date
+    }
+
     var summaryRequests: [SummaryGenerationRequest] = []
     var summaryResponse = SummaryGenerationResponse(
         success: true,
@@ -199,6 +204,7 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var questionCompletionCount = 0
     var questionCancellationCount = 0
     var createSessionCount = 0
+    var createdSessionRequests: [CreatedSessionRequest] = []
     var rehydrateDelay: Duration?
     var rehydrateRequests: [RehydrateRequest] = []
     var rehydrateCancellationCount = 0
@@ -209,9 +215,14 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
         await MainActor.run { healthCheckCount += 1 }
     }
 
-    func createSession() async throws -> String {
-        await MainActor.run { createSessionCount += 1 }
-        return "session-1"
+    func createSession(sessionID: String, startedAt: Date) async throws -> String {
+        await MainActor.run {
+            createSessionCount += 1
+            createdSessionRequests.append(
+                CreatedSessionRequest(sessionID: sessionID, startedAt: startedAt)
+            )
+        }
+        return sessionID
     }
 
     func rehydrateSession(sessionID: String, isPaused: Bool) async throws {

@@ -79,11 +79,12 @@ final class MeetingStoreTests: XCTestCase {
         await store.startMeetingNow()
 
         XCTAssertEqual(store.state.phase, .live)
-        XCTAssertTrue(store.sessionID?.hasPrefix("local-") == true)
+        let meetingID = store.sessionID
+        XCTAssertNotNil(meetingID.flatMap(UUID.init(uuidString:)))
         XCTAssertEqual(backend.performedActions, ["start-native-recording"])
-        XCTAssertEqual(backend.connectedSessionID, "session-1")
-        XCTAssertEqual(capture.backendSessionID, "session-1")
-        XCTAssertTrue(capture.startedSessionID?.hasPrefix("local-") == true)
+        XCTAssertEqual(backend.connectedSessionID, meetingID)
+        XCTAssertEqual(capture.backendSessionID, meetingID)
+        XCTAssertEqual(capture.startedSessionID, meetingID)
         XCTAssertEqual(companion.ensureCount, 1)
     }
 
@@ -191,6 +192,7 @@ final class MeetingStoreTests: XCTestCase {
             companion: CompanionLauncherSpy()
         )
         await store.startMeetingNow()
+        let meetingID = store.sessionID
         await store.submitPromptNow("总结当前风险")
 
         backend.emit(.companionDisconnected("连接已关闭"))
@@ -224,7 +226,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(backend.connectCount, 2)
         XCTAssertEqual(
             backend.rehydrateRequests,
-            [.init(sessionID: "session-1", isPaused: true)]
+            meetingID.map { [.init(sessionID: $0, isPaused: true)] } ?? []
         )
         XCTAssertEqual(backend.createSessionCount, 1)
         backend.emit(.connectionEstablished)
@@ -333,7 +335,7 @@ final class MeetingStoreTests: XCTestCase {
             ["start-native-recording", "stop-native-recording", "mark-incomplete"]
         )
         XCTAssertEqual(backend.createSessionCount, 1)
-        XCTAssertEqual(backend.connectedSessionID, "session-1")
+        XCTAssertEqual(backend.connectedSessionID, backend.createdSessionRequests.first?.sessionID)
         XCTAssertEqual(capture.stopCount, 1)
         XCTAssertEqual(backend.disconnectCount, 0)
     }
