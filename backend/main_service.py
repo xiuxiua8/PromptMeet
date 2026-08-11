@@ -611,17 +611,24 @@ async def create_session(request: SessionCreateRequest | None = None):
         if request and request.session_id
         else str(uuid.uuid4())
     )
-    existing_session = session_manager.get_session(session_id)
-    if existing_session is not None:
-        return {"success": True, "session_id": session_id, "message": "会话已存在"}
     existing_record = meeting_repository.get(session_id)
     if existing_record is not None:
         if existing_record.status == MeetingStatus.RECOVERY_REQUIRED:
             raise HTTPException(status_code=409, detail="会议记录需要恢复")
-        is_active = (
-            existing_record.status == MeetingStatus.ACTIVE
-            and existing_record.ended_at is None
-        )
+        if existing_record.status == MeetingStatus.INCOMPLETE:
+            raise HTTPException(status_code=409, detail="不完整会议仍等待恢复完成")
+        if existing_record.status == MeetingStatus.ACTIVE:
+            if existing_record.ended_at is not None:
+                raise HTTPException(status_code=409, detail="会议记录状态不一致")
+            is_active = True
+        elif existing_record.status == MeetingStatus.COMPLETED:
+            is_active = False
+        else:
+            raise HTTPException(status_code=409, detail="会议状态不支持恢复")
+    existing_session = session_manager.get_session(session_id)
+    if existing_session is not None:
+        return {"success": True, "session_id": session_id, "message": "会话已存在"}
+    if existing_record is not None:
         restore_session_from_record(
             existing_record,
             is_recording=is_active,

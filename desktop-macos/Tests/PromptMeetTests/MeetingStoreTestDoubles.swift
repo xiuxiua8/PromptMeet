@@ -198,6 +198,7 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var transcriptSubmissionError: (any Error)?
     var disconnectCount = 0
     var history: [StoredMeeting] = []
+    var finalizationStatus: StoredMeetingStatus = .completed
     var performDelay: Duration?
     var questionDelay: Duration?
     var questionRequests: [QuestionRequest] = []
@@ -313,11 +314,17 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     }
 
     func fetchMeeting(id: String) async throws -> StoredMeeting {
-        try await MainActor.run {
-            guard let meeting = history.first(where: { $0.id == id }) else {
-                throw BackendClientError.serviceMessage("会议不存在")
+        await MainActor.run {
+            if let meeting = history.first(where: { $0.id == id }) {
+                return meeting
             }
-            return meeting
+            return StoredMeeting(
+                id: id,
+                status: finalizationStatus,
+                startTime: Date(timeIntervalSince1970: 0),
+                transcript: [],
+                summary: nil
+            )
         }
     }
 

@@ -711,6 +711,35 @@ def test_completed_session_rebind_and_finalization_are_idempotent(
     assert rebound_session["is_recording"] is False
 
 
+def test_incomplete_session_cannot_be_rebound_as_completed_finalization(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = "EE2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    started_at = "2026-07-25T10:00:00+00:00"
+    assert client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    ).status_code == 200
+    assert client.post(
+        f"/api/sessions/{meeting_id}/mark-incomplete"
+    ).status_code == 200
+    main_service.session_manager.remove_session(meeting_id)
+
+    rebound = client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    )
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+
+    assert rebound.status_code == 409
+    assert record["status"] == MeetingStatus.INCOMPLETE
+    assert client.get(f"/api/sessions/{meeting_id}").status_code == 404
+
+
 def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
     monkeypatch, tmp_path
 ) -> None:

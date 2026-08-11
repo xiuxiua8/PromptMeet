@@ -252,6 +252,31 @@ final class TranscriptOutboxTests: XCTestCase {
         XCTAssertEqual(remaining.map(\.meetingID), [first.meetingID])
     }
 
+    @MainActor
+    func testIncompleteBackendRecordKeepsPendingFinalizationRecoverable() async throws {
+        let fileURL = temporaryOutboxURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let outbox = TranscriptOutboxStore(fileURL: fileURL)
+        let finalization = PendingMeetingFinalization(
+            meetingID: "00000000-0000-0000-0000-000000000061",
+            startedAt: Date(timeIntervalSince1970: 70)
+        )
+        try await outbox.markPendingFinalization(finalization)
+        let backend = BackendClientSpy()
+        backend.finalizationStatus = .incomplete
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: outbox
+        )
+
+        await store.prepareCompanionNow()
+
+        let remaining = try await outbox.pendingFinalizations()
+        XCTAssertEqual(remaining, [finalization])
+    }
+
     private func temporaryOutboxURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("PromptMeetOutboxTests-\(UUID().uuidString)", isDirectory: true)

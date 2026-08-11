@@ -371,6 +371,10 @@ extension MeetingStore {
                 sessionID: remoteSessionID,
                 action: "store-session"
             )
+            let storedMeeting = try await backend.fetchMeeting(id: remoteSessionID)
+            guard storedMeeting.status == .completed else {
+                throw BackendClientError.serviceMessage("会议仍未完成，已保留待同步状态")
+            }
             try await transcriptOutbox.completeFinalization(
                 meetingID: finalization.meetingID
             )
