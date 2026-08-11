@@ -4,9 +4,15 @@ protocol TranscriptOutboxStoring: Sendable {
     func enqueue(_ transcript: LocalTranscript, meetingID: String) async throws
     func pending(meetingID: String) async throws -> [LocalTranscript]
     func acknowledge(_ transcriptID: UUID, meetingID: String) async throws
+    func markActiveMeeting(_ meeting: ActiveMeetingEnvelope) async throws
     func markPendingFinalization(_ finalization: PendingMeetingFinalization) async throws
     func pendingFinalizations() async throws -> [PendingMeetingFinalization]
     func completeFinalization(meetingID: String) async throws
+}
+
+struct ActiveMeetingEnvelope: Codable, Equatable, Sendable {
+    let meetingID: String
+    let startedAt: Date
 }
 
 struct PendingMeetingFinalization: Codable, Equatable, Sendable {
@@ -59,11 +65,13 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
     private struct Document: Codable {
         let version: Int
         var entries: [Entry]
+        var activeMeetings: [ActiveMeetingEnvelope]?
         var finalizations: [PendingMeetingFinalization]?
     }
 
     private let fileURL: URL
     private var entries: [Entry] = []
+    private var activeMeetings: [ActiveMeetingEnvelope] = []
     private var finalizations: [PendingMeetingFinalization] = []
     private var loaded = false
 
@@ -107,28 +115,85 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
         }
     }
 
+    func markActiveMeeting(_ meeting: ActiveMeetingEnvelope) async throws {
+        try loadIfNeeded()
+        guard !activeMeetings.contains(where: { $0.meetingID == meeting.meetingID }),
+              !finalizations.contains(where: { $0.meetingID == meeting.meetingID }) else {
+            return
+        }
+        activeMeetings.append(meeting)
+        do {
+            try persist()
+        } catch {
+            activeMeetings.removeAll { $0.meetingID == meeting.meetingID }
+            throw error
+        }
+    }
+
     func markPendingFinalization(
         _ finalization: PendingMeetingFinalization
     ) async throws {
         try loadIfNeeded()
-        guard !finalizations.contains(where: { $0.meetingID == finalization.meetingID }) else {
+        let previousActive = activeMeetings
+        let previousFinalizations = finalizations
+        activeMeetings.removeAll { $0.meetingID == finalization.meetingID }
+        if !finalizations.contains(where: { $0.meetingID == finalization.meetingID }) {
+            finalizations.append(finalization)
+        }
+        guard activeMeetings != previousActive || finalizations != previousFinalizations else {
             return
         }
-        finalizations.append(finalization)
-        try persist()
+        do {
+            try persist()
+        } catch {
+            activeMeetings = previousActive
+            finalizations = previousFinalizations
+            throw error
+        }
     }
 
     func pendingFinalizations() async throws -> [PendingMeetingFinalization] {
         try loadIfNeeded()
+        if !activeMeetings.isEmpty {
+            let previousActive = activeMeetings
+            let previousFinalizations = finalizations
+            for meeting in activeMeetings where !finalizations.contains(
+                where: { $0.meetingID == meeting.meetingID }
+            ) {
+                finalizations.append(
+                    PendingMeetingFinalization(
+                        meetingID: meeting.meetingID,
+                        startedAt: meeting.startedAt
+                    )
+                )
+            }
+            activeMeetings.removeAll()
+            do {
+                try persist()
+            } catch {
+                activeMeetings = previousActive
+                finalizations = previousFinalizations
+                throw error
+            }
+        }
         return finalizations.sorted { $0.startedAt < $1.startedAt }
     }
 
     func completeFinalization(meetingID: String) async throws {
         try loadIfNeeded()
-        let previousCount = finalizations.count
+        let previousActive = activeMeetings
+        let previousFinalizations = finalizations
+        activeMeetings.removeAll { $0.meetingID == meetingID }
         finalizations.removeAll { $0.meetingID == meetingID }
-        if finalizations.count != previousCount {
+        guard activeMeetings != previousActive || finalizations != previousFinalizations else {
+            return
+        }
+        do {
             try persist()
+        } catch {
+            activeMeetings = previousActive
+            finalizations = previousFinalizations
+            throw error
         }
     }
 
@@ -141,10 +206,11 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
                 Document.self,
                 from: Data(contentsOf: fileURL)
             )
-            guard (1...2).contains(document.version) else {
+            guard (1...3).contains(document.version) else {
                 throw TranscriptOutboxError.invalidData
             }
             entries = document.entries
+            activeMeetings = document.activeMeetings ?? []
             finalizations = document.finalizations ?? []
         } catch {
             loaded = false
@@ -160,7 +226,12 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(
-            Document(version: 2, entries: entries, finalizations: finalizations)
+            Document(
+                version: 3,
+                entries: entries,
+                activeMeetings: activeMeetings,
+                finalizations: finalizations
+            )
         )
         try data.write(to: fileURL, options: .atomic)
     }

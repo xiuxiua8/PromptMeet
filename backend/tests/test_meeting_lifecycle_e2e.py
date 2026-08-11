@@ -545,11 +545,11 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     assert len(summaries[1]["payload"]["source_event_ids"]) == 1
     assert summaries[1]["provenance"]["provider"] == "openai"
     assert summaries[1]["provenance"]["model"] == "summary-model"
+    assert summaries[0]["payload"]["summary_text"] == "第 1 版摘要"
+    assert summaries[1]["payload"]["summary_text"] == "第 2 版摘要"
     assert summaries[1]["payload"]["tasks"][0]["task"] == "完成回滚演练"
-    assert "第 1 版摘要" in summaries[1]["payload"]["summary_text"]
-    assert "第 2 版摘要" in summaries[1]["payload"]["summary_text"]
-    assert summaries[1]["payload"]["key_points"] == ["冻结范围"]
-    assert summaries[1]["payload"]["decisions"] == ["周五发布"]
+    assert summaries[1]["payload"]["key_points"] == []
+    assert summaries[1]["payload"]["decisions"] == []
     assert summaries[1]["payload"]["source_progress"]
     assert [event.kind for event in agent.calls[1]] == [
         EventKind.SUMMARY,
@@ -670,6 +670,45 @@ def test_create_session_accepts_canonical_client_meeting_identity(
     assert created.json()["session_id"] == meeting_id
     assert rebound.json()["session_id"] == meeting_id
     assert client.get(f"/api/sessions/{meeting_id}").status_code == 200
+
+
+def test_completed_session_rebind_and_finalization_are_idempotent(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
+    main_service = importlib.import_module("main_service")
+    configure(main_service, tmp_path / "meeting-data", monkeypatch)
+    client = TestClient(main_service.app)
+    meeting_id = "DE2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    started_at = "2026-07-25T10:00:00+00:00"
+    assert client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    ).status_code == 200
+    assert client.post(
+        f"/api/sessions/{meeting_id}/start-native-recording"
+    ).status_code == 200
+    assert client.post(
+        f"/api/sessions/{meeting_id}/stop-native-recording"
+    ).status_code == 200
+    completed = client.get(f"/api/meetings/{meeting_id}").json()
+    main_service.session_manager.remove_session(meeting_id)
+
+    rebound = client.post(
+        "/api/sessions",
+        json={"session_id": meeting_id, "started_at": started_at},
+    )
+    restarted = client.post(
+        f"/api/sessions/{meeting_id}/start-native-recording"
+    )
+    stored = client.post(f"/api/sessions/{meeting_id}/store-session")
+    record = client.get(f"/api/meetings/{meeting_id}").json()
+    rebound_session = client.get(f"/api/sessions/{meeting_id}").json()["session"]
+
+    assert rebound.status_code == restarted.status_code == stored.status_code == 200
+    assert record["status"] == MeetingStatus.COMPLETED
+    assert record["events"] == completed["events"]
+    assert rebound_session["is_recording"] is False
 
 
 def test_invalid_summary_tasks_do_not_advance_persisted_coverage(

@@ -274,6 +274,14 @@ async def start_native_recording(session_id: str) -> None:
     session = session_manager.get_session(session_id)
     if not session or session.is_recording:
         return
+    if DESKTOP_MODE:
+        record = meeting_repository.get(session_id)
+        if (
+            record is None
+            or record.status != MeetingStatus.ACTIVE
+            or record.ended_at is not None
+        ):
+            return
     if not DESKTOP_MODE:
         await process_manager.start_question_process(session_id)
     session.is_recording = True
@@ -608,13 +616,22 @@ async def create_session(request: SessionCreateRequest | None = None):
         return {"success": True, "session_id": session_id, "message": "会话已存在"}
     existing_record = meeting_repository.get(session_id)
     if existing_record is not None:
-        if (
-            existing_record.status != MeetingStatus.ACTIVE
-            or existing_record.ended_at is not None
-        ):
-            raise HTTPException(status_code=409, detail="会议已结束，不能重新绑定")
-        await rehydrate_session(session_id, SessionRehydrateRequest(is_paused=False))
-        return {"success": True, "session_id": session_id, "message": "会话已恢复"}
+        if existing_record.status == MeetingStatus.RECOVERY_REQUIRED:
+            raise HTTPException(status_code=409, detail="会议记录需要恢复")
+        is_active = (
+            existing_record.status == MeetingStatus.ACTIVE
+            and existing_record.ended_at is None
+        )
+        restore_session_from_record(
+            existing_record,
+            is_recording=is_active,
+            is_paused=False,
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "会话已恢复" if is_active else "会话已完成",
+        }
     started_at = (
         request.started_at
         if request and request.started_at is not None
@@ -660,6 +677,21 @@ async def rehydrate_session(
         raise HTTPException(status_code=404, detail="会议持久记录不存在")
     if record.status != MeetingStatus.ACTIVE or record.ended_at is not None:
         raise HTTPException(status_code=409, detail="仅可恢复仍在进行的会议")
+    restore_session_from_record(
+        record,
+        is_recording=True,
+        is_paused=request.is_paused,
+    )
+    return {"success": True, "session_id": session_id, "rehydrated": True}
+
+
+def restore_session_from_record(
+    record: MeetingRecord,
+    *,
+    is_recording: bool,
+    is_paused: bool,
+) -> SessionState:
+    session_id = record.meeting_id
     transcript_segments = [
         TranscriptSegment(
             id=event.payload.segment_id,
@@ -705,10 +737,10 @@ async def rehydrate_session(
     existing = session_manager.get_session(session_id)
     restored = SessionState(
         session_id=session_id,
-        is_recording=True,
-        is_paused=request.is_paused,
+        is_recording=is_recording,
+        is_paused=is_paused,
         start_time=record.started_at,
-        end_time=None,
+        end_time=None if is_recording else record.ended_at,
         transcript_segments=transcript_segments,
         current_summary=current_summary,
         participant_count=existing.participant_count if existing else 0,
@@ -718,7 +750,7 @@ async def rehydrate_session(
         session_manager.add_session(restored)
     else:
         session_manager.update_session(restored)
-    return {"success": True, "session_id": session_id, "rehydrated": True}
+    return restored
 
 
 @app.post("/api/sessions/{session_id}/mark-incomplete")
@@ -876,9 +908,6 @@ def merge_incremental_summary(
     )
     if previous_summary is None:
         return generated
-    summary_text = generated.summary_text
-    if previous_summary.summary_text.strip() not in summary_text:
-        summary_text = f"{previous_summary.summary_text.rstrip()}\n\n{summary_text}"
     tasks = list(generated.tasks)
     task_names = {task.task.strip().casefold() for task in tasks}
     for value in previous_summary.tasks:
@@ -887,30 +916,13 @@ def merge_incremental_summary(
         except ValueError:
             continue
         identity = task.task.strip().casefold()
-        if task.status == "completed" or identity in task_names:
+        status = task.status.strip().casefold()
+        if status not in {"pending", "in_progress"} or identity in task_names:
             continue
         tasks.append(task)
         task_names.add(identity)
 
-    def retained(previous: list[str], current: list[str]) -> list[str]:
-        values = []
-        seen = set()
-        for value in [*previous, *current]:
-            normalized = value.strip().casefold()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            values.append(value)
-        return values
-
-    return generated.model_copy(
-        update={
-            "summary_text": summary_text,
-            "tasks": tasks,
-            "key_points": retained(previous_summary.key_points, generated.key_points),
-            "decisions": retained(previous_summary.decisions, generated.decisions),
-        }
-    )
+    return generated.model_copy(update={"tasks": tasks})
 
 
 async def generate_desktop_summary(

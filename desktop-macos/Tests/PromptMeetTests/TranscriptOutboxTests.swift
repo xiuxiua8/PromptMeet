@@ -173,6 +173,85 @@ final class TranscriptOutboxTests: XCTestCase {
         XCTAssertTrue(remainingTranscripts.isEmpty)
     }
 
+    @MainActor
+    func testCrashDuringActiveMeetingRecoversCanonicalMeetingAndEvidence() async throws {
+        let fileURL = temporaryOutboxURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let firstOutbox = TranscriptOutboxStore(fileURL: fileURL)
+        let firstStore = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(error: BackendClientError.socketUnavailable),
+            transcriptOutbox: firstOutbox,
+            now: { Date(timeIntervalSince1970: 50) }
+        )
+        await firstStore.startMeetingNow()
+        let meetingID = try XCTUnwrap(firstStore.sessionID)
+        let transcript = LocalTranscript(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000041")!,
+            source: .system,
+            text: "崩溃前已经识别的证据",
+            timestamp: Date(timeIntervalSince1970: 51)
+        )
+        await firstStore.receiveLocalTranscript(transcript)
+
+        let restoredOutbox = TranscriptOutboxStore(fileURL: fileURL)
+        let restoredBackend = BackendClientSpy()
+        let restoredStore = MeetingStore(
+            backend: restoredBackend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: restoredOutbox
+        )
+        await restoredStore.prepareCompanionNow()
+
+        XCTAssertEqual(restoredBackend.createdSessionRequests.map(\.sessionID), [meetingID])
+        XCTAssertEqual(restoredBackend.submittedTranscripts.map(\.id), [transcript.id])
+        XCTAssertEqual(
+            restoredBackend.performedActions,
+            ["start-native-recording", "stop-native-recording", "store-session"]
+        )
+        let finalizations = try await restoredOutbox.pendingFinalizations()
+        let transcripts = try await restoredOutbox.pending(meetingID: meetingID)
+        XCTAssertTrue(finalizations.isEmpty)
+        XCTAssertTrue(transcripts.isEmpty)
+    }
+
+    @MainActor
+    func testFailedPendingMeetingDoesNotBlockLaterFinalization() async throws {
+        let fileURL = temporaryOutboxURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let outbox = TranscriptOutboxStore(fileURL: fileURL)
+        let first = PendingMeetingFinalization(
+            meetingID: "00000000-0000-0000-0000-000000000051",
+            startedAt: Date(timeIntervalSince1970: 60)
+        )
+        let second = PendingMeetingFinalization(
+            meetingID: "00000000-0000-0000-0000-000000000052",
+            startedAt: Date(timeIntervalSince1970: 61)
+        )
+        try await outbox.markPendingFinalization(first)
+        try await outbox.markPendingFinalization(second)
+        let backend = BackendClientSpy()
+        backend.createSessionFailures = [first.meetingID]
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: outbox
+        )
+
+        await store.prepareCompanionNow()
+
+        XCTAssertEqual(backend.createdSessionRequests.map(\.sessionID), [second.meetingID])
+        XCTAssertEqual(
+            backend.performedActions,
+            ["start-native-recording", "stop-native-recording", "store-session"]
+        )
+        let remaining = try await outbox.pendingFinalizations()
+        XCTAssertEqual(remaining.map(\.meetingID), [first.meetingID])
+    }
+
     private func temporaryOutboxURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("PromptMeetOutboxTests-\(UUID().uuidString)", isDirectory: true)

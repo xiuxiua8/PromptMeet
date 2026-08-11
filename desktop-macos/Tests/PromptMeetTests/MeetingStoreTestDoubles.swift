@@ -205,6 +205,7 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     var questionCancellationCount = 0
     var createSessionCount = 0
     var createdSessionRequests: [CreatedSessionRequest] = []
+    var createSessionFailures: Set<String> = []
     var rehydrateDelay: Duration?
     var rehydrateRequests: [RehydrateRequest] = []
     var rehydrateCancellationCount = 0
@@ -216,6 +217,9 @@ final class BackendClientSpy: BackendClientProtocol, @unchecked Sendable {
     }
 
     func createSession(sessionID: String, startedAt: Date) async throws -> String {
+        if await MainActor.run(body: { createSessionFailures.contains(sessionID) }) {
+            throw BackendClientError.socketUnavailable
+        }
         await MainActor.run {
             createSessionCount += 1
             createdSessionRequests.append(

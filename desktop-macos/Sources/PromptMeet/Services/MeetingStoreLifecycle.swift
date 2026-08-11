@@ -13,6 +13,16 @@ extension MeetingStore {
         let startedAt = now()
         sessionID = meetingID
         meetingStartedAt = startedAt
+        do {
+            try await transcriptOutbox.markActiveMeeting(
+                ActiveMeetingEnvelope(meetingID: meetingID, startedAt: startedAt)
+            )
+        } catch {
+            sessionID = nil
+            meetingStartedAt = nil
+            dispatch(.failure("会议恢复信息保存失败：\(error.localizedDescription)"))
+            return
+        }
         let remoteRecordingStarted = await connectMeetingCompanion(
             meetingID: meetingID,
             startedAt: startedAt
@@ -24,6 +34,7 @@ extension MeetingStore {
             startAutomationClock(at: now())
         } catch {
             await rollbackFailedCaptureStart(remoteRecordingStarted: remoteRecordingStarted)
+            try? await transcriptOutbox.completeFinalization(meetingID: meetingID)
             dispatch(.failure(error.localizedDescription))
         }
     }
@@ -319,7 +330,10 @@ extension MeetingStore {
             return
         }
         for finalization in pending {
-            guard await finalizePendingMeetingNow(finalization) else { return }
+            if isMeetingActive, finalization.meetingID == sessionID {
+                continue
+            }
+            _ = await finalizePendingMeetingNow(finalization)
         }
     }
 
