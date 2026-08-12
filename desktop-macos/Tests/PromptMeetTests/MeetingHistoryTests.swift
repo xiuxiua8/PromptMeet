@@ -62,6 +62,23 @@ final class MeetingHistoryTests: XCTestCase {
         XCTAssertEqual(meeting.suggestions, ["谁负责上线？", "何时冻结范围？"])
     }
 
+    func testStoredMeetingRestoresLegacySingleQuestionSuggestion() throws {
+        let data = Data(
+            (#"[{"schema_version":2,"meeting_id":"meeting-single-suggestion","status":"completed","#
+                + #""started_at":"2026-07-26T10:00:00Z","events":[{"event_id":"event-1","#
+                + #""meeting_id":"meeting-single-suggestion","sequence":1,"#
+                + #""occurred_at":"2026-07-26T10:00:01Z","kind":"suggestions","#
+                + #""provenance":{"source":"suggestion_service"},"payload":{"type":"suggestions","#
+                + #""generation_id":"22222222-2222-2222-2222-222222222222","context_revision":2,"#
+                + #""questions":["谁负责上线？"]}}]}]"#)
+                .utf8
+        )
+
+        let meeting = try XCTUnwrap(StoredMeeting.parseList(data).first)
+
+        XCTAssertEqual(meeting.suggestions, ["谁负责上线？"])
+    }
+
     func testUntitledVersionTwoRecordKeepsStableDisplayFallbackWithoutChangingSchemaValue() throws {
         let data = Data(
             (#"[{"schema_version":2,"meeting_id":"meeting-untitled","status":"completed","#

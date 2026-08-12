@@ -125,13 +125,20 @@ struct MeetingSummaryContent: Equatable, Sendable {
 }
 
 enum SuggestedQuestionSet {
+    private static func normalized(_ questions: [String]) -> [String]? {
+        let trimmed = questions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard Set(trimmed).count == trimmed.count else { return nil }
+        return trimmed
+    }
+
     static func accepted(_ questions: [String]) -> [String]? {
-        let normalized = questions.reduce(into: [String]()) { result, question in
-            let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty, !result.contains(trimmed) {
-                result.append(trimmed)
-            }
-        }
+        guard let normalized = normalized(questions) else { return nil }
+        return (2...3).contains(normalized.count) ? normalized : nil
+    }
+
+    static func acceptedForRestore(_ questions: [String]) -> [String]? {
+        guard let normalized = normalized(questions) else { return nil }
         return (1...3).contains(normalized.count) ? normalized : nil
     }
 }

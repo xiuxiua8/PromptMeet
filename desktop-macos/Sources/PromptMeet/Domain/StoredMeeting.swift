@@ -22,7 +22,7 @@ struct StoredMeeting: Identifiable, Equatable, Sendable {
     var suggestions: [String] {
         timeline.reversed().compactMap { event -> [String]? in
             guard case .suggestions(let value) = event.payload else { return nil }
-            return SuggestedQuestionSet.accepted(value.questions)
+            return SuggestedQuestionSet.acceptedForRestore(value.questions)
         }.first ?? []
     }
 
