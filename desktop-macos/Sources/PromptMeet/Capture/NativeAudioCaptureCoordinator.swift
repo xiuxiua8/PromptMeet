@@ -36,15 +36,26 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   private var sourceHandler: (@Sendable (CapturedPCM) -> Void)?
   private var transcriptionErrorHandler: (@Sendable (String) -> Void)?
   private var isPaused = false
+  private var captureGeneration: UInt64 = 0
+  private var recoveryTasks: [NativeAudioSource: Task<Void, Never>] = [:]
+  private var recoveryAttempts: [NativeAudioSource: Int] = [:]
+  private let recoveryDelay: (Int) -> Duration
+
+  static let defaultRecoveryDelay: (Int) -> Duration = { attempt in
+    let rawMilliseconds = 500 * min(1 << attempt, 16)
+    return .milliseconds(rawMilliseconds)
+  }
 
   init(
     sources: [NativeAudioSourceCapture] = [SystemAudioCapture(), MicrophoneCapture()],
     uploader: NativeAudioUploading = NativeAudioUploader(),
-    transcription: LocalTranscriptionServicing = LocalTranscriptionService()
+    transcription: LocalTranscriptionServicing = LocalTranscriptionService(),
+    recoveryDelay: @escaping (Int) -> Duration = NativeAudioCaptureCoordinator.defaultRecoveryDelay
   ) {
     self.sources = sources
     self.uploader = uploader
     self.transcription = transcription
+    self.recoveryDelay = recoveryDelay
   }
 
   func start(
@@ -98,6 +109,8 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     snapshot = AudioCaptureSnapshot()
     statusHandler = onStatus
     transcriptionErrorHandler = onTranscriptionError
+    captureGeneration &+= 1
+    cancelSourceRecoveries()
     isPaused = false
     let clock = NativeAudioMeetingClock()
     let transcription = self.transcription
@@ -157,6 +170,11 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     guard !isPaused else { return }
     isPaused = true
     resumableSources = Set(activeSources.keys)
+    // A source that died at runtime and is still awaiting its automatic
+    // restart must come back on resume, even though it is no longer active.
+    for source in recoveryTasks.keys {
+      resumableSources.insert(source)
+    }
     frameDispatcher?.beginSuspension()
     await transcription.pause()
     for (source, capture) in activeSources {
@@ -175,6 +193,11 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     await frameDispatcher?.resume()
     var failures: [String] = []
     for source in sources where sourcesToResume.contains(source.source) {
+      // Resume restarts the source itself, so any pending automatic restart
+      // for it must be cancelled to avoid starting the same source twice.
+      recoveryTasks[source.source]?.cancel()
+      recoveryTasks[source.source] = nil
+      recoveryAttempts[source.source] = 0
       do {
         update(source.source, state: .starting)
         try await startSource(source, handler: sourceHandler)
@@ -199,6 +222,10 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   func retry(_ requestedSource: NativeAudioSource) async throws {
     guard !isPaused, activeSources[requestedSource] == nil, let sourceHandler else { return }
     guard let source = sources.first(where: { $0.source == requestedSource }) else { return }
+    // The manual retry replaces any in-flight automatic restart.
+    recoveryTasks[requestedSource]?.cancel()
+    recoveryTasks[requestedSource] = nil
+    recoveryAttempts[requestedSource] = 0
     do {
       update(
         requestedSource, state: requestedSource == .microphone ? .requestingPermission : .starting)
@@ -213,6 +240,8 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   }
 
   func stop() async {
+    captureGeneration &+= 1
+    cancelSourceRecoveries()
     frameDispatcher?.beginSuspension()
     await transcription.stop()
     for (_, source) in activeSources {
@@ -269,6 +298,73 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     let state = Self.state(for: error)
     update(source, state: state)
     transcriptionErrorHandler?(error.localizedDescription)
+    // Permission and availability failures will not self-heal, so only
+    // runtime failures (stream stopped, device config changed) get an
+    // automatic restart.
+    if case .failed = state {
+      scheduleSourceRecovery(source)
+    }
+  }
+
+  private func scheduleSourceRecovery(_ source: NativeAudioSource) {
+    guard
+      !isPaused,
+      activeSources[source] == nil,
+      recoveryTasks[source] == nil
+    else { return }
+    let generation = captureGeneration
+    let attempt = recoveryAttempts[source, default: 0]
+    recoveryAttempts[source] = attempt + 1
+    let delay = recoveryDelay(attempt)
+    recoveryTasks[source] = Task { [weak self] in
+      guard !Task.isCancelled else { return }
+      do {
+        try await Task.sleep(for: delay)
+      } catch {
+        return
+      }
+      await self?.attemptSourceRecovery(source, generation: generation)
+    }
+  }
+
+  private func attemptSourceRecovery(
+    _ source: NativeAudioSource,
+    generation: UInt64
+  ) async {
+    recoveryTasks[source] = nil
+    guard
+      generation == captureGeneration,
+      !isPaused,
+      activeSources[source] == nil,
+      let sourceHandler,
+      let capture = sources.first(where: { $0.source == source })
+    else { return }
+    update(source, state: .starting)
+    do {
+      try await startSource(capture, handler: sourceHandler)
+      guard generation == captureGeneration, !isPaused else {
+        await capture.stop()
+        return
+      }
+      activeSources[source] = capture
+      recoveryAttempts[source] = 0
+      update(source, state: .active)
+    } catch {
+      await capture.stop()
+      update(source, state: Self.state(for: error))
+      // Keep retrying with backoff while the meeting records; the source was
+      // running before, so the interruption is expected to be transient
+      // (e.g. the window picker holding the capture session).
+      scheduleSourceRecovery(source)
+    }
+  }
+
+  private func cancelSourceRecoveries() {
+    for task in recoveryTasks.values {
+      task.cancel()
+    }
+    recoveryTasks = [:]
+    recoveryAttempts = [:]
   }
 
   private static func state(for error: any Error) -> AudioSourceState {

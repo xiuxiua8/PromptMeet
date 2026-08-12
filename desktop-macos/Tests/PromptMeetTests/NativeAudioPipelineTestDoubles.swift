@@ -60,6 +60,7 @@ final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unch
 final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
   let source: NativeAudioSource
   private(set) var startCount = 0
+  private var failureHandler: (@Sendable (any Error) -> Void)?
 
   init(source: NativeAudioSource) {
     self.source = source
@@ -72,7 +73,19 @@ final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendab
     }
   }
 
+  func start(
+    handler: @escaping @Sendable (CapturedPCM) -> Void,
+    onFailure: @escaping @Sendable (any Error) -> Void
+  ) async throws {
+    failureHandler = onFailure
+    try await start(handler: handler)
+  }
+
   func stop() async {}
+
+  func fail(_ error: any Error) {
+    failureHandler?(error)
+  }
 }
 
 struct NativeAudioUploaderSpy: NativeAudioUploading {
@@ -203,6 +216,8 @@ final class CaptureSnapshotRecorder: @unchecked Sendable {
   private var values: [AudioCaptureSnapshot] = []
 
   var last: AudioCaptureSnapshot? { lock.withLock { values.last } }
+
+  var all: [AudioCaptureSnapshot] { lock.withLock { values } }
 
   func append(_ value: AudioCaptureSnapshot) {
     lock.withLock { values.append(value) }

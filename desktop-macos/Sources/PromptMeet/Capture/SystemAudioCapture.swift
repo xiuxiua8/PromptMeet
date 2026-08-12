@@ -81,7 +81,22 @@ final class SystemAudioCapture: NSObject, NativeAudioSourceCapture,
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         let failure = lock.withLock { failureHandler }
-        failure?(CaptureError.systemAudioRuntimeFailure(error.localizedDescription))
+        failure?(
+            CaptureError.systemAudioRuntimeFailure(
+                Self.userMessage(for: error)
+            )
+        )
+    }
+
+    private static func userMessage(for error: any Error) -> String {
+        let nsError = error as NSError
+        // SCStreamErrorUserStopped (-3817, SCError.h): the system stops the
+        // stream when the user opens the content sharing picker to choose a
+        // screenshot window. The coordinator restarts the source afterwards.
+        if nsError.domain == SCStreamErrorDomain, nsError.code == -3817 {
+            return "系统音频被系统中断（例如打开了窗口选择器），正在自动恢复"
+        }
+        return error.localizedDescription
     }
 
     func stream(
