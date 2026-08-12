@@ -650,7 +650,7 @@ class DesktopAgentService:
             dict(self.environment), purpose="summary"
         )
         context_budget = ContextBudget(
-            total_tokens=min(configuration.capabilities.max_context_tokens, 8_000),
+            total_tokens=min(configuration.capabilities.max_context_tokens, 10_000),
             answer_reserve=2_000,
             summary_reserve=500,
         )

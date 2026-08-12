@@ -1,14 +1,14 @@
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Literal
-from uuid import UUID
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 
 class NativeTranscript(BaseModel):
-    id: UUID
+    id: str
     text: str
     speaker: str
     source: Literal["system", "microphone", "mixed"]
@@ -23,6 +23,18 @@ class NativeTranscript(BaseModel):
         if not text:
             raise ValueError("转写文本不能为空")
         return text
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("转写片段 ID 不能为空")
+        try:
+            uuid.UUID(normalized)
+        except ValueError as error:
+            raise ValueError("转写片段 ID 必须是 UUID") from error
+        return normalized
 
 
 def build_native_transcript_router(
