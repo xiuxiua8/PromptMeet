@@ -329,7 +329,7 @@ extension MeetingState {
     }
 
     private mutating func applyTimelineSuggestions(_ value: TimelineSuggestionPayload) {
-        guard let accepted = SuggestedQuestionSet.accepted(value.questions) else { return }
+        guard let accepted = SuggestedQuestionSet.acceptedForRestore(value.questions) else { return }
         generatedQuestions = accepted
         suggestionRefresh.phase = .ready
         suggestionRefresh.generationID = UUID(uuidString: value.generationID)

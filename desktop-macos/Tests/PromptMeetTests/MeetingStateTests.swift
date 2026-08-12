@@ -318,6 +318,23 @@ final class MeetingStateTests: XCTestCase {
     XCTAssertEqual(state.generatedQuestions, previous)
   }
 
+  func testReplayedSingleQuestionSuggestionRestoresFromTimeline() {
+    var state = MeetingState.previewLive
+
+    state.reduce(.meetingEvent(suggestionTimelineEvent(questions: ["谁负责上线？"])))
+
+    XCTAssertEqual(state.generatedQuestions, ["谁负责上线？"])
+  }
+
+  func testReplayedEmptySuggestionDoesNotClearRestoredQuestions() {
+    var state = MeetingState.previewLive
+    state.reduce(.questionsGenerated(["谁负责上线？", "何时冻结范围？"]))
+
+    state.reduce(.meetingEvent(suggestionTimelineEvent(questions: [])))
+
+    XCTAssertEqual(state.generatedQuestions, ["谁负责上线？", "何时冻结范围？"])
+  }
+
   func testQuickAskPresentationAndDraftAreSharedState() {
     var state = MeetingState.previewLive
 
@@ -376,6 +393,29 @@ private func durableAnswerEvent(requestID: UUID, at date: Date) -> MeetingTimeli
         degradedVision: false,
         status: "completed",
         errorMessage: nil
+      )
+    )
+  )
+}
+
+private func suggestionTimelineEvent(questions: [String]) -> MeetingTimelineEvent {
+  MeetingTimelineEvent(
+    eventID: "suggestion-event",
+    meetingID: "active-meeting",
+    sequence: 3,
+    occurredAt: Date(timeIntervalSince1970: 1_782_633_600),
+    kind: .suggestions,
+    provenance: TimelineProvenance(
+      source: "suggestion_service",
+      provider: nil,
+      model: nil,
+      requestID: nil
+    ),
+    payload: .suggestions(
+      TimelineSuggestionPayload(
+        generationID: "generation-1",
+        contextRevision: 1,
+        questions: questions
       )
     )
   )
