@@ -10,7 +10,8 @@ final class MeetingStoreCaptureLifecycleTests: XCTestCase {
             backend: BackendClientSpy(),
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            screenshotController: screenshot
+            screenshotController: screenshot,
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         let selection = Task { await store.selectCaptureTargetNow() }

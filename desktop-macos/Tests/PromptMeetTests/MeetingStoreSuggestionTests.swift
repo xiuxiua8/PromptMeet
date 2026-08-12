@@ -8,7 +8,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -24,7 +25,8 @@ extension MeetingStoreTests {
             backend: BackendClientSpy(),
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            screenshotController: screenshot
+            screenshotController: screenshot,
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -44,7 +46,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         await store.submitPromptNow("总结风险")
@@ -63,7 +66,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -103,7 +107,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: capture,
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -120,7 +125,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: capture,
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -138,7 +144,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: capture,
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -161,13 +168,16 @@ extension MeetingStoreTests {
 
     func testInFlightSuggestionSetIsAcceptedWhileNewerContextWaits() async throws {
         let backend = BackendClientSpy()
-        backend.questionDelay = .milliseconds(40)
+        // Keep the in-flight generation alive well past the test's assertions:
+        // the result is injected manually, so the spy never needs to complete.
+        backend.questionDelay = .seconds(2)
         let capture = NativeAudioCaptureSpy()
         let store = MeetingStore(
             backend: backend,
             capture: capture,
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(10)
+            suggestionDebounce: .milliseconds(10),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -199,7 +209,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: capture,
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -237,7 +248,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         let event = MeetingTimelineEvent(
@@ -278,7 +290,8 @@ extension MeetingStoreTests {
             backend: BackendClientSpy(),
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            screenshotController: screenshot
+            screenshotController: screenshot,
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         await store.selectCaptureTargetNow()
@@ -322,7 +335,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 
@@ -347,7 +361,8 @@ extension MeetingStoreTests {
             backend: backend,
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-            suggestionDebounce: .milliseconds(5)
+            suggestionDebounce: .milliseconds(5),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 

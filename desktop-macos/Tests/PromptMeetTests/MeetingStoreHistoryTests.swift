@@ -8,7 +8,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         store.setQuickPromptDraft("  谁负责上线？  ")
@@ -34,7 +35,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
 
         await store.loadMeetingHistoryNow()
@@ -58,7 +60,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.loadMeetingHistoryNow()
         store.selectArchivedMeeting("archived-1")
@@ -83,7 +86,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
         await store.loadMeetingHistoryNow()
@@ -101,7 +105,8 @@ extension MeetingStoreTests {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
         )
         await store.startMeetingNow()
 

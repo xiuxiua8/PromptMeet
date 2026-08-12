@@ -1,0 +1,295 @@
+import Combine
+import Foundation
+import XCTest
+
+@testable import PromptMeet
+
+@MainActor
+final class MeetingStoreSessionTests: XCTestCase {
+    func testReconnectClicksAreDeduplicatedAndEndCancelsPendingRehydrate() async {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+        backend.emit(.companionDisconnected("连接已关闭"))
+        backend.rehydrateDelay = .seconds(5)
+
+        store.reconnectCompanion()
+        store.reconnectCompanion()
+        for _ in 0..<100 {
+            if !backend.rehydrateRequests.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(backend.rehydrateRequests.count, 1)
+
+        await store.endMeetingNow()
+
+        XCTAssertEqual(backend.rehydrateCancellationCount, 1)
+        XCTAssertEqual(backend.connectCount, 1)
+        XCTAssertEqual(store.state.phase, .idle)
+        XCTAssertEqual(backend.createSessionCount, 1)
+    }
+
+    func testBackendEventsDriveTranscriptAndReader() async throws {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+        await store.submitPromptNow("整理要点")
+        let requestID = try XCTUnwrap(backend.prompts.first?.id)
+
+        backend.emit(.transcript(TranscriptLine(speaker: "林晨", text: "确认范围")))
+        backend.emit(.answerDelta(requestID: requestID, delta: "已整理"))
+
+        await Task.yield()
+        XCTAssertEqual(store.state.transcript.last?.text, "确认范围")
+        XCTAssertTrue(store.state.aiReader.isVisible)
+        XCTAssertEqual(backend.prompts.map(\.prompt), ["整理要点"])
+    }
+
+    func testLocalTranscriptAppearsImmediatelyAndIsSubmittedToBackend() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        capture.emit(LocalTranscript(id: UUID(), source: .microphone, text: "本地识别完成"))
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(store.state.transcript.last?.text, "本地识别完成")
+        XCTAssertEqual(store.state.transcript.last?.speaker, "我")
+        XCTAssertEqual(backend.submittedTranscripts.map(\.text), ["本地识别完成"])
+    }
+
+    func testLocalPartialTranscriptStreamsIntoActiveCaption() async {
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        capture.emitPartial("这是正在连续识别的内容")
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(store.state.activeTranscript, "这是正在连续识别的内容")
+        XCTAssertTrue(store.state.transcript.isEmpty)
+    }
+
+    func testCaptureSetupFailureRollsBackRecordingAndMarksDurableMeetingIncomplete() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy(startError: LocalTranscriptionError.modelNotInstalled)
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+
+        await store.startMeetingNow()
+
+        guard case .failed = store.state.phase else {
+            return XCTFail("Expected failed meeting state")
+        }
+        XCTAssertEqual(
+            backend.performedActions,
+            ["start-native-recording", "stop-native-recording", "mark-incomplete"]
+        )
+        XCTAssertEqual(backend.createSessionCount, 1)
+        XCTAssertEqual(backend.connectedSessionID, backend.createdSessionRequests.first?.sessionID)
+        XCTAssertEqual(capture.stopCount, 1)
+        XCTAssertEqual(backend.disconnectCount, 0)
+    }
+
+    func testLocalTranscriptionStartsWhenCompanionIsUnavailable() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let companion = CompanionLauncherSpy(error: CompanionLauncherError.startupTimedOut)
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: companion,
+            transcriptOutbox: TranscriptOutboxSpy()
+        )
+
+        await store.startMeetingNow()
+        capture.emit(LocalTranscript(source: .microphone, text: "离线字幕可用"))
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(store.state.phase, .live)
+        XCTAssertNotNil(capture.startedSessionID)
+        XCTAssertNil(backend.connectedSessionID)
+        XCTAssertTrue(backend.performedActions.isEmpty)
+        XCTAssertEqual(store.state.transcript.last?.text, "离线字幕可用")
+        XCTAssertTrue(backend.submittedTranscripts.isEmpty)
+    }
+
+    func testSourceStatusIsPublishedAndMicrophoneCanRecoverIndependently() async {
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: BackendClientSpy(),
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        capture.emitStatus(AudioCaptureSnapshot(microphone: .denied, system: .active))
+        await Task.yield()
+        XCTAssertEqual(store.state.audioCapture.microphone, .denied)
+        XCTAssertEqual(store.state.audioCapture.system, .active)
+
+        await store.retryMicrophoneNow()
+        XCTAssertEqual(capture.retriedSources, [.microphone])
+    }
+
+    func testEndingMeetingStoresSessionAndKeepsCompanionContextAvailable() async {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        await store.endMeetingNow()
+        await store.requestSummaryNow()
+        await store.submitPromptNow("会后还可以提问吗？")
+
+        XCTAssertEqual(
+            backend.performedActions,
+            ["start-native-recording", "stop-native-recording", "store-session", "generate-summary"]
+        )
+        XCTAssertEqual(backend.disconnectCount, 0)
+        XCTAssertEqual(backend.prompts.map(\.prompt), ["会后还可以提问吗？"])
+        XCTAssertEqual(store.state.phase, .idle)
+        XCTAssertTrue(store.hasMeetingContext)
+    }
+
+    func testFiveMinuteMilestoneRequestsSummaryOnceWhenInputChanged() async throws {
+        let suiteName = "MeetingAutomationStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(5, forKey: MeetingPreferenceKey.summaryCadenceMinutes)
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let start = Date(timeIntervalSince1970: 10_000)
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            meetingPreferences: MeetingPreferences(defaults: defaults),
+            transcriptOutbox: TranscriptOutboxSpy(),
+            now: { start },
+        )
+        await store.startMeetingNow()
+        capture.emit(LocalTranscript(source: .system, text: "确认周五发布"))
+        try? await Task.sleep(for: .milliseconds(20))
+
+        await store.evaluateAutomationNow(at: start.addingTimeInterval(300))
+        await store.evaluateAutomationNow(at: start.addingTimeInterval(301))
+
+        XCTAssertEqual(backend.summaryRequests.count, 1)
+        XCTAssertEqual(backend.summaryRequests.first?.activeMinutes, 5)
+        XCTAssertEqual(backend.summaryRequests.first?.clientInputRevision, 1)
+    }
+
+    func testPauseResumeKeepsMeetingContextAndStopWhilePausedEndsNormally() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        await store.pauseMeetingNow()
+        XCTAssertEqual(store.state.phase, .live)
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(capture.pauseCount, 1)
+
+        await store.resumeMeetingNow()
+        XCTAssertEqual(store.state.recordingActivity, .recording)
+        XCTAssertEqual(capture.resumeCount, 1)
+
+        await store.pauseMeetingNow()
+        await store.endMeetingNow()
+        XCTAssertEqual(store.state.phase, .idle)
+        XCTAssertEqual(store.state.recordingActivity, .inactive)
+        XCTAssertEqual(
+            backend.performedActions,
+            [
+                "start-native-recording",
+                "pause-native-recording",
+                "resume-native-recording",
+                "pause-native-recording",
+                "stop-native-recording",
+                "store-session"
+            ]
+        )
+    }
+
+    func testResumeRollsBackendBackToPausedWhenLocalSourcesCannotRestart() async {
+        let backend = BackendClientSpy()
+        let capture = NativeAudioCaptureSpy(
+            resumeError: CaptureError.systemAudioRuntimeFailure("restart failed")
+        )
+        let store = MeetingStore(
+            backend: backend,
+            capture: capture,
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+        await store.pauseMeetingNow()
+
+        await store.resumeMeetingNow()
+
+        XCTAssertEqual(store.state.recordingActivity, .paused)
+        XCTAssertEqual(capture.resumeCount, 1)
+        XCTAssertEqual(
+            backend.performedActions,
+            [
+                "start-native-recording",
+                "pause-native-recording",
+                "resume-native-recording",
+                "pause-native-recording"
+            ]
+        )
+    }
+
+    func testSaveMeetingStoresCurrentBackendSession() async {
+        let backend = BackendClientSpy()
+        let store = MeetingStore(
+            backend: backend,
+            capture: NativeAudioCaptureSpy(),
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy(),
+        )
+        await store.startMeetingNow()
+
+        await store.saveMeetingNow()
+
+        XCTAssertEqual(backend.performedActions.last, "store-session")
+        XCTAssertEqual(store.state.latestInsight, "会议已保存")
+    }
+
+}
