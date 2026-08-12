@@ -168,7 +168,9 @@ extension MeetingStoreTests {
 
     func testInFlightSuggestionSetIsAcceptedWhileNewerContextWaits() async throws {
         let backend = BackendClientSpy()
-        backend.questionDelay = .milliseconds(40)
+        // Keep the in-flight generation alive well past the test's assertions:
+        // the result is injected manually, so the spy never needs to complete.
+        backend.questionDelay = .seconds(2)
         let capture = NativeAudioCaptureSpy()
         let store = MeetingStore(
             backend: backend,
