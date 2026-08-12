@@ -5,26 +5,29 @@ struct WorkspaceView: View {
     @ObservedObject var store: MeetingStore
     let openSettings: () -> Void
 
-    @State private var selectedTab = WorkspaceTab.ai
-    @State private var showsHistory = false
-    @State private var followsTranscript = true
-    @State private var showsNewMeetingConfirmation = false
+    @State var selectedTab = WorkspaceTab.assistant
+    @State var showsHistory = false
+    @State var timelineFollowState = TimelineFollowState()
+    @State var timelineScrollRequest = 0
+    @State var showsNewMeetingConfirmation = false
+    @State var historySearchText = ""
+    @FocusState var isHistorySearchFocused: Bool
 
-    private enum WorkspaceTab: String, CaseIterable {
-        case ai = "AI"
+    enum WorkspaceTab: String, CaseIterable {
+        case assistant = "AI"
         case summary = "摘要"
         case tasks = "待办"
     }
 
-    private var isViewingHistory: Bool {
+    var isViewingHistory: Bool {
         store.state.selectedArchivedMeetingID != nil
     }
 
-    private var capturePresentation: CaptureStatusPresentation {
+    var capturePresentation: CaptureStatusPresentation {
         CaptureStatusPresentation(snapshot: store.state.audioCapture)
     }
 
-    private var meetingControls: MeetingControlPresentation {
+    var meetingControls: MeetingControlPresentation {
         MeetingControlPresentation(
             phase: store.state.phase,
             recordingActivity: store.state.recordingActivity
@@ -36,23 +39,38 @@ struct WorkspaceView: View {
             toolbar
             hairline
 
-            HSplitView {
-                if showsHistory {
-                    historyColumn
-                        .frame(minWidth: 190, idealWidth: 210, maxWidth: 230)
+            GeometryReader { geometry in
+                let widths = WorkspaceLayout.columnWidths(
+                    totalWidth: geometry.size.width,
+                    showsHistory: showsHistory
+                )
+                HStack(spacing: 0) {
+                    if showsHistory {
+                        historyColumn
+                            .frame(width: widths.history)
+                        verticalDivider
+                    }
+
+                    timelineColumn
+                        .frame(width: widths.timeline)
+
+                    verticalDivider
+
+                    intelligenceColumn
+                        .frame(width: widths.intelligence)
                 }
-
-                timelineColumn
-                    .frame(minWidth: 470, idealWidth: 570)
-
-                intelligenceColumn
-                    .frame(minWidth: 390, idealWidth: 450, maxWidth: 520)
             }
         }
-        .frame(minWidth: 980, minHeight: 640)
+        .frame(
+            minWidth: WorkspaceLayout.minimumWindowSize.width,
+            minHeight: WorkspaceLayout.minimumWindowSize.height
+        )
         .background(workspaceBackground)
         .foregroundStyle(VisualTokens.primaryText)
         .task { await store.loadMeetingHistoryNow() }
+        .onChange(of: showsHistory) { _, isShown in
+            if isShown { isHistorySearchFocused = true }
+        }
         .confirmationDialog(
             "当前会议仍在进行",
             isPresented: $showsNewMeetingConfirmation,
@@ -66,15 +84,18 @@ struct WorkspaceView: View {
             Text("当前会议会先安全结束并保存，然后创建完全隔离的新会议上下文。")
         }
     }
+}
 
-    private var toolbar: some View {
+extension WorkspaceView {
+    var toolbar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 toolbarButton(
-                    showsHistory ? "隐藏会议历史" : "显示会议历史",
+                    "会议历史",
                     icon: "sidebar.left",
                     action: { withAnimation(.easeOut(duration: 0.18)) { showsHistory.toggle() } }
                 )
+                .accessibilityValue(showsHistory ? "已展开" : "已折叠")
 
                 Circle()
                     .fill(workspaceStatusTint)
@@ -82,8 +103,14 @@ struct WorkspaceView: View {
                     .shadow(color: workspaceStatusTint.opacity(0.55), radius: 7)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(isViewingHistory ? "历史会议" : "当前会议")
+                    Text(
+                        isViewingHistory
+                            ? store.state.selectedArchivedMeeting?.displayTitle ?? "历史会议"
+                            : "当前会议"
+                    )
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                        .help(store.state.selectedArchivedMeeting?.displayTitle ?? "当前会议")
                     Text(workspaceStatus)
                         .font(.system(size: 9, weight: .medium, design: .rounded))
                         .foregroundStyle(workspaceStatusTint)
@@ -124,16 +151,17 @@ struct WorkspaceView: View {
                 }
 
                 Button(action: beginNewMeeting) {
-                    Label("开始新会议", systemImage: "plus.circle.fill")
+                    Label("新会议", systemImage: "plus.circle.fill")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color.black.opacity(0.86))
-                        .padding(.horizontal, 15)
-                        .frame(height: 34)
+                        .padding(.horizontal, 12)
+                        .frame(height: WorkspaceLayout.actionHeight)
                         .background(VisualTokens.live)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .help("创建新的隔离会议上下文")
+                .accessibilityLabel("开始新会议")
 
                 toolbarButton("设置", icon: "gearshape", action: openSettings)
                     .keyboardShortcut(",", modifiers: .command)
@@ -149,19 +177,30 @@ struct WorkspaceView: View {
         .frame(height: showsCaptureStrip ? 92 : 62)
     }
 
-    private var showsCaptureStrip: Bool {
+    var showsCaptureStrip: Bool {
         !isViewingHistory || store.state.phase == .live
     }
 
-    private var captureStatusStrip: some View {
+    var captureStatusStrip: some View {
         HStack(spacing: 7) {
             if isViewingHistory {
                 Text("当前会议后台采集")
                     .font(.system(size: 8, weight: .semibold, design: .rounded))
                     .foregroundStyle(VisualTokens.tertiaryText)
             }
-            captureSourceBadge(capturePresentation.microphone)
-            captureSourceBadge(capturePresentation.system)
+            if store.state.phase == .idle {
+                Image(systemName: "mic.badge.plus")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(VisualTokens.sky)
+                Text(store.nextMeetingCaptureDescription)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(VisualTokens.secondaryText)
+                    .lineLimit(1)
+                    .help(store.nextMeetingCaptureDescription)
+            } else {
+                captureSourceBadge(capturePresentation.microphone)
+                captureSourceBadge(capturePresentation.system)
+            }
 
             if capturePresentation.showsMicrophoneSettingsAction {
                 toolbarButton("打开麦克风隐私设置", icon: "gearshape", action: store.openMicrophoneSettings)
@@ -170,6 +209,14 @@ struct WorkspaceView: View {
             if capturePresentation.showsMicrophoneRetryAction {
                 toolbarButton("重试麦克风采集", icon: "arrow.clockwise", action: store.retryMicrophone)
                     .accessibilityLabel("重试麦克风采集")
+            }
+            if showsCompanionReconnectAction {
+                toolbarButton(
+                    "重新连接 AI 服务",
+                    icon: "network",
+                    action: store.reconnectCompanion
+                )
+                .accessibilityLabel("重新连接 AI 服务，本地录音将继续")
             }
 
             Rectangle()
@@ -193,9 +240,29 @@ struct WorkspaceView: View {
                 .font(.system(size: 8, weight: .medium, design: .rounded))
                 .foregroundStyle(screenshotStatusTint)
                 .lineLimit(1)
+                .help(screenshotOperationLabel)
 
             if screenshotNeedsSettings {
                 Button("打开屏幕录制设置", action: store.openScreenRecordingSettings)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VisualTokens.amber)
+            }
+
+            if screenshotNeedsAISettings {
+                Button("打开 AI 截图设置", action: openSettings)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(VisualTokens.amber)
+            }
+
+            Label(store.summaryAutomationDescription, systemImage: "clock.arrow.circlepath")
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(summaryAutomationTint)
+                .lineLimit(1)
+                .help(store.summaryAutomationDescription)
+            if case .failed = store.state.summaryAutomation {
+                Button("重试", action: store.requestSummary)
                     .buttonStyle(.plain)
                     .font(.system(size: 8, weight: .semibold, design: .rounded))
                     .foregroundStyle(VisualTokens.amber)
@@ -205,7 +272,11 @@ struct WorkspaceView: View {
         }
     }
 
-    private func captureSourceBadge(_ source: CaptureStatusPresentation.Source) -> some View {
+    var showsCompanionReconnectAction: Bool {
+        store.isMeetingActive && !store.state.isCompanionConnected
+    }
+
+    func captureSourceBadge(_ source: CaptureStatusPresentation.Source) -> some View {
         Label(source.label, systemImage: source.icon)
             .font(.system(size: 8, weight: .semibold, design: .rounded))
             .foregroundStyle(source.isActive ? VisualTokens.live : VisualTokens.secondaryText)
@@ -216,7 +287,7 @@ struct WorkspaceView: View {
             .accessibilityLabel(source.label)
     }
 
-    private func beginNewMeeting() {
+    func beginNewMeeting() {
         if store.state.phase == .live || store.state.phase == .connecting {
             showsNewMeetingConfirmation = true
         } else {
@@ -224,27 +295,31 @@ struct WorkspaceView: View {
         }
     }
 
-    private func toolbarButton(
+    func toolbarButton(
         _ title: String,
         icon: String,
         disabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+            Label(title, systemImage: icon)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
                 .foregroundStyle(VisualTokens.secondaryText)
-                .frame(width: 30, height: 30)
+                .lineLimit(1)
+                .padding(.horizontal, 9)
+                .frame(minHeight: WorkspaceLayout.actionHeight)
                 .background(VisualTokens.raised.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .opacity(disabled ? 0.46 : 1)
         .help(title)
+        .accessibilityLabel(title)
     }
 
-    private var screenshotTargetLabel: String {
+    var screenshotTargetLabel: String {
         switch store.state.screenshotTarget {
         case .none:
             "未选择截图窗口"
@@ -255,7 +330,7 @@ struct WorkspaceView: View {
         }
     }
 
-    private var screenshotTargetIcon: String {
+    var screenshotTargetIcon: String {
         switch store.state.screenshotTarget {
         case .none: "rectangle.dashed"
         case .selected: "rectangle.on.rectangle"
@@ -263,901 +338,48 @@ struct WorkspaceView: View {
         }
     }
 
-    private var screenshotOperationLabel: String {
+    var screenshotOperationLabel: String {
         switch store.state.screenshotOperation {
         case .idle: ""
         case .selecting: "正在选择窗口"
         case .capturing: "正在截图并上传"
         case .succeeded: "截图已保存，正在分析"
+        case .analyzed(let status, let detail):
+            status == "completed" ? "截图分析完成" : detail
         case .failed(let message): message
         }
     }
 
-    private var screenshotStatusTint: Color {
+    var screenshotStatusTint: Color {
         switch store.state.screenshotOperation {
-        case .succeeded: VisualTokens.live
+        case .succeeded: VisualTokens.sky
+        case .analyzed(let status, _): status == "completed" ? VisualTokens.live : VisualTokens.amber
         case .failed: VisualTokens.amber
         case .selecting, .capturing: VisualTokens.sky
         case .idle: VisualTokens.secondaryText
         }
     }
 
-    private var screenshotNeedsSettings: Bool {
+    var screenshotNeedsSettings: Bool {
         guard case .failed(let message) = store.state.screenshotOperation else { return false }
         return message.contains("屏幕录制权限")
     }
 
-    private var historyColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("会议历史")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 16)
-                .padding(.top, 18)
-                .padding(.bottom, 12)
-
-            historyItem(
-                "当前会议",
-                detail: workspaceStatus,
-                active: store.state.selectedArchivedMeetingID == nil
-            ) {
-                store.selectArchivedMeeting(nil)
-            }
-
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(store.state.meetingHistory) { meeting in
-                        historyItem(
-                            meeting.title
-                                ?? meeting.summary?.summaryText.split(separator: "\n").first.map(String.init)
-                                ?? "历史会议",
-                            detail: "\(meeting.startTime.formatted(date: .abbreviated, time: .shortened))"
-                                + " · \(meetingStatus(meeting.status))",
-                            active: store.state.selectedArchivedMeetingID == meeting.id
-                        ) {
-                            store.selectArchivedMeeting(meeting.id)
-                        }
-                    }
-                }
-                .padding(.bottom, 16)
-            }
+    var screenshotNeedsAISettings: Bool {
+        guard case .analyzed(let status, let detail) = store.state.screenshotOperation else {
+            return false
         }
-        .background(Color.black.opacity(0.10))
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(VisualTokens.line).frame(width: 1)
+        return status == "unsupported" || detail.contains("截图分析工作流配置问题")
+    }
+
+    var summaryAutomationTint: Color {
+        switch store.state.summaryAutomation {
+        case .failed: VisualTokens.danger
+        case .generating: VisualTokens.sky
+        case .completed: VisualTokens.live
+        case .noAction: VisualTokens.amber
+        case .idle, .off, .waiting: VisualTokens.tertiaryText
         }
     }
 
-    private func historyItem(
-        _ title: String,
-        detail: String,
-        active: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Capsule()
-                    .fill(active ? VisualTokens.sky : Color.clear)
-                    .frame(width: 2, height: 28)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .lineLimit(2)
-                    Text(detail)
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.secondaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(active ? Color.white.opacity(0.035) : Color.clear)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var workspaceProjection: WorkspaceProjection {
-        WorkspaceProjection(
-            events: store.state.displayedTimeline,
-            conversation: store.state.displayedConversation
-        )
-    }
-
-    @ViewBuilder
-    private var timelineColumn: some View {
-        if store.state.displayedTimeline.isEmpty {
-            transcriptColumn
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 10) {
-                    Text("会议时间线")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    Text("\(workspaceProjection.items.count)")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.tertiaryText)
-                    Spacer()
-                    Label("按会议时间排序", systemImage: "clock")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.secondaryText)
-                }
-                .padding(.horizontal, 20)
-                .frame(height: 50)
-
-                hairline
-
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            ForEach(workspaceProjection.items) { item in
-                                timelineItem(item)
-                                    .id(item.id)
-                            }
-                            if !isViewingHistory && !store.state.activeTranscript.isEmpty {
-                                activeTranscriptRow
-                            }
-                            Color.clear.frame(height: 20).id("timeline-bottom")
-                        }
-                        .padding(20)
-                    }
-                    .scrollIndicators(.hidden)
-                    .onChange(of: workspaceProjection.items.count) { _, _ in
-                        guard followsTranscript else { return }
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            proxy.scrollTo("timeline-bottom", anchor: .bottom)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func timelineItem(_ item: WorkspaceTimelineItem) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 7) {
-                Text(item.timestamp, style: .time)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.tertiaryText)
-                Image(systemName: timelineIcon(item.kind))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(timelineTint(item.kind))
-                    .frame(width: 22, height: 22)
-                    .background(timelineTint(item.kind).opacity(0.12))
-                    .clipShape(Circle())
-            }
-            .frame(width: 48)
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(item.title)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(item.isFailure ? VisualTokens.danger : timelineTint(item.kind))
-                    Spacer()
-                    if !item.sources.isEmpty {
-                        Text("\(item.sources.count) 个来源")
-                            .font(.system(size: 8, weight: .semibold, design: .rounded))
-                            .foregroundStyle(VisualTokens.secondaryText)
-                    }
-                }
-
-                if let screenshot = item.screenshot {
-                    screenshotPreview(screenshot)
-                }
-
-                Text(item.body)
-                    .font(.system(size: item.kind == .transcript ? 13 : 12, design: .rounded))
-                    .foregroundStyle(VisualTokens.primaryText.opacity(item.isFailure ? 0.66 : 0.90))
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !item.sources.isEmpty {
-                    sourceChips(item.sources)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(timelineTint(item.kind).opacity(item.kind == .answer ? 0.09 : 0.045))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(timelineTint(item.kind).opacity(0.12), lineWidth: 0.5)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func screenshotPreview(_ screenshot: ScreenshotAsset) -> some View {
-        if let url = screenshot.availableFileURL(), let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: 240)
-                .background(Color.black.opacity(0.24))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityLabel("会议截图")
-        } else {
-            HStack(spacing: 10) {
-                Image(systemName: "photo.badge.exclamationmark")
-                Text("截图文件不可用，时间线和分析记录仍已保留")
-            }
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(VisualTokens.amber)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(VisualTokens.amber.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-    }
-
-    private func sourceChips(_ sources: [EvidenceSource]) -> some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(sources) { source in
-                    Text("[\(source.sourceID)] \(source.label)")
-                        .font(.system(size: 8, weight: .semibold, design: .rounded))
-                        .foregroundStyle(VisualTokens.sky)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(VisualTokens.sky.opacity(0.10))
-                        .clipShape(Capsule())
-                        .help(source.label)
-                }
-            }
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private func timelineIcon(_ kind: WorkspaceTimelineItemKind) -> String {
-        switch kind {
-        case .lifecycle: "circle.dotted"
-        case .transcript: "waveform"
-        case .screenshot: "photo"
-        case .screenshotAnalysis: "viewfinder.circle"
-        case .question: "person.crop.circle"
-        case .answer: "sparkles"
-        case .summary: "text.alignleft"
-        case .suggestions: "questionmark.bubble"
-        }
-    }
-
-    private func timelineTint(_ kind: WorkspaceTimelineItemKind) -> Color {
-        switch kind {
-        case .lifecycle: VisualTokens.secondaryText
-        case .transcript: VisualTokens.live
-        case .screenshot: VisualTokens.amber
-        case .screenshotAnalysis, .answer: VisualTokens.sky
-        case .question: VisualTokens.primaryText
-        case .summary: VisualTokens.cobalt
-        case .suggestions: VisualTokens.sky
-        }
-    }
-
-    private var transcriptColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Text("会议记录")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                Text("\(store.state.displayedTranscript.count)")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.tertiaryText)
-
-                Spacer()
-
-                Button {
-                    followsTranscript.toggle()
-                } label: {
-                    Image(systemName: followsTranscript ? "arrow.down.to.line" : "pause")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(followsTranscript ? VisualTokens.live : VisualTokens.secondaryText)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .help(followsTranscript ? "自动跟随转写" : "恢复自动跟随")
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 50)
-
-            hairline
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if store.state.displayedTranscript.isEmpty {
-                            emptyState(
-                                icon: "waveform",
-                                text: isViewingHistory ? "这次会议没有保存转写" : "开始录音后，转写会在这里连续出现"
-                            )
-                            .frame(minHeight: 360)
-                        } else {
-                            let enumerated = Array(store.state.displayedTranscript.enumerated())
-                            ForEach(enumerated, id: \.element.id) { index, line in
-                                transcriptRow(
-                                    line,
-                                    isLast: index == store.state.displayedTranscript.count - 1
-                                        && store.state.activeTranscript.isEmpty
-                                )
-                                .id(line.id)
-                            }
-                        }
-
-                        if !isViewingHistory && !store.state.activeTranscript.isEmpty {
-                            activeTranscriptRow
-                                .id("active-transcript")
-                        }
-
-                        Color.clear
-                            .frame(height: 32)
-                            .id("transcript-bottom")
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-                }
-                .scrollIndicators(.hidden)
-                .onChange(of: store.state.displayedTranscript.count) { _, _ in
-                    guard followsTranscript else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                    }
-                }
-                .onChange(of: store.state.activeTranscript) { _, _ in
-                    guard followsTranscript else { return }
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
-            }
-        }
-    }
-
-    private func transcriptRow(_ line: TranscriptLine, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 7) {
-                Text(line.timestamp, style: .time)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.tertiaryText)
-
-                Circle()
-                    .fill(VisualTokens.live.opacity(0.72))
-                    .frame(width: 5, height: 5)
-
-                if !isLast {
-                    Rectangle()
-                        .fill(VisualTokens.line)
-                        .frame(width: 1)
-                        .frame(maxHeight: .infinity)
-                }
-            }
-            .frame(width: 46)
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text(transcriptSpeakerLabel(line))
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(transcriptTint(line))
-
-                Text(line.text)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .lineSpacing(5)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let translation = line.translatedText {
-                    Text(translation)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.sky)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 22)
-        }
-    }
-
-    private func transcriptSpeakerLabel(_ line: TranscriptLine) -> String {
-        switch line.source {
-        case .microphone: "我"
-        case .system: "会议"
-        case .mixed, .none: line.speaker
-        }
-    }
-
-    private func transcriptTint(_ line: TranscriptLine) -> Color {
-        line.source == .microphone ? VisualTokens.sky : VisualTokens.live
-    }
-
-    private var activeTranscriptRow: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 7) {
-                Text("现在")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.live)
-                Circle()
-                    .fill(VisualTokens.live)
-                    .frame(width: 6, height: 6)
-                    .shadow(color: VisualTokens.live.opacity(0.55), radius: 6)
-            }
-            .frame(width: 46)
-
-            Text(store.state.activeTranscript)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(VisualTokens.primaryText.opacity(0.80))
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 22)
-        }
-    }
-
-    private var intelligenceColumn: some View {
-        VStack(spacing: 0) {
-            tabBar
-                .frame(height: 50)
-            hairline
-
-            Group {
-                switch selectedTab {
-                case .ai:
-                    aiPanel
-                case .summary:
-                    if let summary = store.state.displayedSummary {
-                        summaryPanel(summary)
-                    } else {
-                        emptyActionPanel(
-                            icon: "text.alignleft",
-                            text: "会议摘要会在生成后显示",
-                            buttonTitle: "生成摘要",
-                            action: store.requestSummary
-                        )
-                    }
-                case .tasks:
-                    tasksPanel
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Color.black.opacity(0.08))
-    }
-
-    private var tabBar: some View {
-        HStack(spacing: 22) {
-            ForEach(WorkspaceTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(.easeOut(duration: 0.16)) { selectedTab = tab }
-                } label: {
-                    VStack(spacing: 8) {
-                        Text(tab.rawValue)
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(selectedTab == tab ? VisualTokens.primaryText : VisualTokens.secondaryText)
-                        Capsule()
-                            .fill(selectedTab == tab ? VisualTokens.sky : Color.clear)
-                            .frame(height: 2)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-    }
-
-    private var aiPanel: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if !isViewingHistory,
-                        let insight = store.state.latestInsight,
-                        !insight.isEmpty {
-                        aiSection(icon: "sparkles", title: "当前洞察") {
-                            Text(insight)
-                                .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .lineSpacing(4)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    if !isViewingHistory || !store.state.displayedGeneratedQuestions.isEmpty {
-                        suggestionsSection
-                    }
-
-                    if store.state.displayedConversation.isEmpty {
-                        emptyState(
-                            icon: isViewingHistory ? "bubble.left.and.bubble.right" : "sparkles",
-                            text: isViewingHistory
-                                ? "继续向这场历史会议提问，回答会追加到原会议"
-                                : "提出一个问题，回答会携带可追溯的会议来源"
-                        )
-                        .frame(minHeight: 180)
-                    } else {
-                        ForEach(store.state.displayedConversation) { turn in
-                            conversationCard(turn)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
-            }
-            .scrollIndicators(.hidden)
-
-            hairline
-
-            QuickAskField(store: store, appearance: .aura)
-                .padding(16)
-        }
-    }
-
-    private func conversationCard(_ turn: ConversationTurn) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: "person.crop.circle.fill")
-                    .foregroundStyle(VisualTokens.secondaryText)
-                Text(turn.question)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            hairline
-
-            switch turn.phase {
-            case .submitting:
-                conversationProgress("正在组装相关会议上下文")
-            case .streaming:
-                VStack(alignment: .leading, spacing: 10) {
-                    answerText(turn.answer)
-                    conversationProgress("正在生成回答")
-                }
-            case .completed:
-                VStack(alignment: .leading, spacing: 10) {
-                    answerText(turn.answer)
-                    if turn.degradedVision {
-                        Label("当前模型没有看到截图像素，仅使用了文字分析", systemImage: "eye.slash")
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(VisualTokens.amber)
-                    }
-                    if !turn.sources.isEmpty {
-                        sourceChips(turn.sources)
-                    }
-                    HStack {
-                        Spacer()
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(turn.answer, forType: .string)
-                        } label: {
-                            Label("复制", systemImage: "doc.on.doc")
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(VisualTokens.secondaryText)
-                        .help("复制完整回答")
-                    }
-                }
-            case .failed:
-                VStack(alignment: .leading, spacing: 10) {
-                    Label(turn.errorMessage ?? "回答失败", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(VisualTokens.danger)
-                        .textSelection(.enabled)
-                    Button("重试") { store.retryPrompt(turn.question) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(VisualTokens.sky)
-                }
-            }
-        }
-        .padding(14)
-        .background(Color.white.opacity(0.032))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(VisualTokens.line, lineWidth: 0.5)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("问题与回答")
-    }
-
-    private func answerText(_ answer: String) -> some View {
-        Text(answer.isEmpty ? "正在等待内容" : answer)
-            .font(.system(size: 12, weight: .regular, design: .rounded))
-            .foregroundStyle(VisualTokens.primaryText.opacity(answer.isEmpty ? 0.52 : 0.90))
-            .lineSpacing(5)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func conversationProgress(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small).tint(VisualTokens.sky)
-            Text(text)
-        }
-        .font(.system(size: 9, weight: .medium, design: .rounded))
-        .foregroundStyle(VisualTokens.secondaryText)
-    }
-
-    private var suggestionsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Image(systemName: "questionmark.bubble")
-                Text("猜你想问")
-                Spacer()
-                if !isViewingHistory {
-                    Button(action: store.requestQuestions) {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!store.hasMeetingContext || store.state.suggestionRefresh.phase == .loading)
-                    .help("刷新问题")
-                }
-            }
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(VisualTokens.sky)
-            .padding(.bottom, 8)
-
-            if !isViewingHistory, store.state.suggestionRefresh.phase == .loading {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.mini).tint(VisualTokens.sky)
-                    Text("正在根据最新会议内容更新")
-                }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(VisualTokens.secondaryText)
-                .padding(.vertical, 9)
-            } else if !isViewingHistory,
-                case .failed(let message) = store.state.suggestionRefresh.phase {
-                Button(action: store.requestQuestions) {
-                    Label("更新失败，点此重试", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(VisualTokens.amber)
-                .help(message)
-                .padding(.vertical, 9)
-            } else if store.state.displayedGeneratedQuestions.isEmpty {
-                Text(isViewingHistory ? "这次会议没有保存建议问题。" : "转写积累后会自动出现值得追问的问题。")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(VisualTokens.secondaryText)
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(store.state.displayedGeneratedQuestions.prefix(3), id: \.self) { question in
-                    Button {
-                        store.setQuickPromptDraft(question)
-                    } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: "arrow.turn.down.right")
-                                .foregroundStyle(VisualTokens.sky)
-                            Text(question)
-                                .foregroundStyle(VisualTokens.secondaryText)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .padding(.vertical, 9)
-                        .overlay(alignment: .top) {
-                            Rectangle().fill(VisualTokens.line).frame(height: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func aiSection<Content: View>(
-        icon: String,
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                Text(title)
-            }
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(title == "AI" || title == "当前洞察" ? VisualTokens.sky : VisualTokens.secondaryText)
-
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func summaryPanel(_ summary: MeetingSummaryContent) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Text(summary.summaryText)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .lineSpacing(6)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !summary.keyPoints.isEmpty {
-                    summaryList("关键点", values: summary.keyPoints, tint: VisualTokens.live)
-                }
-                if !summary.decisions.isEmpty {
-                    summaryList("已确认", values: summary.decisions, tint: VisualTokens.sky)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private var tasksPanel: some View {
-        Group {
-            if let tasks = store.state.displayedSummary?.tasks, !tasks.isEmpty {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(tasks) { task in
-                            HStack(alignment: .top, spacing: 12) {
-                                Circle()
-                                    .stroke(VisualTokens.live.opacity(0.70), lineWidth: 1)
-                                    .frame(width: 12, height: 12)
-                                    .padding(.top, 3)
-
-                                VStack(alignment: .leading, spacing: 7) {
-                                    Text(task.title)
-                                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-
-                                    HStack(spacing: 10) {
-                                        if let assignee = task.assignee, !assignee.isEmpty {
-                                            Label(assignee, systemImage: "person")
-                                        }
-                                        if let deadline = task.deadline, !deadline.isEmpty {
-                                            Label(deadline, systemImage: "calendar")
-                                        }
-                                    }
-                                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                                    .foregroundStyle(VisualTokens.secondaryText)
-
-                                    if !task.details.isEmpty {
-                                        Text(task.details)
-                                            .font(.system(size: 10, weight: .regular, design: .rounded))
-                                            .foregroundStyle(VisualTokens.secondaryText)
-                                            .lineSpacing(3)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .padding(.vertical, 14)
-                            .overlay(alignment: .top) {
-                                Rectangle().fill(VisualTokens.line).frame(height: 1)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
-                }
-                .scrollIndicators(.hidden)
-            } else {
-                emptyState(icon: "checklist", text: "摘要生成后，识别出的待办会显示在这里")
-            }
-        }
-    }
-
-    private func summaryList(_ title: String, values: [String], tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(tint)
-
-            ForEach(values, id: \.self) { value in
-                HStack(alignment: .top, spacing: 10) {
-                    Circle()
-                        .fill(tint)
-                        .frame(width: 4, height: 4)
-                        .padding(.top, 7)
-                    Text(value)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func emptyActionPanel(
-        icon: String,
-        text: String,
-        buttonTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(spacing: 14) {
-            emptyState(icon: icon, text: text)
-            Button(buttonTitle, action: action)
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(VisualTokens.sky)
-                .disabled(!store.hasMeetingContext)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func emptyState(icon: String, text: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(VisualTokens.tertiaryText)
-            Text(text)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(VisualTokens.secondaryText)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
-    }
-
-    private var workspaceStatus: String {
-        if isViewingHistory {
-            return "可回顾并继续提问"
-        }
-        switch store.state.phase {
-        case .live:
-            switch store.state.recordingActivity {
-            case .paused: return "录音已暂停，会议上下文仍保留"
-            case .pausing: return "正在暂停录音"
-            case .resuming: return "正在继续录音"
-            default: return "实时转写中"
-            }
-        case .connecting:
-            return "正在准备音频来源"
-        case .stopping:
-            return "正在保存会议"
-        case .failed:
-            return "录音未启动，请检查音频来源"
-        case .idle:
-            return store.hasMeetingContext ? "可继续整理" : "尚未开始"
-        }
-    }
-
-    private var workspaceStatusTint: Color {
-        if isViewingHistory { return VisualTokens.secondaryText }
-        switch store.state.phase {
-        case .live:
-            return store.state.recordingActivity == .paused ? VisualTokens.amber : VisualTokens.live
-        case .connecting, .stopping:
-            return VisualTokens.amber
-        case .failed:
-            return VisualTokens.danger
-        case .idle:
-            return VisualTokens.tertiaryText
-        }
-    }
-
-    private func meetingStatus(_ status: StoredMeetingStatus) -> String {
-        switch status {
-        case .active: "进行中"
-        case .completed: "已完成"
-        case .incomplete: "未完整结束"
-        case .recoveryRequired: "需要恢复"
-        }
-    }
-
-    private var hairline: some View {
-        LinearGradient(
-            colors: [.clear, VisualTokens.line, VisualTokens.line, .clear],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-        .frame(height: 1)
-    }
-
-    private var workspaceBackground: some View {
-        ZStack {
-            VisualTokens.island
-            RadialGradient(
-                colors: [VisualTokens.sky.opacity(0.055), .clear],
-                center: .topTrailing,
-                startRadius: 20,
-                endRadius: 520
-            )
-            RadialGradient(
-                colors: [VisualTokens.live.opacity(0.035), .clear],
-                center: .bottomLeading,
-                startRadius: 20,
-                endRadius: 460
-            )
-        }
-    }
 }

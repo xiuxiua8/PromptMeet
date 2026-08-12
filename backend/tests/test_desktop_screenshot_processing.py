@@ -83,3 +83,41 @@ def test_durable_screenshot_analysis_task_is_retained_until_completion(
         assert not main_service.meeting_screenshot_tasks
 
     asyncio.run(run_analysis())
+
+
+def test_screenshot_and_ocr_analysis_persist_exact_asset_provenance(tmp_path) -> None:
+    repository = MeetingRepository(tmp_path / "data")
+    ingestion = MeetingIngestionService(repository)
+    ingestion.start("meeting-ocr", datetime(2026, 7, 30, tzinfo=UTC))
+    screenshot_path = repository.assets_directory / "meeting-ocr" / "screen.png"
+    screenshot_path.parent.mkdir(parents=True)
+    screenshot_path.write_bytes(b"\x89PNG\r\n\x1a\ncaptain-shape-chinese-pixels")
+
+    screenshot = ingestion.screenshot(
+        "meeting-ocr",
+        screenshot_path,
+        "image/png",
+        local_ocr_text="截图证据：青岚计划在 14:30 部署，负责人周岚。",
+        ocr_engine="apple_vision",
+    )
+    analysis = ingestion.screenshot_analysis(
+        "meeting-ocr",
+        screenshot.payload.asset_id,
+        ScreenshotAnalysisResult(
+            status="completed",
+            text="OCR 证据（Apple Vision，非视觉分析）：青岚计划在 14:30 部署，负责人周岚。",
+            vision_used=False,
+            provider="openai",
+            model="text-model",
+            evidence_kind="ocr",
+            image_rejection="HTTP 400: image input rejected",
+        ),
+    )
+
+    assert screenshot.payload.local_ocr_text == (
+        "截图证据：青岚计划在 14:30 部署，负责人周岚。"
+    )
+    assert screenshot.payload.ocr_engine == "apple_vision"
+    assert analysis.payload.asset_id == screenshot.payload.asset_id
+    assert analysis.payload.evidence_kind == "ocr"
+    assert analysis.payload.image_rejection == "HTTP 400: image input rejected"

@@ -111,10 +111,11 @@ struct AIReaderView: View {
             .padding(20)
         } else {
             ScrollView {
-                answerText
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(6)
-                    .textSelection(.enabled)
+                MarkdownTextView(
+                    markdown: store.state.aiReader.content,
+                    mode: store.state.aiReader.isStreaming ? .streaming : .completed,
+                    baseFontSize: 14
+                )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 18)
@@ -140,19 +141,6 @@ struct AIReaderView: View {
 
             QuickAskField(store: store, appearance: .aura)
         }
-    }
-
-    private var answerText: Text {
-        if store.state.aiReader.isStreaming {
-            return Text(store.state.aiReader.content)
-        }
-        if let attributed = try? AttributedString(
-            markdown: store.state.aiReader.content,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            return Text(attributed)
-        }
-        return Text(store.state.aiReader.content)
     }
 
     private func copyAnswer() {

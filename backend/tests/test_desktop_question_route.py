@@ -25,7 +25,11 @@ def test_desktop_question_route_uses_in_process_agent(monkeypatch, tmp_path) -> 
 
     class FakeAgentService:
         async def generate_questions(self, transcript):
-            return [{"question": "谁负责上线？"}]
+            return [
+                {"question": "谁负责上线？"},
+                {"question": "何时完成上线？"},
+                {"question": "主要风险是什么？"},
+            ]
 
     generated = []
 
@@ -45,7 +49,16 @@ def test_desktop_question_route_uses_in_process_agent(monkeypatch, tmp_path) -> 
 
     assert response["success"] is True
     assert generated == [
-        ("question-session", {"questions": [{"question": "谁负责上线？"}]})
+        (
+            "question-session",
+            {
+                "questions": [
+                    {"question": "谁负责上线？"},
+                    {"question": "何时完成上线？"},
+                    {"question": "主要风险是什么？"},
+                ]
+            },
+        )
     ]
 
 
@@ -122,7 +135,11 @@ def test_new_generation_cancels_stale_model_work_and_broadcasts_only_latest(
                 except asyncio.CancelledError:
                     self.first_cancelled = True
                     raise
-            return [{"question": "最新问题"}]
+            return [
+                {"question": "最新问题一"},
+                {"question": "最新问题二"},
+                {"question": "最新问题三"},
+            ]
 
     agent = SlowThenFreshAgent()
 
@@ -162,7 +179,11 @@ def test_new_generation_cancels_stale_model_work_and_broadcasts_only_latest(
         (
             "fresh-session",
             {
-                "questions": [{"question": "最新问题"}],
+                "questions": [
+                    {"question": "最新问题一"},
+                    {"question": "最新问题二"},
+                    {"question": "最新问题三"},
+                ],
                 "generation_id": "22222222-2222-2222-2222-222222222222",
                 "context_revision": 2,
             },

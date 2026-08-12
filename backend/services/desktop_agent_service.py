@@ -1,7 +1,11 @@
+import asyncio
 import json
+import math
 import os
 import base64
+import re
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
@@ -9,11 +13,31 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from models.meeting_context import EvidenceSource, MeetingRecord
-from services.context_builder import ContextBudget, MeetingContextBuilder
+from models.meeting_context import (
+    EvidenceSource,
+    MeetingRecord,
+    ScreenshotAnalysisPayload,
+    ScreenshotPayload,
+    SummaryPayload,
+    TranscriptPayload,
+)
+from services.context_builder import (
+    ContextBudget,
+    ContextSelection,
+    MeetingContextBuilder,
+)
 from services.meeting_ingestion import ScreenshotAnalysisResult
 from services.model_provider import ProviderConfiguration
 from services.prompt_builder import MeetingPromptBuilder, ProviderContentPart
+
+
+@asynccontextmanager
+async def _completion_deadline(seconds: float):
+    try:
+        async with asyncio.timeout(seconds):
+            yield
+    except TimeoutError as error:
+        raise RuntimeError("AI 服务响应超时，请重试或检查提供方连接") from error
 
 
 @dataclass(frozen=True)
@@ -23,6 +47,24 @@ class MeetingAnswerResult:
     degraded_vision: bool
     provider: str
     model: str
+    image_rejection: str | None = None
+
+
+@dataclass(frozen=True)
+class MeetingSummaryResult:
+    summary: dict
+    provider: str
+    model: str
+    source_event_ids: list[str]
+    source_revision: int
+    source_progress: dict[str, int]
+
+
+class StreamTerminalError(RuntimeError):
+    def __init__(self, event_type: str, message: str):
+        super().__init__("AI provider terminated the stream")
+        self.event_type = event_type
+        self.provider_message = message
 
 
 class _DuckDuckGoResultParser(HTMLParser):
@@ -83,6 +125,7 @@ class _DuckDuckGoResultParser(HTMLParser):
 
 class DesktopAgentService:
     MAX_TOOL_ROUNDS = 3
+    STREAM_COMPLETION_TIMEOUT_SECONDS = 120.0
 
     def __init__(
         self,
@@ -108,14 +151,18 @@ class DesktopAgentService:
         budget: ContextBudget | None = None,
         exclude_event_ids: set[str] | None = None,
         search_web: bool = True,
+        purpose: str = "answer",
+        selection_override: ContextSelection | None = None,
     ) -> MeetingAnswerResult:
-        configuration = ProviderConfiguration.from_environment(dict(self.environment))
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose=purpose
+        )
         context_budget = budget or ContextBudget(
             total_tokens=min(configuration.capabilities.max_context_tokens, 8_000),
             answer_reserve=2_000,
             summary_reserve=500,
         )
-        selection = MeetingContextBuilder().select(
+        selection = selection_override or MeetingContextBuilder().select(
             record,
             question,
             context_budget,
@@ -131,6 +178,7 @@ class DesktopAgentService:
             search_web
             and self.environment.get("PROMPTMEET_WEB_SEARCH_ENABLED", "1") != "0"
         )
+        image_rejection = None
         try:
             answer, web_sources = await self._run_meeting_prompt(
                 configuration,
@@ -138,20 +186,26 @@ class DesktopAgentService:
                 emit,
                 search_enabled=search_enabled,
             )
-        except httpx.HTTPStatusError as error:
+        except (httpx.HTTPStatusError, StreamTerminalError) as error:
             if not self._is_image_rejection(error, prompt_request):
-                raise
+                raise self._runtime_failure(configuration, purpose, error) from error
+            image_rejection = self._image_rejection_provenance(error)
             prompt_request = MeetingPromptBuilder().build(
                 selection,
                 question,
                 replace(configuration.capabilities, supports_vision=False),
             )
-            answer, web_sources = await self._run_meeting_prompt(
-                configuration,
-                prompt_request,
-                emit,
-                search_enabled=search_enabled,
-            )
+            try:
+                answer, web_sources = await self._run_meeting_prompt(
+                    configuration,
+                    prompt_request,
+                    emit,
+                    search_enabled=search_enabled,
+                )
+            except (httpx.HTTPError, StreamTerminalError) as fallback_error:
+                raise self._runtime_failure(
+                    configuration, purpose, fallback_error
+                ) from fallback_error
 
         source_block = self._source_block(web_sources)
         answer += source_block
@@ -164,6 +218,7 @@ class DesktopAgentService:
             degraded_vision=prompt_request.degraded_vision,
             provider=configuration.provider,
             model=configuration.model,
+            image_rejection=image_rejection,
         )
 
     async def _run_meeting_prompt(
@@ -240,9 +295,16 @@ class DesktopAgentService:
             and any(part.type == "image_asset" for part in message.content)
             for message in prompt_request.messages
         )
-        if not has_image or error.response.status_code not in {400, 415, 422}:
+        if not has_image:
             return False
-        response_text = error.response.text.casefold()
+        if isinstance(error, httpx.HTTPStatusError):
+            if error.response.status_code not in {400, 415, 422}:
+                return False
+            response_text = error.response.text.casefold()
+        elif isinstance(error, StreamTerminalError):
+            response_text = error.provider_message.casefold()
+        else:
+            return False
         return any(
             marker in response_text
             for marker in ("image", "vision", "multimodal", "image_url")
@@ -253,46 +315,109 @@ class DesktopAgentService:
         record: MeetingRecord,
         screenshot_event,
     ) -> ScreenshotAnalysisResult:
-        configuration = ProviderConfiguration.from_environment(dict(self.environment))
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="screenshot"
+        )
+        payload = screenshot_event.payload
+        if not isinstance(payload, ScreenshotPayload):
+            raise ValueError("截图分析需要截图事件")
+        local_ocr_text = (payload.local_ocr_text or "").strip()
         if not configuration.capabilities.supports_vision:
+            if local_ocr_text:
+                return ScreenshotAnalysisResult(
+                    status="completed",
+                    text=self._local_ocr_evidence(local_ocr_text),
+                    vision_used=False,
+                    provider=configuration.provider,
+                    model=configuration.model,
+                    evidence_kind="ocr",
+                )
             return ScreenshotAnalysisResult(
                 status="unsupported",
                 text=(
-                    f"{configuration.provider} 的当前模型 {configuration.model} 不支持图像输入。"
-                    "截图已保留，可改用支持视觉的提供方重新分析。"
+                    "截图分析工作流配置问题："
+                    f"{configuration.provider} 的模型 {configuration.model} 当前未启用图像输入。"
+                    "请在设置 > AI 服务 > 截图分析中选择视觉模型，"
+                    "并勾选“该端点与模型支持图像输入”。原截图已保留。"
                 ),
                 vision_used=False,
                 provider=configuration.provider,
                 model=configuration.model,
+                evidence_kind="none",
             )
 
         async def ignore(_: dict) -> None:
             return None
 
+        selection = MeetingContextBuilder().select_screenshot(record, screenshot_event)
         result = await self.answer_meeting(
             record,
             "请客观描述最新会议截图中的关键信息、数字、决定和待办。不要推测看不清的内容。",
             ignore,
             search_web=False,
+            purpose="screenshot",
+            selection_override=selection,
         )
         if result.degraded_vision:
+            if local_ocr_text:
+                return ScreenshotAnalysisResult(
+                    status="completed",
+                    text=self._local_ocr_evidence(local_ocr_text),
+                    vision_used=False,
+                    provider=result.provider,
+                    model=result.model,
+                    evidence_kind="ocr",
+                    image_rejection=result.image_rejection,
+                )
             return ScreenshotAnalysisResult(
                 status="unsupported",
                 text=(
-                    f"{result.provider} 的当前端点或模型 {result.model} 拒绝了图像输入。"
-                    "截图已保留，但模型没有看到截图像素。"
+                    "截图分析工作流配置问题："
+                    f"{result.provider} 的端点或模型 {result.model} 拒绝了图像输入。"
+                    "原截图已保留，但模型没有看到截图像素。"
+                    "请确认该模型支持视觉，或关闭错误的视觉声明后改用支持视觉的模型。"
                 ),
                 vision_used=False,
                 provider=result.provider,
                 model=result.model,
+                evidence_kind="none",
+                image_rejection=result.image_rejection,
             )
         return ScreenshotAnalysisResult(
             status="completed",
-            text=result.answer,
+            text=self._normalize_screenshot_markdown(result.answer),
             vision_used=True,
             provider=result.provider,
             model=result.model,
+            evidence_kind="vision",
         )
+
+    @classmethod
+    def _local_ocr_evidence(cls, text: str) -> str:
+        return cls._normalize_screenshot_markdown(
+            "本地 OCR 证据（Apple Vision，非视觉模型分析）：\n\n" + text
+        )
+
+    @staticmethod
+    def _normalize_screenshot_markdown(text: str) -> str:
+        value = text.replace("关键h息", "关键信息")
+        value = re.sub(r"(?m)^(\s*)-(?=\S)", r"\1- ", value)
+        lines = value.strip().splitlines()
+        normalized: list[str] = []
+        for line in lines:
+            is_list = bool(re.match(r"^\s*[-*+]\s+", line))
+            previous_is_list = bool(
+                normalized and re.match(r"^\s*[-*+]\s+", normalized[-1])
+            )
+            if (
+                is_list
+                and normalized
+                and normalized[-1].strip()
+                and not previous_is_list
+            ):
+                normalized.append("")
+            normalized.append(line.rstrip())
+        return "\n".join(normalized).strip()
 
     def _provider_content(self, content: str | list[ProviderContentPart]) -> object:
         if isinstance(content, str):
@@ -316,6 +441,12 @@ class DesktopAgentService:
                 }
             )
         return encoded
+
+    @staticmethod
+    def _image_rejection_provenance(error) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            return f"HTTP {error.response.status_code}: image input rejected"
+        return f"SSE {error.event_type}: image input rejected"
 
     async def answer(
         self,
@@ -402,53 +533,77 @@ class DesktopAgentService:
         headers: dict[str, str],
         request_payload: dict[str, object],
         emit: Callable[[dict], Awaitable[None]],
+        *,
+        completion_timeout: float = STREAM_COMPLETION_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
         content_parts: list[str] = []
         calls_by_index: dict[int, dict[str, object]] = {}
-        async with client.stream(
-            "POST",
-            endpoint,
-            headers=headers,
-            json=request_payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    continue
-                payload = json.loads(data)
-                choices = payload.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                content = delta.get("content")
-                if isinstance(content, str) and content:
-                    content_parts.append(content)
-                    await emit({"data": {"delta": content}})
-                for raw_call in delta.get("tool_calls") or []:
-                    index = raw_call.get("index", len(calls_by_index))
-                    if not isinstance(index, int):
+        async with _completion_deadline(completion_timeout):
+            async with client.stream(
+                "POST",
+                endpoint,
+                headers=headers,
+                json=request_payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
                         continue
-                    call = calls_by_index.setdefault(
-                        index,
-                        {
-                            "id": "",
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        },
-                    )
-                    if raw_call.get("id"):
-                        call["id"] = raw_call["id"]
-                    if raw_call.get("type"):
-                        call["type"] = raw_call["type"]
-                    raw_function = raw_call.get("function") or {}
-                    function = call["function"]
-                    if raw_function.get("name"):
-                        function["name"] = raw_function["name"]
-                    if raw_function.get("arguments"):
-                        function["arguments"] += raw_function["arguments"]
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        break
+                    payload = json.loads(data)
+                    event_type = payload.get("type")
+                    if event_type in {
+                        "response.failed",
+                        "response.cancelled",
+                    }:
+                        response = payload.get("response") or {}
+                        error = response.get("error") or payload.get("error") or {}
+                        message = (
+                            error.get("message") if isinstance(error, dict) else ""
+                        )
+                        raise StreamTerminalError(event_type, str(message or ""))
+                    if event_type in {
+                        "message_stop",
+                        "response.completed",
+                    }:
+                        break
+                    choices = payload.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        content_parts.append(content)
+                        await emit({"data": {"delta": content}})
+                    for raw_call in delta.get("tool_calls") or []:
+                        index = raw_call.get("index", len(calls_by_index))
+                        if not isinstance(index, int):
+                            continue
+                        call = calls_by_index.setdefault(
+                            index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
+                        if raw_call.get("id"):
+                            call["id"] = raw_call["id"]
+                        if raw_call.get("type"):
+                            call["type"] = raw_call["type"]
+                        raw_function = raw_call.get("function") or {}
+                        function = call["function"]
+                        if raw_function.get("name"):
+                            function["name"] = raw_function["name"]
+                        if raw_function.get("arguments"):
+                            function["arguments"] += raw_function["arguments"]
+                    if choice.get("finish_reason") is not None:
+                        break
 
         message: dict[str, object] = {
             "role": "assistant",
@@ -485,23 +640,275 @@ class DesktopAgentService:
         except Exception:
             return text if len(text) <= 600 else f"{text[:600]}…"
 
+    async def summarize_meeting(
+        self,
+        record: MeetingRecord,
+        source_events: list,
+        source_progress: dict[str, int] | None = None,
+    ) -> MeetingSummaryResult:
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="summary"
+        )
+        context_budget = ContextBudget(
+            total_tokens=min(configuration.capabilities.max_context_tokens, 10_000),
+            answer_reserve=2_000,
+            summary_reserve=500,
+        )
+        token_limit = context_budget.evidence_tokens
+        estimator = MeetingContextBuilder._estimate_tokens
+        context_lines = []
+        spent = 0
+        evidence_reserve = min(
+            token_limit,
+            max(256, min(2_048, token_limit // 3)),
+        )
+        prior_budget = max(0, token_limit - evidence_reserve)
+        covered_events = []
+        progress = source_progress or {}
+        advanced_progress: dict[str, int] = {}
+        previous_summary = max(
+            (
+                event
+                for event in source_events
+                if isinstance(event.payload, SummaryPayload)
+            ),
+            key=lambda event: (event.payload.revision, event.sequence),
+            default=None,
+        )
+        if previous_summary is not None and prior_budget > 0:
+            value = self.structured_summary_text(previous_summary.payload)
+            if estimator(value) > prior_budget:
+                low = 0
+                high = len(value)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    candidate = f"{value[:midpoint]}…"
+                    if estimator(candidate) <= prior_budget:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                value = f"{value[:low].rstrip()}…" if low else ""
+            if value:
+                context_lines.append(value)
+                spent += estimator(value)
+        for event in source_events:
+            payload = event.payload
+            if isinstance(payload, SummaryPayload):
+                continue
+            line = self.summary_event_text(event)
+            if not line:
+                continue
+            offset = min(max(0, progress.get(event.event_id, 0)), len(line))
+            if offset >= len(line):
+                continue
+            header = f"证据事件 {event.sequence}，字符 {offset} 起："
+            remaining = line[offset:]
+            available = token_limit - spent
+            if estimator(header) >= available:
+                break
+            if estimator(f"{header}{remaining}") <= available:
+                chunk = remaining
+            else:
+                low = 0
+                high = len(remaining)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    if estimator(f"{header}{remaining[:midpoint]}") <= available:
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                chunk = remaining[:low]
+            if not chunk:
+                break
+            rendered = f"{header}{chunk}"
+            context_lines.append(rendered)
+            spent += estimator(rendered)
+            next_offset = offset + len(chunk)
+            advanced_progress[event.event_id] = next_offset
+            if next_offset == len(line):
+                covered_events.append(event)
+            else:
+                break
+        if not advanced_progress:
+            raise ValueError("没有可在当前预算内推进的会议证据")
+        response_content = ""
+        try:
+            async with httpx.AsyncClient(timeout=90) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你是会议总结助手。只输出 JSON 对象，字段为 summary_text、tasks、"
+                                    "key_points、decisions。tasks 每项包含 task、describe、priority、"
+                                    "assignee、deadline、status。没有行动项时 tasks 为空数组，不得编造。"
+                                    "输入中若包含此前结构化摘要，保留其中仍有效的待办、关键点与决策，"
+                                    "并结合新增证据更新。"
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": "\n".join(context_lines),
+                            },
+                        ],
+                        "stream": False,
+                        "temperature": 0.1,
+                    },
+                )
+                response.raise_for_status()
+                response_content = response.json()["choices"][0]["message"][
+                    "content"
+                ].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "summary", error) from error
+        if response_content.startswith("```"):
+            response_content = (
+                response_content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            )
+        try:
+            summary = json.loads(response_content)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"摘要模型返回了无法解析的 JSON：{error}") from error
+        if (
+            not isinstance(summary, dict)
+            or not str(summary.get("summary_text") or "").strip()
+        ):
+            raise ValueError("摘要模型返回了无效结构")
+        return MeetingSummaryResult(
+            summary={
+                "summary_text": str(summary["summary_text"]).strip(),
+                "tasks": list(summary.get("tasks") or []),
+                "key_points": [str(item) for item in summary.get("key_points") or []],
+                "decisions": [str(item) for item in summary.get("decisions") or []],
+            },
+            provider=configuration.provider,
+            model=configuration.model,
+            source_event_ids=[event.event_id for event in covered_events],
+            source_revision=max(
+                (event.sequence for event in covered_events), default=0
+            ),
+            source_progress=advanced_progress,
+        )
+
+    @staticmethod
+    def summary_event_text(event) -> str:
+        payload = event.payload
+        if isinstance(payload, TranscriptPayload) and payload.text:
+            return f"[{event.sequence}] {payload.speaker}：{payload.text}"
+        if isinstance(payload, ScreenshotAnalysisPayload) and payload.text:
+            return f"[{event.sequence}] [截图分析结果]：{payload.text}"
+        if isinstance(payload, ScreenshotPayload):
+            return f"[{event.sequence}] 截图资产 {payload.asset_id}，类型 {payload.mime_type}"
+        return ""
+
+    @staticmethod
+    def structured_summary_text(payload: SummaryPayload) -> str:
+        return "此前结构化摘要：" + json.dumps(
+            {
+                "summary_text": payload.summary_text,
+                "tasks": payload.tasks,
+                "key_points": payload.key_points,
+                "decisions": payload.decisions,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    async def generate_meeting_title(self, record: MeetingRecord) -> str:
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="summary"
+        )
+        context = self._meeting_title_context(record)
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "根据且仅根据当前这一场会议的内容，生成一个具体、有辨识度的"
+                                    "简体中文标题。目标长度为8到18个汉字，避免新会议、会议总结、"
+                                    "历史会议等通用名称。只输出标题，不要引号、标签、解释或标点。"
+                                ),
+                            },
+                            {"role": "user", "content": context},
+                        ],
+                        "stream": False,
+                        "temperature": 0.1,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "title", error) from error
+
+    @staticmethod
+    def _meeting_title_context(record: MeetingRecord) -> str:
+        transcript_lines: list[str] = []
+        summaries: list[SummaryPayload] = []
+        for event in sorted(
+            record.events,
+            key=lambda item: (item.sequence, item.occurred_at),
+        ):
+            if isinstance(event.payload, TranscriptPayload):
+                text = " ".join(event.payload.text.split())
+                if text:
+                    transcript_lines.append(f"{event.payload.speaker}：{text[:300]}")
+            elif isinstance(event.payload, SummaryPayload):
+                summaries.append(event.payload)
+        sections = ["会议转写：", *(transcript_lines[:40] or ["无"])]
+        if summaries:
+            summary = summaries[-1]
+            sections.extend(["", "最新摘要：", summary.summary_text])
+            if summary.decisions:
+                sections.extend(["", "决定：", *summary.decisions])
+            task_lines = [
+                "；".join(
+                    str(value)
+                    for value in (
+                        task.get("task"),
+                        task.get("assignee"),
+                        task.get("deadline"),
+                    )
+                    if value
+                )
+                for task in summary.tasks
+                if isinstance(task, dict) and task.get("task")
+            ]
+            if task_lines:
+                sections.extend(["", "待办：", *task_lines])
+        return "\n".join(sections)
+
     async def generate_questions(self, transcript: list) -> list[dict]:
-        endpoint, api_key, model = self._provider("questions")
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="questions"
+        )
         recent_transcript = transcript[-50:]
         context = self._format_context(recent_transcript)
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": self._question_messages(context),
-                    "stream": False,
-                    "temperature": 0.2,
-                },
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"].strip()
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": self._question_messages(context),
+                        "stream": False,
+                        "temperature": 0.2,
+                    },
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"].strip()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "questions", error) from error
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         questions = json.loads(content)
@@ -518,7 +925,15 @@ class DesktopAgentService:
             and item["evidence"].strip()
             and self._normalized_text(item["evidence"]) in normalized_context
         ]
-        return grounded_questions[:3]
+        unique_questions = []
+        seen = set()
+        for question in grounded_questions:
+            normalized = self._normalized_text(question["question"])
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_questions.append(question)
+        return unique_questions[:3]
 
     def _answer_messages(
         self,
@@ -562,13 +977,15 @@ class DesktopAgentService:
     @staticmethod
     def _question_messages(context: str) -> list[dict[str, str]]:
         system_prompt = (
-            "从实时会议中捕捉0到3个最新出现、尚未解决且适合立即交给AI回答的问题。\n"
+            "从实时会议中生成最多3个最新、具体且适合立即交给AI回答的问题。\n"
             "重点识别：参会者明确提出的问题、大家都没有思路的共同疑问、面试官要求说明的思路、"
             "需要完成的编程任务，以及阻碍讨论继续的知识缺口。优先最近的会议片段；"
             "旧问题只有在仍未解决且仍与当前议题相关时才保留。\n"
             "问题必须基于会议内容，并附上一段连续原文作为 evidence；答案不需要出现在会议记录中，"
-            "后续回答器会使用模型知识和联网搜索。不要生成已经被明确回答的问题，也不要生成泛泛的主题复述。"
-            "如果没有合格问题，输出[]。\n"
+            "后续回答器会使用模型知识和联网搜索。优先尚未解决的问题；如果原文没有三个明确疑问，"
+            "可围绕原文中的决定、风险和下一步生成澄清问题，但不得编造原文没有的事实。"
+            "证据不足时只返回能够严格引用原文的问题，允许返回1到2项或空数组，不得为凑数放宽依据。"
+            "不要生成已经被明确回答的问题，也不要生成泛泛的主题复述。\n"
             "只输出JSON数组，每项格式为"
             '{"question":"可直接交给AI回答的问题","evidence":"会议原文中的连续短句"}。'
         )
@@ -769,7 +1186,9 @@ class DesktopAgentService:
         return f"\n\n参考来源：\n{'\n'.join(sources)}" if sources else ""
 
     async def translate(self, text: str, target_language: str) -> str:
-        endpoint, api_key, model = self._provider("answer")
+        configuration = ProviderConfiguration.from_environment(
+            dict(self.environment), purpose="translation"
+        )
         language_names = {
             "zh": "简体中文",
             "en": "English",
@@ -777,26 +1196,45 @@ class DesktopAgentService:
             "ko": "한국어",
         }
         target = language_names.get(target_language, target_language)
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": f"将用户文本准确翻译为{target}。只输出译文，不解释。",
-                        },
-                        {"role": "user", "content": text},
-                    ],
-                    "stream": False,
-                    "temperature": 0,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    configuration.endpoint,
+                    headers={"Authorization": f"Bearer {configuration.api_key}"},
+                    json={
+                        "model": configuration.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": f"将用户文本准确翻译为{target}。只输出译文，不解释。",
+                            },
+                            {"role": "user", "content": text},
+                        ],
+                        "stream": False,
+                        "temperature": 0,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as error:
+            raise self._runtime_failure(configuration, "translation", error) from error
         return payload["choices"][0]["message"]["content"].strip()
+
+    @staticmethod
+    def _runtime_failure(
+        configuration: ProviderConfiguration,
+        purpose: str,
+        error: Exception,
+    ) -> RuntimeError:
+        status = (
+            f"，HTTP {error.response.status_code}"
+            if isinstance(error, httpx.HTTPStatusError)
+            else ""
+        )
+        return RuntimeError(
+            f"AI 工作流 {purpose} · {configuration.provider} · "
+            f"{configuration.model} 请求失败{status}"
+        )
 
     def _provider(self, purpose: str = "answer") -> tuple[str, str, str]:
         configuration = ProviderConfiguration.from_environment(
@@ -813,6 +1251,15 @@ class DesktopAgentService:
             questions = ProviderConfiguration.from_environment(
                 dict(self.environment), purpose="questions"
             )
+            summary = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="summary"
+            )
+            screenshot = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="screenshot"
+            )
+            translation = ProviderConfiguration.from_environment(
+                dict(self.environment), purpose="translation"
+            )
         except (RuntimeError, ValueError):
             return {"configured": False, "provider": None, "model": None}
         return {
@@ -821,4 +1268,11 @@ class DesktopAgentService:
             "model": answer.model,
             "answer_model": answer.model,
             "question_model": questions.model,
+            "summary_provider": summary.provider,
+            "summary_model": summary.model,
+            "screenshot_provider": screenshot.provider,
+            "screenshot_model": screenshot.model,
+            "screenshot_supports_vision": screenshot.capabilities.supports_vision,
+            "translation_provider": translation.provider,
+            "translation_model": translation.model,
         }

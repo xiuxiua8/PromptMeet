@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Callable
 
@@ -40,6 +40,12 @@ class ContextSelection:
     estimated_tokens: int
     omitted_count: int
     derived_summary: str | None
+    rendered_event_text: dict[str, str] = field(default_factory=dict)
+
+    def rendered_event(self, event: MeetingEvent) -> str:
+        if event.event_id in self.rendered_event_text:
+            return self.rendered_event_text[event.event_id]
+        return MeetingContextBuilder.render_event(event)
 
 
 class MeetingContextBuilder:
@@ -65,6 +71,14 @@ class MeetingContextBuilder:
             and event.kind != EventKind.SUGGESTIONS
             and (event.kind != EventKind.LIFECYCLE or include_lifecycle)
         ]
+        if self._visual_query(question):
+            visual_selection = self._select_latest_visual(
+                record,
+                candidates,
+                budget,
+            )
+            if visual_selection is not None:
+                return visual_selection
         available = budget.evidence_tokens
         reserved_summary = min(budget.summary_reserve, available // 4)
         event_budget = max(0, available - reserved_summary)
@@ -129,6 +143,135 @@ class MeetingContextBuilder:
             derived_summary=summary,
         )
 
+    def select_screenshot(
+        self,
+        record: MeetingRecord,
+        screenshot_event: MeetingEvent,
+    ) -> ContextSelection:
+        if not isinstance(screenshot_event.payload, ScreenshotPayload):
+            raise ValueError("截图分析需要截图事件")
+        matching = next(
+            (
+                event
+                for event in record.events
+                if event.event_id == screenshot_event.event_id
+                and isinstance(event.payload, ScreenshotPayload)
+                and event.payload.asset_id == screenshot_event.payload.asset_id
+            ),
+            None,
+        )
+        if matching is None:
+            raise ValueError("截图事件与会议记录不匹配")
+        rendered = self.render_event(matching)
+        return ContextSelection(
+            meeting_id=record.meeting_id,
+            events=[matching],
+            sources=[
+                EvidenceSource(
+                    source_id=f"M{matching.sequence}",
+                    event_id=matching.event_id,
+                    label=self._source_label(matching),
+                )
+            ],
+            estimated_tokens=self.token_estimator(rendered),
+            omitted_count=max(0, len(record.events) - 1),
+            derived_summary=None,
+        )
+
+    def _select_latest_visual(
+        self,
+        record: MeetingRecord,
+        candidates: list[MeetingEvent],
+        budget: ContextBudget,
+    ) -> ContextSelection | None:
+        screenshots = [
+            event
+            for event in candidates
+            if isinstance(event.payload, ScreenshotPayload)
+            and event.payload.capture_status == "available"
+        ]
+        if not screenshots:
+            return None
+        screenshot = max(
+            screenshots,
+            key=lambda event: (event.sequence, event.occurred_at, event.event_id),
+        )
+        analyses = [
+            event
+            for event in candidates
+            if isinstance(event.payload, ScreenshotAnalysisPayload)
+            and event.payload.asset_id == screenshot.payload.asset_id
+            and event.payload.status == "completed"
+            and bool(event.payload.text.strip())
+            and event.payload.evidence_kind in {"vision", "ocr"}
+        ]
+        analysis = (
+            max(
+                analyses,
+                key=lambda event: (event.sequence, event.occurred_at, event.event_id),
+            )
+            if analyses
+            else None
+        )
+        visual_events = [screenshot] + ([analysis] if analysis is not None else [])
+        visual_events.sort(
+            key=lambda event: (event.sequence, event.occurred_at, event.event_id)
+        )
+        selected: list[MeetingEvent] = []
+        rendered_event_text: dict[str, str] = {}
+        evidence_lines: list[str] = []
+        for event in visual_events:
+            rendered = self.render_event(event)
+            prefix = f"[M{event.sequence}] "
+            candidate_lines = [*evidence_lines, f"{prefix}{rendered}"]
+            if (
+                self.token_estimator("\n".join(candidate_lines))
+                <= budget.evidence_tokens
+            ):
+                bounded = rendered
+            else:
+                low = 0
+                high = len(rendered)
+                while low < high:
+                    midpoint = (low + high + 1) // 2
+                    candidate_lines = [
+                        *evidence_lines,
+                        f"{prefix}{rendered[:midpoint]}",
+                    ]
+                    if (
+                        self.token_estimator("\n".join(candidate_lines))
+                        <= budget.evidence_tokens
+                    ):
+                        low = midpoint
+                    else:
+                        high = midpoint - 1
+                bounded = rendered[:low].rstrip()
+            if not bounded:
+                continue
+            selected.append(event)
+            rendered_event_text[event.event_id] = bounded
+            evidence_lines.append(f"{prefix}{bounded}")
+        if not selected:
+            return None
+        estimated = self.token_estimator("\n".join(evidence_lines))
+        sources = [
+            EvidenceSource(
+                source_id=f"M{event.sequence}",
+                event_id=event.event_id,
+                label=self._source_label(event),
+            )
+            for event in selected
+        ]
+        return ContextSelection(
+            meeting_id=record.meeting_id,
+            events=selected,
+            sources=sources,
+            estimated_tokens=estimated,
+            omitted_count=max(0, len(candidates) - len(selected)),
+            derived_summary=None,
+            rendered_event_text=rendered_event_text,
+        )
+
     @staticmethod
     def render_event(event: MeetingEvent) -> str:
         payload = event.payload
@@ -136,9 +279,19 @@ class MeetingContextBuilder:
             speaker = MeetingContextBuilder._transcript_speaker(payload)
             return f"{speaker}：{payload.text}"
         if isinstance(payload, ScreenshotPayload):
-            return f"截图资产 {payload.asset_id} ({payload.mime_type})"
+            value = f"截图资产 {payload.asset_id} ({payload.mime_type})"
+            if payload.local_ocr_text:
+                value += (
+                    f"；本地 OCR 证据（{payload.ocr_engine or '未知引擎'}，非视觉分析）："
+                    f"{payload.local_ocr_text}"
+                )
+            return value
         if isinstance(payload, ScreenshotAnalysisPayload):
-            return f"截图分析：{payload.text}"
+            if payload.evidence_kind == "ocr":
+                return f"截图 OCR 证据（非视觉分析）：{payload.text}"
+            if payload.evidence_kind == "vision":
+                return f"截图视觉分析：{payload.text}"
+            return f"截图分析状态 {payload.status}（不可作为可读截图证据）"
         if isinstance(payload, QuestionPayload):
             return f"用户问题：{payload.question}"
         if isinstance(payload, AnswerPayload):
@@ -175,10 +328,7 @@ class MeetingContextBuilder:
             EventKind.TRANSCRIPT: 10,
             EventKind.LIFECYCLE: 1,
         }[event.kind]
-        visual_query = any(
-            term in normalized_question
-            for term in ("截图", "图片", "图上", "画面", "屏幕")
-        )
+        visual_query = self._visual_query(normalized_question)
         visual_bonus = (
             80
             if visual_query
@@ -202,9 +352,17 @@ class MeetingContextBuilder:
         if not summaries:
             return None
         value = "较早内容摘要：" + "；".join(summaries)
-        while value and self.token_estimator(value) > token_limit:
-            value = value[:-1]
-        return value.rstrip("；：") or None
+        if self.token_estimator(value) <= token_limit:
+            return value.rstrip("；：") or None
+        low = 0
+        high = len(value)
+        while low < high:
+            midpoint = (low + high + 1) // 2
+            if self.token_estimator(value[:midpoint]) <= token_limit:
+                low = midpoint
+            else:
+                high = midpoint - 1
+        return value[:low].rstrip("；：") or None
 
     @staticmethod
     def _source_label(event: MeetingEvent) -> str:
@@ -242,6 +400,14 @@ class MeetingContextBuilder:
         return any(
             term in normalized
             for term in ("开始", "创建", "结束", "完成", "状态", "中断", "完整", "保存")
+        )
+
+    @classmethod
+    def _visual_query(cls, question: str) -> bool:
+        normalized = cls._normalize(question)
+        return any(
+            term in normalized
+            for term in ("截图", "图片", "图上", "画面", "屏幕", "照片")
         )
 
     @staticmethod

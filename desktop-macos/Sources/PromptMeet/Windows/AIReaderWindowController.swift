@@ -9,6 +9,11 @@ final class AIReaderPanel: NSPanel {
 enum AIReaderLayout {
     static let minimumSize = CGSize(width: 380, height: 240)
     static let maximumSize = CGSize(width: 460, height: 620)
+    static let maximumMeasuredCharacters = 600
+
+    static func shouldMeasureContent(_ content: String) -> Bool {
+        content.count <= maximumMeasuredCharacters
+    }
 
     static func targetSize(
         content: String,
@@ -17,6 +22,7 @@ enum AIReaderLayout {
     ) -> CGSize {
         let characterCount = content.count
         let width: CGFloat = characterCount > 600 ? 460 : (characterCount > 220 ? 420 : 380)
+        guard shouldMeasureContent(content) else { return maximumSize }
         let measuredContent = content.isEmpty ? "正在思考" : content
         let bodyFont = NSFont.systemFont(ofSize: 14)
         let textRect = (measuredContent as NSString).boundingRect(

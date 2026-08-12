@@ -96,66 +96,86 @@ final class IslandWindowController: NSWindowController {
     private func updateMouseState() {
         guard let window else { return }
 
-        if ProcessInfo.processInfo.environment["PROMPTMEET_UI_PREVIEW"] == "hover" {
+        if isHoverPreview {
             window.ignoresMouseEvents = false
             if !store.isHovered { store.setHovered(true) }
             return
         }
 
-        let cursor = NSEvent.mouseLocation
-        let windowFrame = window.frame
-        let localPoint = CGPoint(
-            x: cursor.x - windowFrame.minX,
-            y: cursor.y - windowFrame.minY
-        )
-        let visibleRect = IslandGeometry.visibleRect(
-            for: store.presentation,
-            inHost: windowFrame.size,
-            topChromeWidth: store.topChromeWidth,
-            topChromeHeight: store.topChromeHeight
-        )
-        let isInside = visibleRect.contains(localPoint)
-
+        let isInside = islandContainsCursor(in: window)
         window.ignoresMouseEvents = !isInside
-        if isInside != isMouseInsideIsland {
-            isMouseInsideIsland = isInside
-            if isInside {
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKey()
-            }
-        }
-        if UserDefaults.standard.string(forKey: "targetDisplay") == "跟随鼠标",
-           let target = IslandTargetScreen.current(),
-           window.screen != target {
-            repositionForCurrentScreen()
-        }
+        updateKeyWindow(window, isInside: isInside)
+        followCursorToAnotherDisplay(from: window)
 
         if store.state.isQuickAskPresented {
-            hoverTask?.cancel()
-            hoverTask = nil
-            if store.isHovered { store.setHovered(false) }
+            cancelPendingHover(resetPresentation: true)
             return
         }
 
+        updateHoverTracking(isInside: isInside)
+    }
+
+    private var isHoverPreview: Bool {
+        ProcessInfo.processInfo.environment["PROMPTMEET_UI_PREVIEW"] == "hover"
+    }
+
+    private func islandContainsCursor(in window: NSWindow) -> Bool {
+        let cursor = NSEvent.mouseLocation
+        let localPoint = CGPoint(
+            x: cursor.x - window.frame.minX,
+            y: cursor.y - window.frame.minY
+        )
+        return IslandGeometry.interactiveRect(
+            for: store.presentation,
+            inHost: window.frame.size,
+            topChromeWidth: store.topChromeWidth,
+            topChromeHeight: store.topChromeHeight
+        ).contains(localPoint)
+    }
+
+    private func updateKeyWindow(_ window: NSWindow, isInside: Bool) {
+        guard isInside != isMouseInsideIsland else { return }
+        isMouseInsideIsland = isInside
+        guard isInside else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKey()
+    }
+
+    private func followCursorToAnotherDisplay(from window: NSWindow) {
+        guard UserDefaults.standard.string(forKey: "targetDisplay") == "跟随鼠标",
+              let target = IslandTargetScreen.current(),
+              window.screen != target else { return }
+        repositionForCurrentScreen()
+    }
+
+    private func updateHoverTracking(isInside: Bool) {
         if isInside, !store.isHovered, hoverTask == nil {
-            hoverTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(180))
-                guard !Task.isCancelled, let self else { return }
-                self.hoverTask = nil
-                self.updateHoverAfterDelay()
-            }
+            scheduleHoverPresentation()
         } else if !isInside {
-            hoverTask?.cancel()
-            hoverTask = nil
-            if store.isHovered { store.setHovered(false) }
+            cancelPendingHover(resetPresentation: true)
         }
+    }
+
+    private func scheduleHoverPresentation() {
+        hoverTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self else { return }
+            self.hoverTask = nil
+            self.updateHoverAfterDelay()
+        }
+    }
+
+    private func cancelPendingHover(resetPresentation: Bool) {
+        hoverTask?.cancel()
+        hoverTask = nil
+        if resetPresentation, store.isHovered { store.setHovered(false) }
     }
 
     private func updateHoverAfterDelay() {
         guard let window else { return }
         let cursor = NSEvent.mouseLocation
         let localPoint = CGPoint(x: cursor.x - window.frame.minX, y: cursor.y - window.frame.minY)
-        let visibleRect = IslandGeometry.visibleRect(
+        let visibleRect = IslandGeometry.interactiveRect(
             for: store.presentation,
             inHost: window.frame.size,
             topChromeWidth: store.topChromeWidth,

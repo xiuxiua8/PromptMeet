@@ -33,9 +33,10 @@ def test_original_summary_result_uses_external_work_directory(
     monkeypatch.setenv("PROMPTMEET_WORK_DIR", str(tmp_path))
 
     assert summary_result_path() == Path(tmp_path) / "summary" / "Result.txt"
-    assert summary_model_name({}) == "deepseek-v4-flash"
+    assert summary_model_name({}) == "deepseek-chat"
     assert (
-        summary_model_name({"DEEPSEEK_MODEL": "deepseek-v4-pro"}) == "deepseek-v4-pro"
+        summary_model_name({"DEEPSEEK_MODEL": "future-summary-id"})
+        == "future-summary-id"
     )
 
 

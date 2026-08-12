@@ -1,100 +1,8 @@
 import Foundation
 
-enum MeetingPhase: Equatable, Sendable {
-    case idle
-    case connecting
-    case live
-    case stopping
-    case failed(String)
-}
-
-struct TranscriptLine: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let speaker: String
-    let text: String
-    let timestamp: Date
-    let source: NativeAudioSource?
-    let meetingTime: Duration?
-    var translatedText: String?
-
-    init(
-        id: UUID = UUID(),
-        speaker: String,
-        text: String,
-        timestamp: Date = Date(),
-        source: NativeAudioSource? = nil,
-        meetingTime: Duration? = nil,
-        translatedText: String? = nil
-    ) {
-        self.id = id
-        self.speaker = speaker
-        self.text = text
-        self.timestamp = timestamp
-        self.source = source
-        self.meetingTime = meetingTime
-        self.translatedText = translatedText
-    }
-}
-
-struct AIReaderState: Equatable, Sendable {
-    var title = "AI 回答"
-    var content = ""
-    var isVisible = false
-    var isStreaming = false
-}
-
-enum AIRequestPhase: Equatable, Sendable {
-    case idle
-    case submitting
-    case streaming
-    case completed
-    case failed
-}
-
-struct AIRequestState: Equatable, Sendable {
-    var id: UUID?
-    var prompt = ""
-    var phase: AIRequestPhase = .idle
-    var errorMessage: String?
-
-    var isBusy: Bool {
-        phase == .submitting || phase == .streaming
-    }
-}
-
-struct MeetingTask: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let title: String
-    let deadline: String?
-    let details: String
-    let priority: String
-    let assignee: String?
-    let status: String
-
-    init(
-        id: UUID = UUID(),
-        title: String,
-        deadline: String? = nil,
-        details: String = "",
-        priority: String = "medium",
-        assignee: String? = nil,
-        status: String = "pending"
-    ) {
-        self.id = id
-        self.title = title
-        self.deadline = deadline
-        self.details = details
-        self.priority = priority
-        self.assignee = assignee
-        self.status = status
-    }
-}
-
-struct MeetingSummaryContent: Equatable, Sendable {
-    let summaryText: String
-    let tasks: [MeetingTask]
-    let keyPoints: [String]
-    let decisions: [String]
+struct IslandCaption: Equatable, Sendable {
+    let original: String
+    let translation: String?
 }
 
 enum MeetingAction: Equatable {
@@ -127,11 +35,14 @@ enum MeetingAction: Equatable {
 }
 
 struct MeetingState: Equatable {
+    static let historyUnavailableInsight = "历史会议暂时无法读取"
+
     var phase: MeetingPhase = .idle
     var recordingActivity: RecordingActivity = .inactive
     var screenshotTarget: ScreenshotTargetState = .none
     var screenshotOperation: ScreenshotOperationState = .idle
     var suggestionRefresh = SuggestionRefreshState()
+    var summaryAutomation: SummaryAutomationState = .idle
     var audioCapture = AudioCaptureSnapshot()
     var transcript: [TranscriptLine] = []
     var activeTranscript = ""
@@ -151,8 +62,21 @@ struct MeetingState: Equatable {
     var timeline: [MeetingTimelineEvent] = []
     var conversationTurns: [ConversationTurn] = []
 
+    var islandCaption: IslandCaption {
+        if !activeTranscript.isEmpty {
+            return IslandCaption(original: activeTranscript, translation: nil)
+        }
+        guard let latest = transcript.last else {
+            return IslandCaption(original: "", translation: nil)
+        }
+        return IslandCaption(
+            original: latest.text,
+            translation: latest.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     var activeCaption: String {
-        activeTranscript.isEmpty ? (transcript.last?.text ?? "") : activeTranscript
+        islandCaption.original
     }
 
     var selectedArchivedMeeting: StoredMeeting? {
@@ -216,321 +140,5 @@ struct MeetingState: Equatable {
         case .live:
             return .live
         }
-    }
-
-    mutating func reduce(_ action: MeetingAction) {
-        switch action {
-        case .prepareNewMeeting:
-            phase = .idle
-            recordingActivity = .inactive
-            screenshotOperation = .idle
-            suggestionRefresh = SuggestionRefreshState()
-            audioCapture = AudioCaptureSnapshot()
-            transcript = []
-            activeTranscript = ""
-            latestInsight = nil
-            latestSummary = nil
-            summary = nil
-            screenshotInsights = []
-            generatedQuestions = []
-            aiReader = AIReaderState()
-            aiRequest = AIRequestState()
-            promptHistory = []
-            quickPromptDraft = ""
-            isQuickAskPresented = false
-            selectedArchivedMeetingID = nil
-            timeline = []
-            conversationTurns = []
-        case .beginSession:
-            phase = .connecting
-            recordingActivity = .starting
-        case .connectionReady:
-            phase = .live
-            recordingActivity = .recording
-        case .transcriptPartial(let text):
-            activeTranscript = text
-        case .transcriptFinal(let line):
-            if !transcript.contains(where: { $0.id == line.id }) {
-                transcript.append(line)
-            }
-            activeTranscript = ""
-        case .transcriptTranslated(let id, let text):
-            guard let index = transcript.firstIndex(where: { $0.id == id }) else { return }
-            transcript[index].translatedText = text
-        case .companionConnected:
-            isCompanionConnected = true
-            if latestInsight?.contains("AI companion") == true || latestInsight?.contains("AI 服务连接") == true {
-                latestInsight = nil
-            }
-        case .companionDisconnected(let message):
-            isCompanionConnected = false
-            latestInsight = message
-        case .userPromptSubmitted(let id, let prompt):
-            let keepsReaderVisible = aiReader.isVisible
-            promptHistory.append(prompt)
-            aiRequest = AIRequestState(id: id, prompt: prompt, phase: .submitting)
-            aiReader = AIReaderState(title: prompt, isVisible: keepsReaderVisible)
-            if !conversationTurns.contains(where: { $0.requestID == id.uuidString }) {
-                conversationTurns.append(
-                    ConversationTurn(
-                        id: id.uuidString,
-                        requestID: id.uuidString,
-                        threadID: "main",
-                        meetingID: selectedArchivedMeetingID,
-                        question: prompt,
-                        answer: "",
-                        phase: .submitting,
-                        errorMessage: nil,
-                        sources: [],
-                        degradedVision: false,
-                        askedAt: Date(),
-                        answeredAt: nil
-                    )
-                )
-            }
-        case .answerDelta(let requestID, let delta):
-            guard let resolvedID = requestID ?? aiRequest.id,
-                let index = conversationIndex(resolvedID)
-            else { return }
-            conversationTurns[index].answer += delta
-            conversationTurns[index].phase = .streaming
-            conversationTurns[index].errorMessage = nil
-            if aiRequest.id == resolvedID {
-                aiReader.content += delta
-                aiReader.isVisible = true
-                aiReader.isStreaming = true
-                aiRequest.phase = .streaming
-                aiRequest.errorMessage = nil
-            }
-        case .answerFinal(let requestID, let answer):
-            guard let resolvedID = requestID ?? aiRequest.id,
-                let index = conversationIndex(resolvedID)
-            else { return }
-            conversationTurns[index].answer = answer
-            conversationTurns[index].phase = .completed
-            conversationTurns[index].errorMessage = nil
-            conversationTurns[index].answeredAt = Date()
-            if aiRequest.id == resolvedID {
-                aiReader.content = answer
-                aiReader.isVisible = true
-                aiReader.isStreaming = false
-                aiRequest.phase = .completed
-                aiRequest.errorMessage = nil
-            }
-        case .aiFailure(let requestID, let message):
-            guard let resolvedID = requestID ?? aiRequest.id,
-                let index = conversationIndex(resolvedID)
-            else { return }
-            conversationTurns[index].phase = .failed
-            conversationTurns[index].errorMessage = message
-            if aiRequest.id == resolvedID {
-                aiRequest.phase = .failed
-                aiRequest.errorMessage = message
-                aiReader.isStreaming = false
-            }
-        case .quickPromptChanged(let prompt):
-            quickPromptDraft = prompt
-        case .quickAskPresented(let isPresented):
-            isQuickAskPresented = isPresented
-        case .questionGenerated(let question):
-            if !generatedQuestions.contains(question) {
-                generatedQuestions.append(question)
-            }
-            latestInsight = question
-        case .questionsGenerated(let questions):
-            let refreshed = questions.reduce(into: [String]()) { result, question in
-                let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty, !result.contains(trimmed) {
-                    result.append(trimmed)
-                }
-            }
-            generatedQuestions = refreshed
-            if let first = refreshed.first {
-                latestInsight = first
-            }
-        case .suggestion(let insight):
-            latestInsight = insight
-        case .summaryGenerated(let summary):
-            self.summary = summary
-            latestSummary = summary.summaryText
-        case .screenshotInsight(let insight):
-            screenshotInsights.append(insight)
-            latestInsight = insight
-        case .meetingEvent(let event):
-            ingestTimelineEvent(event)
-        case .hideReader:
-            aiReader.isVisible = false
-        case .showReader:
-            if !aiReader.content.isEmpty {
-                aiReader.isVisible = true
-            }
-        case .meetingHistoryLoaded(let meetings):
-            meetingHistory = meetings
-            if let selectedArchivedMeetingID,
-                !meetings.contains(where: { $0.id == selectedArchivedMeetingID }) {
-                self.selectedArchivedMeetingID = nil
-            }
-        case .meetingHistoryUpdated(let meeting):
-            if let index = meetingHistory.firstIndex(where: { $0.id == meeting.id }) {
-                meetingHistory[index] = meeting
-            } else {
-                meetingHistory.append(meeting)
-            }
-            meetingHistory.sort { $0.startTime > $1.startTime }
-        case .archivedMeetingSelected(let id):
-            selectedArchivedMeetingID = id
-        case .failure(let message):
-            phase = .failed(message)
-            recordingActivity = .inactive
-        }
-    }
-
-    private func conversationIndex(_ requestID: UUID) -> Int? {
-        conversationTurns.firstIndex {
-            $0.requestID.caseInsensitiveCompare(requestID.uuidString) == .orderedSame
-        }
-    }
-
-    private mutating func ingestTimelineEvent(_ event: MeetingTimelineEvent) {
-        guard !timeline.contains(where: { $0.id == event.id }) else { return }
-        timeline.append(event)
-        timeline.sort {
-            if $0.sequence != $1.sequence { return $0.sequence < $1.sequence }
-            return $0.occurredAt < $1.occurredAt
-        }
-        if let line = event.transcript,
-            !transcript.contains(where: { $0.id == line.id }) {
-            transcript.append(line)
-        }
-        for projected in MeetingTimelineProjection.conversation(timeline) {
-            if let index = conversationTurns.firstIndex(where: { $0.requestID == projected.requestID }) {
-                if projected.phase == .completed || projected.phase == .failed {
-                    conversationTurns[index] = projected
-                }
-            } else {
-                conversationTurns.append(projected)
-            }
-        }
-        switch event.payload {
-        case .summary(let value):
-            let content = MeetingSummaryContent(
-                summaryText: value.summaryText,
-                tasks: value.tasks.compactMap { payload in
-                    guard let title = payload["task"]?.stringValue, !title.isEmpty else { return nil }
-                    return MeetingTask(
-                        title: title,
-                        deadline: payload["deadline"]?.stringValue,
-                        details: payload["describe"]?.stringValue ?? "",
-                        priority: payload["priority"]?.stringValue ?? "medium",
-                        assignee: payload["assignee"]?.stringValue,
-                        status: payload["status"]?.stringValue ?? "pending"
-                    )
-                },
-                keyPoints: value.keyPoints,
-                decisions: value.decisions
-            )
-            summary = content
-            latestSummary = content.summaryText
-        case .screenshotAnalysis(let value):
-            screenshotInsights.append(value.text)
-            latestInsight = value.text
-        case .suggestions(let value):
-            generatedQuestions = value.questions
-            suggestionRefresh.phase = .ready
-            suggestionRefresh.generationID = UUID(uuidString: value.generationID)
-            suggestionRefresh.contextRevision = value.contextRevision
-        default:
-            break
-        }
-    }
-}
-
-extension MeetingState {
-    static var previewLive: MeetingState {
-        MeetingState(
-            phase: .live,
-            transcript: [
-                TranscriptLine(speaker: "林晨", text: "我们先确认今天的讨论目标。")
-            ]
-        )
-    }
-
-    static var previewAura: MeetingState {
-        MeetingState(
-            phase: .live,
-            transcript: [
-                TranscriptLine(
-                    speaker: "林晨",
-                    text: "我们先确定今天的发布目标，然后讨论上线节奏和风险。",
-                    timestamp: Date().addingTimeInterval(-32)
-                ),
-                TranscriptLine(
-                    speaker: "周岚",
-                    text: "设计部分保持克制，把最重要的信息留在第一眼能看到的位置。",
-                    timestamp: Date().addingTimeInterval(-18)
-                ),
-                TranscriptLine(
-                    speaker: "林晨",
-                    text: "接下来需要确认每个行动项的负责人、截止时间，以及发布前必须完成的风险检查。"
-                )
-            ],
-            latestInsight: "团队正在收敛发布范围，当前关键是确定负责人和截止时间。",
-            generatedQuestions: [
-                "这次发布最大的风险是什么？",
-                "帮我整理明确的行动项"
-            ]
-        )
-    }
-
-    static var previewReader: MeetingState {
-        var state = previewLive
-        state.aiReader = AIReaderState(
-            title: "总结",
-            content: "已完成的回答",
-            isVisible: true,
-            isStreaming: false
-        )
-        return state
-    }
-
-    static var previewLongReader: MeetingState {
-        var state = previewAura
-        state.promptHistory = ["这次发布最需要关注什么？"]
-        state.aiReader = AIReaderState(
-            title: "这次发布最需要关注什么？",
-            content: """
-                当前最需要关注三件事：
-
-                1. 明确发布范围，避免在最后阶段继续加入未经验证的功能。
-                2. 为每个行动项指定负责人和截止时间，并在发布前完成一次风险复核。
-                3. 保留回滚路径，确认监控、告警和用户反馈入口都能够正常工作。
-
-                如果时间有限，优先保证核心流程稳定，再安排后续体验优化。
-                """,
-            isVisible: true,
-            isStreaming: false
-        )
-        return state
-    }
-
-    static var previewWorkspace: MeetingState {
-        var state = previewAura
-        state.promptHistory = ["这次发布最需要关注什么？"]
-        state.aiReader = AIReaderState(
-            title: "这次发布最需要关注什么？",
-            content: "当前最重要的是锁定发布范围、明确负责人，并提前验证回滚路径。",
-            isVisible: false,
-            isStreaming: false
-        )
-        state.summary = MeetingSummaryContent(
-            summaryText: "团队确认本次发布以核心流程稳定为优先，视觉体验保持克制，并在上线前完成风险复核。",
-            tasks: [
-                MeetingTask(title: "确认最终发布范围", deadline: "今天 18:00", assignee: "林晨"),
-                MeetingTask(title: "完成回滚路径验证", deadline: "明天 12:00", assignee: "周岚")
-            ],
-            keyPoints: ["核心流程优先", "避免临时增加范围", "上线前完成风险复核"],
-            decisions: ["采用 Aura 视觉方向", "保留独立 AI 阅读器"]
-        )
-        return state
     }
 }

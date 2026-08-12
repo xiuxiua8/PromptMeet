@@ -7,8 +7,9 @@ from api.native_transcript import build_native_transcript_router
 def test_native_transcript_is_dispatched_to_existing_session() -> None:
     received: list[tuple[str, dict]] = []
 
-    async def dispatch(session_id: str, transcript: dict) -> None:
+    async def dispatch(session_id: str, transcript: dict) -> bool:
         received.append((session_id, transcript))
+        return True
 
     app = FastAPI()
     app.include_router(build_native_transcript_router(lambda _: object(), dispatch))
@@ -34,7 +35,7 @@ def test_native_transcript_is_dispatched_to_existing_session() -> None:
 
 
 def test_native_transcript_rejects_unknown_session_and_blank_text() -> None:
-    async def dispatch(_: str, __: dict) -> None:
+    async def dispatch(_: str, __: dict) -> bool:
         raise AssertionError("must not dispatch")
 
     missing = FastAPI()
@@ -60,6 +61,62 @@ def test_native_transcript_rejects_unknown_session_and_blank_text() -> None:
     payload["text"] = "   "
     assert (
         TestClient(existing)
+        .post("/api/sessions/session-1/native-transcript", json=payload)
+        .status_code
+        == 422
+    )
+
+
+def test_native_transcript_requires_persistence_acknowledgement() -> None:
+    async def dispatch(_: str, __: dict) -> bool:
+        return False
+
+    app = FastAPI()
+    app.include_router(build_native_transcript_router(lambda _: object(), dispatch))
+
+    response = TestClient(app).post(
+        "/api/sessions/session-1/native-transcript",
+        json={
+            "id": "08f0900a-a756-48db-bf38-d3040ddcd986",
+            "text": "本地识别完成",
+            "speaker": "我",
+            "source": "microphone",
+            "timestamp": "2026-07-24T20:00:00+08:00",
+        },
+    )
+
+    assert response.status_code == 500
+
+
+def test_native_transcript_preserves_client_uuid_spelling_while_validating_shape() -> (
+    None
+):
+    received: list[dict] = []
+
+    async def dispatch(_: str, transcript: dict) -> bool:
+        received.append(transcript)
+        return True
+
+    app = FastAPI()
+    app.include_router(build_native_transcript_router(lambda _: object(), dispatch))
+    payload = {
+        "id": "AE2CB506-925E-4A6E-BB68-E5006AB09BDF",
+        "text": "保留稳定身份",
+        "speaker": "会议",
+        "source": "system",
+        "timestamp": "2026-07-24T20:00:00+08:00",
+    }
+
+    response = TestClient(app).post(
+        "/api/sessions/session-1/native-transcript", json=payload
+    )
+
+    assert response.status_code == 200
+    assert received[0]["id"] == payload["id"]
+
+    payload["id"] = "not-a-uuid"
+    assert (
+        TestClient(app)
         .post("/api/sessions/session-1/native-transcript", json=payload)
         .status_code
         == 422

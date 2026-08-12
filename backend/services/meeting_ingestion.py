@@ -31,6 +31,8 @@ class ScreenshotAnalysisResult:
     vision_used: bool
     provider: str | None = None
     model: str | None = None
+    evidence_kind: str = "none"
+    image_rejection: str | None = None
 
 
 class MeetingIngestionService:
@@ -54,6 +56,11 @@ class MeetingIngestionService:
         return record
 
     def transcript(self, meeting_id: str, transcript: dict) -> MeetingEvent:
+        return self.transcript_with_status(meeting_id, transcript)[0]
+
+    def transcript_with_status(
+        self, meeting_id: str, transcript: dict
+    ) -> tuple[MeetingEvent, bool]:
         event = MeetingEvent(
             occurred_at=self._date(transcript.get("timestamp")),
             kind=EventKind.TRANSCRIPT,
@@ -67,9 +74,29 @@ class MeetingIngestionService:
                 meeting_time_ms=transcript.get("meeting_time_ms"),
             ),
         )
-        return self.repository.append(meeting_id, event).events[-1]
+        return self.repository.append_transcript(meeting_id, event)
 
-    def screenshot(self, meeting_id: str, path: Path, mime_type: str) -> MeetingEvent:
+    def translate_transcript(
+        self,
+        meeting_id: str,
+        segment_id: str,
+        translated_text: str,
+    ) -> MeetingEvent:
+        return self.repository.enrich_transcript_translation(
+            meeting_id,
+            segment_id,
+            translated_text,
+        )
+
+    def screenshot(
+        self,
+        meeting_id: str,
+        path: Path,
+        mime_type: str,
+        *,
+        local_ocr_text: str | None = None,
+        ocr_engine: str | None = None,
+    ) -> MeetingEvent:
         resolved = path.resolve()
         root = self.repository.root.resolve()
         if root not in resolved.parents:
@@ -87,6 +114,8 @@ class MeetingIngestionService:
                 sha256=hashlib.sha256(data).hexdigest(),
                 width=width,
                 height=height,
+                local_ocr_text=(local_ocr_text or "").strip() or None,
+                ocr_engine=ocr_engine if local_ocr_text else None,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]
@@ -110,6 +139,8 @@ class MeetingIngestionService:
                 status=result.status,
                 text=result.text,
                 vision_used=result.vision_used,
+                evidence_kind=result.evidence_kind,
+                image_rejection=result.image_rejection,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]
@@ -197,16 +228,39 @@ class MeetingIngestionService:
         )
         return self.repository.append(meeting_id, event).events[-1]
 
-    def summary(self, meeting_id: str, summary: dict) -> MeetingEvent:
+    def summary(
+        self,
+        meeting_id: str,
+        summary: dict,
+        *,
+        revision: int = 1,
+        source_event_ids: list[str] | None = None,
+        source_progress: dict[str, int] | None = None,
+        source_revision: int = 0,
+        trigger: str = "legacy",
+        active_minutes: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> MeetingEvent:
         event = MeetingEvent(
             occurred_at=datetime.now(UTC),
             kind=EventKind.SUMMARY,
-            provenance=EventProvenance(source="summary_service"),
+            provenance=EventProvenance(
+                source="summary_service",
+                provider=provider,
+                model=model,
+            ),
             payload=SummaryPayload(
                 summary_text=str(summary.get("summary_text") or ""),
                 tasks=list(summary.get("tasks") or []),
                 key_points=list(summary.get("key_points") or []),
                 decisions=list(summary.get("decisions") or []),
+                revision=revision,
+                source_event_ids=source_event_ids or [],
+                source_progress=source_progress or {},
+                source_revision=source_revision,
+                trigger=trigger,
+                active_minutes=active_minutes,
             ),
         )
         return self.repository.append(meeting_id, event).events[-1]

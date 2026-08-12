@@ -44,6 +44,7 @@ from services.meeting_repository import (
     MeetingNotFoundError,
     MeetingRepository,
 )  # noqa: E402
+from services.meeting_title_service import MeetingTitleService  # noqa: E402
 from models.meeting_context import (  # noqa: E402
     EventKind,
     AnswerPayload,
@@ -156,10 +157,50 @@ class QuestionGenerationRequest(BaseModel):
         return value
 
 
+class SummaryGenerationRequest(BaseModel):
+    trigger: str = "manual"
+    active_minutes: int | None = Field(default=None, ge=0)
+    client_input_revision: int | None = Field(default=None, ge=0)
+
+    @field_validator("trigger")
+    @classmethod
+    def validate_trigger(cls, value: str) -> str:
+        if value not in {"manual", "milestone"}:
+            raise ValueError("trigger 必须是 manual 或 milestone")
+        return value
+
+
+class SessionRehydrateRequest(BaseModel):
+    is_paused: bool = False
+
+
+class SessionCreateRequest(BaseModel):
+    session_id: str | None = None
+    started_at: datetime | None = None
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("session_id 不能为空")
+        try:
+            uuid.UUID(normalized)
+        except ValueError as error:
+            raise ValueError("session_id 必须是 UUID") from error
+        return normalized
+
+
 meeting_question_tasks: set[asyncio.Task] = set()
 meeting_screenshot_tasks: set[asyncio.Task] = set()
 question_generation_tasks: dict[str, asyncio.Task] = {}
 latest_question_generations: dict[str, tuple[str, int]] = {}
+summary_generation_locks: dict[str, asyncio.Lock] = {}
+meeting_title_tasks: dict[str, asyncio.Task] = {}
+meeting_translation_tasks: dict[tuple[str, str], asyncio.Task] = {}
+meeting_translation_retry_keys: set[tuple[str, str]] = set()
 
 
 def finish_question_task(task: asyncio.Task) -> None:
@@ -184,10 +225,65 @@ def finish_screenshot_task(task: asyncio.Task) -> None:
         logger.warning("截图分析任务失败: %s", error)
 
 
+def meeting_title_service() -> MeetingTitleService:
+    generator = (
+        getattr(desktop_agent_service, "generate_meeting_title", None)
+        if desktop_agent_service is not None
+        else None
+    )
+    return MeetingTitleService(meeting_repository, generator=generator)
+
+
+def persist_meeting_title_fallback(meeting_id: str) -> None:
+    try:
+        meeting_title_service().persist_fallback(meeting_id)
+    except Exception as error:
+        logger.warning(
+            "会议已结束，但本地标题回退保存失败: session=%s, error=%s",
+            meeting_id,
+            error.__class__.__name__,
+        )
+
+
+def schedule_meeting_title_generation(meeting_id: str) -> None:
+    existing = meeting_title_tasks.get(meeting_id)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        meeting_title_service().finalize(meeting_id),
+        name=f"meeting-title-{meeting_id}",
+    )
+    meeting_title_tasks[meeting_id] = task
+
+    def finish_title_task(completed: asyncio.Task) -> None:
+        if meeting_title_tasks.get(meeting_id) is completed:
+            meeting_title_tasks.pop(meeting_id, None)
+        if completed.cancelled():
+            return
+        try:
+            completed.result()
+        except Exception as error:
+            logger.warning(
+                "会议标题生成失败，已保留本地回退: session=%s, error=%s",
+                meeting_id,
+                error.__class__.__name__,
+            )
+
+    task.add_done_callback(finish_title_task)
+
+
 async def start_native_recording(session_id: str) -> None:
     session = session_manager.get_session(session_id)
     if not session or session.is_recording:
         return
+    if DESKTOP_MODE:
+        record = meeting_repository.get(session_id)
+        if (
+            record is None
+            or record.status != MeetingStatus.ACTIVE
+            or record.ended_at is not None
+        ):
+            return
     if not DESKTOP_MODE:
         await process_manager.start_question_process(session_id)
     session.is_recording = True
@@ -218,6 +314,9 @@ async def stop_native_recording(session_id: str) -> None:
         meeting_ingestion.finish(session_id, MeetingStatus.COMPLETED)
     except MeetingNotFoundError:
         logger.warning("结束会议时未找到持久记录: session=%s", session_id)
+    else:
+        persist_meeting_title_fallback(session_id)
+        schedule_meeting_title_generation(session_id)
     await websocket_manager.broadcast_to_session(
         session_id,
         {
@@ -279,7 +378,12 @@ async def broadcast_meeting_event(session_id: str, event: MeetingEvent) -> None:
     )
 
 
-async def process_native_screenshot(session_id: str, image_path) -> dict:
+async def process_native_screenshot(
+    session_id: str,
+    image_path,
+    local_ocr_text: str | None = None,
+    ocr_engine: str | None = None,
+) -> dict:
     mime_type = (
         "image/jpeg"
         if Path(image_path).suffix.lower() in {".jpg", ".jpeg"}
@@ -290,7 +394,11 @@ async def process_native_screenshot(session_id: str, image_path) -> dict:
         event = await loop.run_in_executor(
             None,
             lambda: meeting_ingestion.screenshot(
-                session_id, Path(image_path), mime_type
+                session_id,
+                Path(image_path),
+                mime_type,
+                local_ocr_text=local_ocr_text,
+                ocr_engine=ocr_engine,
             ),
         )
     except (FileNotFoundError, MeetingNotFoundError, ValueError):
@@ -327,11 +435,12 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
         if record is None:
             raise MeetingNotFoundError(session_id)
         result = await desktop_agent_service.analyze_screenshot(record, event)
-    except Exception as error:
+    except Exception:
         result = ScreenshotAnalysisResult(
             status="failed",
-            text=f"截图分析失败：{error}",
+            text="截图分析失败。请检查截图分析工作流的提供方、模型和视觉能力配置。",
             vision_used=False,
+            evidence_kind="none",
         )
     analysis_event = meeting_ingestion.screenshot_analysis(
         session_id,
@@ -348,6 +457,8 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
                 "content": result.text,
                 "status": result.status,
                 "vision_used": result.vision_used,
+                "evidence_kind": result.evidence_kind,
+                "image_rejection": result.image_rejection,
             },
             "timestamp": datetime.now(UTC).isoformat(),
             "session_id": session_id,
@@ -355,18 +466,72 @@ async def analyze_native_screenshot(session_id: str, event: MeetingEvent) -> Non
     )
 
 
-async def process_native_transcript(session_id: str, transcript: dict) -> None:
-    await on_transcript_received(session_id, transcript)
+async def process_native_transcript(session_id: str, transcript: dict) -> bool:
+    inserted = await on_transcript_received(session_id, transcript)
+    if inserted is None:
+        return False
     target = transcript.get("translation_target")
     if DESKTOP_MODE and desktop_agent_service is not None and target:
-        asyncio.create_task(
-            translate_native_transcript(
-                session_id,
-                transcript["id"],
-                transcript["text"],
-                target,
-            )
+        schedule_native_transcript_translation(
+            session_id,
+            transcript,
+            target,
+            is_new=inserted,
         )
+    return True
+
+
+def schedule_native_transcript_translation(
+    session_id: str,
+    transcript: dict,
+    target_language: str,
+    *,
+    is_new: bool,
+) -> None:
+    transcript_id = str(transcript.get("id") or "")
+    record = meeting_repository.get(session_id)
+    if record is None:
+        return
+    event = next(
+        (
+            item
+            for item in record.events
+            if item.kind == EventKind.TRANSCRIPT
+            and isinstance(item.payload, TranscriptPayload)
+            and item.payload.segment_id == transcript_id
+        ),
+        None,
+    )
+    if (
+        event is None
+        or event.payload.translated_text
+        or event.payload.text != str(transcript.get("text") or "").strip()
+    ):
+        return
+    key = (session_id, transcript_id)
+    active = meeting_translation_tasks.get(key)
+    if active is not None and not active.done():
+        return
+    if not is_new:
+        if key in meeting_translation_retry_keys:
+            return
+        meeting_translation_retry_keys.add(key)
+    task = asyncio.create_task(
+        translate_native_transcript(
+            session_id,
+            transcript_id,
+            event.payload.text,
+            target_language,
+        ),
+        name=f"transcript-translation-{session_id}-{transcript_id}",
+    )
+    meeting_translation_tasks[key] = task
+
+    def finish_translation(completed: asyncio.Task) -> None:
+        if meeting_translation_tasks.get(key) is completed:
+            meeting_translation_tasks.pop(key, None)
+
+    task.add_done_callback(finish_translation)
 
 
 async def translate_native_transcript(
@@ -377,6 +542,11 @@ async def translate_native_transcript(
 ) -> None:
     try:
         translated_text = await desktop_agent_service.translate(text, target_language)
+        meeting_ingestion.translate_transcript(
+            session_id,
+            transcript_id,
+            translated_text,
+        )
         await websocket_manager.broadcast_to_session(
             session_id,
             {
@@ -487,13 +657,48 @@ async def get_available_windows():
 
 
 @app.post("/api/sessions")
-async def create_session():
+async def create_session(request: SessionCreateRequest | None = None):
     """创建新的会议会话"""
-    session_id = str(uuid.uuid4())
+    session_id = (
+        request.session_id if request and request.session_id else str(uuid.uuid4())
+    )
+    existing_record = meeting_repository.get(session_id)
+    if existing_record is not None:
+        if existing_record.status == MeetingStatus.RECOVERY_REQUIRED:
+            raise HTTPException(status_code=409, detail="会议记录需要恢复")
+        if existing_record.status == MeetingStatus.INCOMPLETE:
+            raise HTTPException(status_code=409, detail="不完整会议仍等待恢复完成")
+        if existing_record.status == MeetingStatus.ACTIVE:
+            if existing_record.ended_at is not None:
+                raise HTTPException(status_code=409, detail="会议记录状态不一致")
+            is_active = True
+        elif existing_record.status == MeetingStatus.COMPLETED:
+            is_active = False
+        else:
+            raise HTTPException(status_code=409, detail="会议状态不支持恢复")
+    existing_session = session_manager.get_session(session_id)
+    if existing_session is not None:
+        return {"success": True, "session_id": session_id, "message": "会话已存在"}
+    if existing_record is not None:
+        restore_session_from_record(
+            existing_record,
+            is_recording=is_active,
+            is_paused=False,
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "会话已恢复" if is_active else "会话已完成",
+        }
+    started_at = (
+        request.started_at
+        if request and request.started_at is not None
+        else datetime.now(UTC)
+    )
     session = SessionState(
         session_id=session_id,
         is_recording=False,
-        start_time=datetime.now(),
+        start_time=started_at,
         end_time=None,
         current_summary=None,
         participant_count=0,
@@ -521,6 +726,89 @@ async def get_session(session_id: str):
     return {"success": True, "session": session.model_dump(mode="json")}
 
 
+@app.post("/api/sessions/{session_id}/rehydrate")
+async def rehydrate_session(session_id: str, request: SessionRehydrateRequest):
+    record = meeting_repository.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="会议持久记录不存在")
+    if record.status != MeetingStatus.ACTIVE or record.ended_at is not None:
+        raise HTTPException(status_code=409, detail="仅可恢复仍在进行的会议")
+    restore_session_from_record(
+        record,
+        is_recording=True,
+        is_paused=request.is_paused,
+    )
+    return {"success": True, "session_id": session_id, "rehydrated": True}
+
+
+def restore_session_from_record(
+    record: MeetingRecord,
+    *,
+    is_recording: bool,
+    is_paused: bool,
+) -> SessionState:
+    session_id = record.meeting_id
+    transcript_segments = [
+        TranscriptSegment(
+            id=event.payload.segment_id,
+            text=event.payload.text,
+            timestamp=event.occurred_at,
+            confidence=1.0,
+            speaker=event.payload.speaker,
+            source=(
+                event.payload.source
+                if event.payload.source in {"system", "microphone", "mixed"}
+                else None
+            ),
+            meeting_time_ms=event.payload.meeting_time_ms,
+        )
+        for event in record.events
+        if event.kind == EventKind.TRANSCRIPT
+        and isinstance(event.payload, TranscriptPayload)
+    ]
+    current_summary = None
+    summary_events = sorted(
+        (
+            event
+            for event in record.events
+            if event.kind == EventKind.SUMMARY
+            and isinstance(event.payload, SummaryPayload)
+        ),
+        key=lambda event: (event.payload.revision, event.sequence),
+        reverse=True,
+    )
+    for event in summary_events:
+        try:
+            current_summary = MeetingSummary(
+                session_id=session_id,
+                summary_text=event.payload.summary_text,
+                tasks=[TaskItem(**task) for task in event.payload.tasks],
+                key_points=event.payload.key_points,
+                decisions=event.payload.decisions,
+                generated_at=event.occurred_at,
+            )
+            break
+        except ValueError:
+            continue
+    existing = session_manager.get_session(session_id)
+    restored = SessionState(
+        session_id=session_id,
+        is_recording=is_recording,
+        is_paused=is_paused,
+        start_time=record.started_at,
+        end_time=None if is_recording else record.ended_at,
+        transcript_segments=transcript_segments,
+        current_summary=current_summary,
+        participant_count=existing.participant_count if existing else 0,
+        audio_file_path=existing.audio_file_path if existing else None,
+    )
+    if existing is None:
+        session_manager.add_session(restored)
+    else:
+        session_manager.update_session(restored)
+    return restored
+
+
 @app.post("/api/sessions/{session_id}/mark-incomplete")
 async def mark_session_incomplete(session_id: str):
     if meeting_repository.get(session_id) is None:
@@ -530,6 +818,8 @@ async def mark_session_incomplete(session_id: str):
         MeetingStatus.INCOMPLETE,
         "会议采集未完整启动，已保留当前记录",
     )
+    persist_meeting_title_fallback(session_id)
+    schedule_meeting_title_generation(session_id)
     return {
         "success": True,
         "status": record.status.value,
@@ -634,36 +924,240 @@ async def stop_recording(session_id: str):
         return {"success": False, "message": f"录音停止失败: {str(e)}"}
 
 
+def accumulated_summary_progress(
+    summaries: list[MeetingEvent], source_events: list[MeetingEvent]
+) -> dict[str, int]:
+    sources = {event.event_id: event for event in source_events}
+    progress: dict[str, int] = {}
+    for summary_event in sorted(
+        summaries, key=lambda event: (event.payload.revision, event.sequence)
+    ):
+        payload = summary_event.payload
+        for event_id in payload.source_event_ids:
+            event = sources.get(event_id)
+            if event is not None:
+                progress[event_id] = len(DesktopAgentService.summary_event_text(event))
+        for event_id, offset in payload.source_progress.items():
+            event = sources.get(event_id)
+            if event is None:
+                continue
+            total = len(DesktopAgentService.summary_event_text(event))
+            bounded = min(max(0, offset), total)
+            progress[event_id] = max(progress.get(event_id, 0), bounded)
+    return progress
+
+
+def merge_incremental_summary(
+    session_id: str,
+    raw_summary: dict,
+    previous_summary: SummaryPayload | None,
+) -> MeetingSummary:
+    generated = MeetingSummary(
+        session_id=session_id,
+        summary_text=raw_summary["summary_text"],
+        tasks=[TaskItem(**task) for task in raw_summary.get("tasks", [])],
+        key_points=raw_summary.get("key_points", []),
+        decisions=raw_summary.get("decisions", []),
+        generated_at=datetime.now(),
+    )
+    if previous_summary is None:
+        return generated
+    tasks = list(generated.tasks)
+    task_names = {task.task.strip().casefold() for task in tasks}
+    for value in previous_summary.tasks:
+        try:
+            task = TaskItem(**value)
+        except ValueError:
+            continue
+        identity = task.task.strip().casefold()
+        status = task.status.strip().casefold()
+        if status not in {"pending", "in_progress"} or identity in task_names:
+            continue
+        tasks.append(task)
+        task_names.add(identity)
+
+    return generated.model_copy(update={"tasks": tasks})
+
+
+async def generate_desktop_summary(
+    session_id: str,
+    session: SessionState,
+    request: SummaryGenerationRequest | None,
+) -> dict:
+    record = meeting_repository.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="会议持久记录不存在")
+    source_events = [
+        event
+        for event in record.events
+        if event.kind
+        in {
+            EventKind.TRANSCRIPT,
+            EventKind.SCREENSHOT,
+            EventKind.SCREENSHOT_ANALYSIS,
+        }
+    ]
+    previous_summaries = [
+        event
+        for event in record.events
+        if event.kind == EventKind.SUMMARY and isinstance(event.payload, SummaryPayload)
+    ]
+    source_by_id = {event.event_id: event for event in source_events}
+    source_progress = accumulated_summary_progress(previous_summaries, source_events)
+    uncovered_events = [
+        event
+        for event in source_events
+        if source_progress.get(event.event_id, 0)
+        < len(DesktopAgentService.summary_event_text(event))
+    ]
+    if not uncovered_events:
+        return {
+            "success": True,
+            "status": "no_action",
+            "message": "没有新的会议输入，已跳过本次摘要与待办生成",
+        }
+    latest_previous_summary = max(
+        previous_summaries,
+        key=lambda event: (event.payload.revision, event.sequence),
+        default=None,
+    )
+    summary_inputs = (
+        [latest_previous_summary, *uncovered_events]
+        if latest_previous_summary is not None
+        else uncovered_events
+    )
+    result = await desktop_agent_service.summarize_meeting(
+        record, summary_inputs, source_progress
+    )
+    latest_record = meeting_repository.get(session_id)
+    if latest_record is None:
+        raise HTTPException(status_code=404, detail="会议持久记录不存在")
+    latest_summaries = [
+        event
+        for event in latest_record.events
+        if event.kind == EventKind.SUMMARY and isinstance(event.payload, SummaryPayload)
+    ]
+    latest_progress = accumulated_summary_progress(latest_summaries, source_events)
+    advanced_progress: dict[str, int] = {}
+    for event_id, proposed in result.source_progress.items():
+        event = source_by_id.get(event_id)
+        if event is None or not isinstance(proposed, int) or isinstance(proposed, bool):
+            raise ValueError("摘要服务返回了无效的证据进度")
+        total = len(DesktopAgentService.summary_event_text(event))
+        current = latest_progress.get(event_id, 0)
+        if proposed > total:
+            raise ValueError("摘要服务返回的证据进度超过原始内容")
+        if proposed > current:
+            advanced_progress[event_id] = proposed
+    if not advanced_progress:
+        return {
+            "success": True,
+            "status": "no_action",
+            "message": "当前会议输入已由另一份摘要覆盖",
+        }
+    revision = (
+        max(
+            (event.payload.revision for event in latest_summaries),
+            default=0,
+        )
+        + 1
+    )
+    completed_event_ids = [
+        event.event_id
+        for event in source_events
+        if advanced_progress.get(event.event_id)
+        == len(DesktopAgentService.summary_event_text(event))
+    ]
+    if set(result.source_event_ids) != set(completed_event_ids):
+        raise ValueError("摘要服务返回的完成证据与进度不一致")
+    latest_previous_summary = max(
+        latest_summaries,
+        key=lambda event: (event.payload.revision, event.sequence),
+        default=None,
+    )
+    summary = merge_incremental_summary(
+        session_id,
+        result.summary,
+        latest_previous_summary.payload if latest_previous_summary else None,
+    )
+    summary_data = {
+        "summary_text": summary.summary_text,
+        "tasks": [task.model_dump(mode="json") for task in summary.tasks],
+        "key_points": summary.key_points,
+        "decisions": summary.decisions,
+    }
+    combined_progress = {**latest_progress, **advanced_progress}
+    source_revision = max(
+        (
+            event.sequence
+            for event in source_events
+            if combined_progress.get(event.event_id, 0)
+            == len(DesktopAgentService.summary_event_text(event))
+        ),
+        default=0,
+    )
+    timeline_event = meeting_ingestion.summary(
+        session_id,
+        summary_data,
+        revision=revision,
+        source_event_ids=completed_event_ids,
+        source_progress=advanced_progress,
+        source_revision=source_revision,
+        trigger=request.trigger if request else "manual",
+        active_minutes=request.active_minutes if request else None,
+        provider=result.provider,
+        model=result.model,
+    )
+    session.current_summary = summary
+    session_manager.update_session(session)
+    await websocket_manager.broadcast_to_session(
+        session_id,
+        {
+            "type": MessageType.SUMMARY_GENERATED,
+            "data": summary.model_dump(mode="json"),
+            "timestamp": datetime.now(),
+            "session_id": session_id,
+        },
+    )
+    await broadcast_meeting_event(session_id, timeline_event)
+    return {
+        "success": True,
+        "status": "generated",
+        "message": "会议摘要与待办已生成",
+        "event": timeline_event.model_dump(mode="json"),
+    }
+
+
 @app.post("/api/sessions/{session_id}/generate-summary")
-async def generate_summary(session_id: str):
+async def generate_summary(
+    session_id: str,
+    request: SummaryGenerationRequest | None = None,
+):
     """生成会议摘要"""
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    if not session.transcript_segments:
+    if not DESKTOP_MODE and not session.transcript_segments:
         return {"success": False, "message": "没有转录内容可分析"}
 
     try:
-        if DESKTOP_MODE and desktop_summary_service is not None:
-            summary_data = await desktop_summary_service.summarize(
-                session_id,
-                session.transcript_segments,
-            )
-            await on_summary_generated(
-                session_id,
-                summary_data,
-            )
-            return {"success": True, "message": "会议摘要已生成"}
-        # 启动 Summary 分析进程
+        if DESKTOP_MODE and desktop_agent_service is not None:
+            lock = summary_generation_locks.setdefault(session_id, asyncio.Lock())
+            async with lock:
+                return await generate_desktop_summary(session_id, session, request)
         await process_manager.start_summary_process(session_id)
 
         logger.info(f"会话 {session_id} 开始生成摘要")
-        return {"success": True, "message": "开始生成摘要"}
+        return {"success": True, "status": "generated", "message": "开始生成摘要"}
 
     except Exception as e:
         logger.error(f"生成摘要失败: {e}")
-        return {"success": False, "message": f"生成摘要失败: {str(e)}"}
+        return {
+            "success": False,
+            "status": "failed",
+            "message": f"生成摘要失败: {str(e)}",
+        }
 
 
 @app.post("/api/sessions/{session_id}/generate-questions")
@@ -706,7 +1200,8 @@ async def generate_questions(
                     question_generation_tasks.pop(session_id, None)
             if latest_question_generations.get(session_id) != generation:
                 return {"success": True, "superseded": True}
-            payload = {"questions": questions}
+            accepted = 1 <= len(questions) <= 3
+            payload = {"questions": questions if accepted else []}
             if request is not None:
                 payload.update(
                     {
@@ -714,6 +1209,14 @@ async def generate_questions(
                         "context_revision": context_revision,
                     }
                 )
+            if not accepted:
+                await on_questions_generated(session_id, payload)
+                return {
+                    "success": True,
+                    "message": "本次没有足够的严格依据，已保留上次问题",
+                    "superseded": False,
+                    "accepted": False,
+                }
             record = meeting_repository.get(session_id)
             if record is not None:
                 event = meeting_ingestion.suggestions(
@@ -729,6 +1232,7 @@ async def generate_questions(
                 "success": True,
                 "message": "问题已生成",
                 "superseded": False,
+                "accepted": True,
             }
         if not session.transcript_segments:
             return {"success": False, "message": "没有转录内容可生成问题"}
@@ -810,6 +1314,8 @@ async def store_session(session_id: str):
                     MeetingStatus.INCOMPLETE,
                     "会议已保存，但尚未收到正常结束事件",
                 )
+                persist_meeting_title_fallback(session_id)
+                schedule_meeting_title_generation(session_id)
             return {
                 "success": True,
                 "message": "会话存储成功",
@@ -1010,7 +1516,14 @@ async def ask_meeting_question(meeting_id: str, request: MeetingQuestionRequest)
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket连接端点"""
+    if session_manager.get_session(session_id) is None:
+        await websocket.close(code=4404, reason="会话不存在")
+        return
     await websocket_manager.connect(websocket, session_id)
+    if session_manager.get_session(session_id) is None:
+        websocket_manager.disconnect(websocket, session_id)
+        await websocket.close(code=4404, reason="会话不存在")
+        return
 
     try:
         logger.info(f"WebSocket 连接建立: session={session_id}")
@@ -1262,7 +1775,7 @@ async def export_session(session_id: str):
 # ============= IPC 回调处理 =============
 
 
-async def on_transcript_received(session_id: str, transcript_data: dict):
+async def on_transcript_received(session_id: str, transcript_data: dict) -> bool | None:
     """收到转录结果的回调"""
     try:
         # 创建转录片段对象
@@ -1277,7 +1790,11 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             source=transcript_data.get("source"),
             meeting_time_ms=transcript_data.get("meeting_time_ms"),
         )
-        timeline_event = meeting_ingestion.transcript(session_id, transcript_data)
+        timeline_event, inserted = meeting_ingestion.transcript_with_status(
+            session_id, transcript_data
+        )
+        if not inserted:
+            return False
 
         # 更新会话状态
         session = session_manager.get_session(session_id)
@@ -1301,9 +1818,11 @@ async def on_transcript_received(session_id: str, transcript_data: dict):
             f"转录片段已添加: session={session_id}, text={segment.text[:50]}..."
         )
         await persist_session(session_id)
+        return True
 
     except Exception as e:
         logger.error(f"处理转录结果失败: {e}")
+        return None
 
 
 async def on_summary_generated(session_id: str, summary_data: dict):

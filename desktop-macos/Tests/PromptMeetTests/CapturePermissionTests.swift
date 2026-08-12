@@ -96,8 +96,7 @@ private final class MicrophonePermissionSpy: MicrophonePermissionProviding, @unc
 }
 
 private final class ScreenRecordingPermissionSpy: ScreenRecordingPermissionProviding,
-    @unchecked Sendable
-{
+    @unchecked Sendable {
     var hasAccess: Bool
     private let requestResult: Bool
     private(set) var requestCount = 0
