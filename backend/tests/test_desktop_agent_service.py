@@ -1391,6 +1391,117 @@ def test_screenshot_analysis_routes_only_exact_asset_pixels_in_user_message(
     assert result.text == "- **关键信息**：截图写着青岚计划在 14:30 部署。"
 
 
+def test_screenshot_analysis_retries_once_on_empty_completion_and_recovers(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-empty/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"empty-completion-pixels")
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-empty",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-empty/screen.png",
+            mime_type="image/png",
+            sha256="empty-sha",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-empty",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    FakeAgentClient.responses = [
+        {"role": "assistant", "content": None},
+        {"role": "assistant", "content": "截图显示预算为 20 万元。"},
+    ]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "proxy-vision-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "1",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert FakeAgentClient.responses == []
+    assert result.status == "completed"
+    assert result.vision_used is True
+    assert result.evidence_kind == "vision"
+    assert result.text == "截图显示预算为 20 万元。"
+
+
+def test_screenshot_analysis_empty_completion_is_a_truthful_failure_not_completed(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-empty-fail/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"still-empty-pixels")
+    screenshot_event = MeetingEvent(
+        event_id="screen-event",
+        meeting_id="meeting-empty-fail",
+        sequence=1,
+        occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+        kind=EventKind.SCREENSHOT,
+        provenance=EventProvenance(source="native_screenshot"),
+        payload=ScreenshotPayload(
+            asset_id="screen",
+            relative_path="assets/meeting-empty-fail/screen.png",
+            mime_type="image/png",
+            sha256="empty-sha",
+        ),
+    )
+    record = MeetingRecord(
+        meeting_id="meeting-empty-fail",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[screenshot_event],
+    )
+    FakeAgentClient.responses = [
+        {"role": "assistant", "content": None},
+        {"role": "assistant", "content": None},
+    ]
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: FakeAgentClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_SCREENSHOT_PROVIDER": "openai",
+            "PROMPTMEET_SCREENSHOT_MODEL": "proxy-vision-model",
+            "PROMPTMEET_SCREENSHOT_SUPPORTS_VISION": "1",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    result = asyncio.run(service.analyze_screenshot(record, screenshot_event))
+
+    assert FakeAgentClient.responses == []
+    assert result.status == "failed"
+    assert result.vision_used is False
+    assert result.evidence_kind == "none"
+    assert "未返回任何分析内容" in result.text
+    assert result.image_rejection is None
+
+
 def test_text_only_screenshot_configuration_is_actionable_without_ai_narrative() -> (
     None
 ):

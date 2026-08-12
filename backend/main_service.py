@@ -403,11 +403,10 @@ async def process_native_screenshot(
         )
     except (FileNotFoundError, MeetingNotFoundError, ValueError):
         if DESKTOP_MODE:
-            await process_manager.start_image_process(
-                session_id,
-                image_path=str(image_path),
-            )
-            return {"legacy_processing": True}
+            raise HTTPException(
+                status_code=409,
+                detail="会议记录不可用，截图无法保存和处理",
+            ) from None
         raise
     await broadcast_meeting_event(session_id, event)
     if DESKTOP_MODE:

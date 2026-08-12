@@ -3,11 +3,14 @@ import importlib
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from services.meeting_ingestion import MeetingIngestionService, ScreenshotAnalysisResult
 from services.meeting_repository import MeetingRepository
 
 
-def test_desktop_screenshot_reuses_existing_image_processor(
+def test_desktop_screenshot_without_record_does_not_start_legacy_ocr(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
@@ -24,10 +27,14 @@ def test_desktop_screenshot_reuses_existing_image_processor(
         main_service.process_manager, "start_image_process", start_image_process
     )
     image_path = Path(tmp_path / "slide.png")
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\ncontent")
 
-    asyncio.run(main_service.process_native_screenshot("session-1", image_path))
+    with pytest.raises(Exception) as captured:
+        asyncio.run(main_service.process_native_screenshot("session-1", image_path))
 
-    assert started == [("session-1", None, str(image_path))]
+    assert started == []
+    assert captured.type is HTTPException
+    assert captured.value.status_code == 409
 
 
 def test_durable_screenshot_analysis_task_is_retained_until_completion(

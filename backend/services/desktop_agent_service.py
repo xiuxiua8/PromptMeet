@@ -48,6 +48,7 @@ class MeetingAnswerResult:
     provider: str
     model: str
     image_rejection: str | None = None
+    empty_completion: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,8 +180,9 @@ class DesktopAgentService:
             and self.environment.get("PROMPTMEET_WEB_SEARCH_ENABLED", "1") != "0"
         )
         image_rejection = None
+        empty_completion = False
         try:
-            answer, web_sources = await self._run_meeting_prompt(
+            answer, web_sources, empty_completion = await self._run_meeting_prompt(
                 configuration,
                 prompt_request,
                 emit,
@@ -196,11 +198,13 @@ class DesktopAgentService:
                 replace(configuration.capabilities, supports_vision=False),
             )
             try:
-                answer, web_sources = await self._run_meeting_prompt(
-                    configuration,
-                    prompt_request,
-                    emit,
-                    search_enabled=search_enabled,
+                answer, web_sources, empty_completion = (
+                    await self._run_meeting_prompt(
+                        configuration,
+                        prompt_request,
+                        emit,
+                        search_enabled=search_enabled,
+                    )
                 )
             except (httpx.HTTPError, StreamTerminalError) as fallback_error:
                 raise self._runtime_failure(
@@ -219,6 +223,7 @@ class DesktopAgentService:
             provider=configuration.provider,
             model=configuration.model,
             image_rejection=image_rejection,
+            empty_completion=empty_completion,
         )
 
     async def _run_meeting_prompt(
@@ -228,13 +233,14 @@ class DesktopAgentService:
         emit: Callable[[dict], Awaitable[None]],
         *,
         search_enabled: bool,
-    ) -> tuple[str, list[dict[str, str]]]:
+    ) -> tuple[str, list[dict[str, str]], bool]:
         messages = [
             {"role": message.role, "content": self._provider_content(message.content)}
             for message in prompt_request.messages
         ]
         web_sources: list[dict[str, str]] = []
         headers = {"Authorization": f"Bearer {configuration.api_key}"}
+        empty_completion = False
         async with httpx.AsyncClient(timeout=90) as client:
             tool_rounds_used = 0
             for _ in range(self.MAX_TOOL_ROUNDS + 1):
@@ -282,11 +288,12 @@ class DesktopAgentService:
                     answer = "抱歉，本次回答超过了工具调用上限。"
                     await emit({"data": {"delta": answer}})
                     break
+                empty_completion = not message.get("content")
                 answer = message.get("content") or "抱歉，我暂时无法生成回答。"
-                if not message.get("content"):
+                if empty_completion:
                     await emit({"data": {"delta": answer}})
                 break
-        return answer, web_sources
+        return answer, web_sources, empty_completion
 
     @staticmethod
     def _is_image_rejection(error, prompt_request) -> bool:
@@ -349,15 +356,37 @@ class DesktopAgentService:
         async def ignore(_: dict) -> None:
             return None
 
+        question = "请客观描述最新会议截图中的关键信息、数字、决定和待办。不要推测看不清的内容。"
         selection = MeetingContextBuilder().select_screenshot(record, screenshot_event)
         result = await self.answer_meeting(
             record,
-            "请客观描述最新会议截图中的关键信息、数字、决定和待办。不要推测看不清的内容。",
+            question,
             ignore,
             search_web=False,
             purpose="screenshot",
             selection_override=selection,
         )
+        if result.empty_completion and not result.degraded_vision:
+            result = await self.answer_meeting(
+                record,
+                question,
+                ignore,
+                search_web=False,
+                purpose="screenshot",
+                selection_override=selection,
+            )
+            if result.empty_completion:
+                return ScreenshotAnalysisResult(
+                    status="failed",
+                    text=(
+                        "截图分析未获得有效回复：视觉模型未返回任何分析内容。"
+                        "原截图已保留，请检查截图分析工作流的提供方连接后重试。"
+                    ),
+                    vision_used=False,
+                    provider=result.provider,
+                    model=result.model,
+                    evidence_kind="none",
+                )
         if result.degraded_vision:
             if local_ocr_text:
                 return ScreenshotAnalysisResult(
