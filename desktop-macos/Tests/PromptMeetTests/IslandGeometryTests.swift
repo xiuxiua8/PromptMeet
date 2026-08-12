@@ -215,14 +215,20 @@ final class IslandGeometryTests: XCTestCase {
 
         flow.tick(deltaTime: 1)
 
-        XCTAssertEqual(
-            flow.cursor,
-            SubtitleFlowMetrics.speed(
-                entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
-                pendingWidth: flow.pendingWidth
-            ),
-            accuracy: 0.001
+        // The first second applies the smoothed speed (ramping from the base
+        // pace toward the target), not the full target immediately.
+        let target = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
+            pendingWidth: flow.pendingWidth
         )
+        let smoothed = SubtitleFlowMetrics.smoothedSpeed(
+            from: SubtitleFlowMetrics.baseSpeed,
+            toward: target,
+            deltaTime: 1
+        )
+        XCTAssertEqual(flow.currentSpeed, smoothed, accuracy: 0.001)
+        XCTAssertEqual(flow.cursor, smoothed, accuracy: 0.001)
+        XCTAssertLessThan(flow.currentSpeed, target)
     }
 
     func testSubtitleFlowSpeedStaysWithinReadableBounds() {

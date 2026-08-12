@@ -17,36 +17,60 @@ struct SubtitleStreamPage: Equatable, Sendable, Identifiable {
 /// The flow speed tracks the generation rate in real time: subtitles (and
 /// their translations, which are part of each page's measured width) scroll
 /// past as fast as they are produced, so the buffer never accumulates. A
-/// quiet stream moves at the natural base pace, and a burst raises the speed
-/// (up to a safety cap) until the backlog drains. Speed is a pure function of
-/// the measured entry rate and the pending width, so it changes smoothly and
-/// never jumps.
+/// quiet stream moves at the natural base pace. A backlog raises the speed
+/// through a bounded drain term - capped well inside the readable range - so
+/// the late phase stays as readable as the early phase (雨露均沾): the flow
+/// never races, and speed changes are smoothed so bursts ramp up gradually
+/// instead of jumping.
 enum SubtitleFlowMetrics {
     /// Natural flow pace when nothing is being generated.
     static let baseSpeed: CGFloat = 26
-    /// Safety cap: high enough to clear any realistic meeting's generation
-    /// rate while keeping the stream readable during traversal.
-    static let maximumSpeed: CGFloat = 260
+    /// Readable cap: the flow never exceeds this, so even a deep backlog
+    /// drains at a pace the user can follow.
+    static let maximumSpeed: CGFloat = 110
     /// Headroom over the measured entry rate so the flow outruns generation
     /// and the backlog drains instead of growing.
     static let keepUpGain: CGFloat = 1.15
     /// Extra speed per point of pending (buffered) width during bursts.
-    static let drainGain: CGFloat = 0.08
+    static let drainGain: CGFloat = 0.035
+    /// Hard bound on the drain contribution: the backlog phase can only speed
+    /// up this much over the generation-tracked pace.
+    static let maximumDrainBoost: CGFloat = 35
     /// Sliding window over which the entry rate is measured, matching the
     /// per-segment transcription cadence.
     static let rateWindow: TimeInterval = 8
+    /// Time constant for exponential speed smoothing; transitions between
+    /// pacing states happen over a second or two, never in one frame.
+    static let smoothingTau: TimeInterval = 1.5
     /// Visual gap between consecutive subtitle pages.
     static let traverseGap: CGFloat = 28
 
-    /// Flow speed in points/second for the given measured generation rate
-    /// (points of content entering the buffer per second) and pending width.
+    /// Target flow speed in points/second for the given measured generation
+    /// rate (points of content entering the buffer per second) and pending
+    /// width. The drain contribution is bounded so a deep backlog cannot push
+    /// the stream past the readable cap.
     static func speed(
         entryRatePtsPerSecond: CGFloat,
         pendingWidth: CGFloat
     ) -> CGFloat {
         let rateDriven = keepUpGain * max(0, entryRatePtsPerSecond)
-        let drainDriven = drainGain * max(0, pendingWidth)
+        let drainDriven = min(
+            drainGain * max(0, pendingWidth),
+            maximumDrainBoost
+        )
         return min(baseSpeed + rateDriven + drainDriven, maximumSpeed)
+    }
+
+    /// Exponential smoothing toward the target speed so pacing changes are
+    /// gradual (no jumps when a burst lands or drains).
+    static func smoothedSpeed(
+        from current: CGFloat,
+        toward target: CGFloat,
+        deltaTime: TimeInterval
+    ) -> CGFloat {
+        guard deltaTime > 0 else { return current }
+        let factor = 1 - exp(-deltaTime / smoothingTau)
+        return current + (target - current) * factor
     }
 }
 
@@ -72,6 +96,8 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     private var modelTime: TimeInterval = 0
     /// Pages appended within the rate window, for the generation-rate estimate.
     private var appendWindow: [AppendEntry] = []
+    /// Current smoothed flow speed in points/second.
+    private var smoothedSpeed: CGFloat = SubtitleFlowMetrics.baseSpeed
 
     init(
         maximumPages: Int = 30,
@@ -82,6 +108,9 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     }
 
     var isEmpty: Bool { pages.isEmpty }
+
+    /// The currently applied (smoothed) flow speed in points/second.
+    var currentSpeed: CGFloat { smoothedSpeed }
 
     /// Characters still buffered (including the page currently flowing).
     var pendingCharacterCount: Int {
@@ -127,18 +156,34 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     }
 
     /// Advances the stream by `deltaTime` at the adaptive speed and drops
-    /// fully traversed pages. Returns true when the cursor moved.
+    /// fully traversed pages. Returns true when the cursor moved. The smoothed
+    /// speed always decays toward the base pace - even between captions - so
+    /// the next subtitle starts from a calm, readable speed.
     @discardableResult
     mutating func tick(deltaTime: TimeInterval) -> Bool {
-        guard !pages.isEmpty, deltaTime > 0 else { return false }
+        guard deltaTime > 0 else { return false }
         modelTime += deltaTime
         pruneAppendWindow()
-        let speed = SubtitleFlowMetrics.speed(
-            entryRatePtsPerSecond: entryRatePtsPerSecond,
-            pendingWidth: pendingWidth
+        let targetSpeed: CGFloat
+        if pages.isEmpty {
+            targetSpeed = SubtitleFlowMetrics.baseSpeed
+        } else {
+            targetSpeed = SubtitleFlowMetrics.speed(
+                entryRatePtsPerSecond: entryRatePtsPerSecond,
+                pendingWidth: pendingWidth
+            )
+        }
+        smoothedSpeed = SubtitleFlowMetrics.smoothedSpeed(
+            from: smoothedSpeed,
+            toward: targetSpeed,
+            deltaTime: deltaTime
         )
-        cursor += speed * CGFloat(deltaTime)
-        var changed = speed > 0
+        guard !pages.isEmpty else {
+            cursor = 0
+            return false
+        }
+        cursor += smoothedSpeed * CGFloat(deltaTime)
+        var changed = smoothedSpeed > 0
         // An unmeasured page (width 0) is never popped: the measured width
         // arrives within a frame of appending.
         while !pages.isEmpty,
@@ -190,6 +235,7 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         cursor = 0
         modelTime = 0
         appendWindow = []
+        smoothedSpeed = SubtitleFlowMetrics.baseSpeed
     }
 
     private mutating func trimToBounds() {
