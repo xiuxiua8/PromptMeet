@@ -305,17 +305,32 @@ final class MeetingStateTests: XCTestCase {
     XCTAssertEqual(state.latestInsight, "新问题一")
   }
 
-  func testUnsuccessfulQuestionBatchesKeepLastGoodSuggestions() {
+  func testZeroResultQuestionBatchKeepsLastGoodSuggestions() {
     var state = MeetingState.previewAura
     let previous = state.generatedQuestions
 
     state.reduce(.questionsGenerated([]))
-    state.reduce(.questionsGenerated(["只有一个问题"]))
-    state.reduce(.questionsGenerated(["重复问题", "重复问题", "第三个问题"]))
-    state.reduce(.questionsGenerated(["问题一", "问题二", "问题三", "问题四"]))
-    state.reduce(.questionsGenerated(["  重复 ", "重复"]))
 
     XCTAssertEqual(state.generatedQuestions, previous)
+  }
+
+  func testOneToThreeQuestionBatchesReplaceAtomically() {
+    var state = MeetingState.previewAura
+    let previous = state.generatedQuestions
+
+    state.reduce(.questionsGenerated(["只有一个问题"]))
+
+    XCTAssertEqual(state.generatedQuestions, ["只有一个问题"])
+    XCTAssertNotEqual(state.generatedQuestions, previous)
+  }
+
+  func testDuplicateQuestionsAreDeduplicatedBeforeAtomicReplacement() {
+    var state = MeetingState.previewAura
+
+    state.reduce(.questionsGenerated(["重复问题", "重复问题", "第三个问题"]))
+
+    XCTAssertEqual(state.generatedQuestions, ["重复问题", "第三个问题"])
+    XCTAssertEqual(state.latestInsight, "重复问题")
   }
 
   func testReplayedSingleQuestionSuggestionRestoresFromTimeline() {

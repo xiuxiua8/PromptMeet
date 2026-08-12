@@ -133,8 +133,14 @@ enum SuggestedQuestionSet {
     }
 
     static func accepted(_ questions: [String]) -> [String]? {
-        guard let normalized = normalized(questions) else { return nil }
-        return (2...3).contains(normalized.count) ? normalized : nil
+        var seen = Set<String>()
+        let normalized = questions.reduce(into: [String]()) { result, question in
+            let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, seen.insert(trimmed).inserted {
+                result.append(trimmed)
+            }
+        }
+        return (1...3).contains(normalized.count) ? normalized : nil
     }
 
     static func acceptedForRestore(_ questions: [String]) -> [String]? {
