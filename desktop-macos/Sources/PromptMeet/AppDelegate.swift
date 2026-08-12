@@ -36,7 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.configureUIPreview(previewMode)
             if previewMode.hasPrefix("workspace") {
                 workspace.show()
-            } else if previewMode == "reader-short" || previewMode == "reader-long" {
+            } else if previewMode == "reader-short"
+                || previewMode == "reader-long"
+                || previewMode == "reader-formula" {
                 reader.showPreview(state: store.state)
             } else {
                 island.show()

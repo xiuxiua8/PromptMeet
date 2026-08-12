@@ -136,6 +136,9 @@ final class MeetingStore: ObservableObject {
         case "reader-long":
             state = .previewLongReader
             isHovered = false
+        case "reader-formula":
+            state = .previewFormulaReader
+            isHovered = false
         default:
             state = MeetingState()
             isHovered = false

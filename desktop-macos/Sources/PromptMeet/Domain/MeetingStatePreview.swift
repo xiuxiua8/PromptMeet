@@ -5,13 +5,21 @@ private let formulaAnswerPreview = """
 
 根据相对论，能量公式是 $E = mc^2$，其中 $c$ 是光速。
 
-积分：$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$。
+积分：$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$，极限：$\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1$。
 
 求和公式：
 
 $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 
-分数相加：$\\frac{a}{b} + \\frac{c}{d} = \\frac{ad+bc}{bd}$，开方：$\\sqrt{x^2 + y^2}$。
+分数相加：$\\frac{a}{b} + \\frac{c}{d} = \\frac{ad+bc}{bd}$，开方：$\\sqrt{x^2 + y^2}$，希腊字母 $\\alpha + \\beta = \\gamma$，无穷 $\\infty$。
+
+**对比表**（粗体与斜体同时验证）：
+
+| 指标 | 公式 | 结果 |
+| :--- | ---: | :---: |
+| 能量 | $E = mc^2$ | **成立** |
+| 积分 | $\\int_0^1 x^2 dx$ | $\\frac{1}{3}$ |
+| 求和 | $\\sum_{i=1}^{n} i$ | $\\frac{n(n+1)}{2}$ |
 """
 
 extension MeetingState {
@@ -124,6 +132,17 @@ extension MeetingState {
                 answeredAt: nil
             )
         ]
+        return state
+    }
+
+    static var previewFormulaReader: MeetingState {
+        var state = previewFormulaWorkspace
+        state.aiReader = AIReaderState(
+            title: "相对论中的能量公式是什么？",
+            content: formulaAnswerPreview,
+            isVisible: true,
+            isStreaming: false
+        )
         return state
     }
 
