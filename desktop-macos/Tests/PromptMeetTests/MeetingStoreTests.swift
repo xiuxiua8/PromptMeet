@@ -159,8 +159,11 @@ final class MeetingStoreTests: XCTestCase {
             companion: companion,
             transcriptOutbox: TranscriptOutboxStore(
                 fileURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("promptmeet-reload-test-\(UUID().uuidString)")
-                    .appendingPathComponent("transcript-outbox.json")
+                    .appendingPathComponent(
+                        "PromptMeetReloadOutbox-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                    .appendingPathComponent("transcripts.json")
             )
         )
         await store.startMeetingNow()
@@ -249,7 +252,15 @@ final class MeetingStoreTests: XCTestCase {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "PromptMeetReconnectOutbox-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                    .appendingPathComponent("transcripts.json")
+            )
         )
         await store.startMeetingNow()
         backend.emit(.companionDisconnected("连接已关闭"))
