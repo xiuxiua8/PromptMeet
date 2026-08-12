@@ -167,8 +167,15 @@ final class CompanionLauncher: CompanionLaunching {
     }
 
     private func companionLogHandle(fileManager: FileManager) throws -> FileHandle {
-        let logsDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PromptMeet/logs", isDirectory: true)
+        let logsDirectory: URL
+        if let configuredDataDir = ProcessInfo.processInfo.environment["PROMPTMEET_DATA_DIR"],
+           !configuredDataDir.isEmpty {
+            logsDirectory = URL(fileURLWithPath: configuredDataDir)
+                .appendingPathComponent("logs", isDirectory: true)
+        } else {
+            logsDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("PromptMeet/logs", isDirectory: true)
+        }
         try fileManager.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
         let logURL = logsDirectory.appendingPathComponent("companion.log")
         if !fileManager.fileExists(atPath: logURL.path) {
@@ -189,9 +196,19 @@ final class CompanionLauncher: CompanionLaunching {
         processEnvironment["PROMPTMEET_DESKTOP_MODE"] = "1"
         let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PromptMeet", isDirectory: true)
-        processEnvironment["PROMPTMEET_DATA_DIR"] = applicationSupport.path
-        processEnvironment["PROMPTMEET_WORK_DIR"] = applicationSupport
-            .appendingPathComponent("temp_sessions", isDirectory: true).path
+        // An existing PROMPTMEET_DATA_DIR (isolated launch) is preserved so the
+        // companion never touches another instance's data; otherwise default to
+        // the shared application-support directory.
+        if let configuredDataDir = processEnvironment["PROMPTMEET_DATA_DIR"],
+           !configuredDataDir.isEmpty {
+            processEnvironment["PROMPTMEET_WORK_DIR"] = URL(
+                fileURLWithPath: configuredDataDir
+            ).appendingPathComponent("temp_sessions", isDirectory: true).path
+        } else {
+            processEnvironment["PROMPTMEET_DATA_DIR"] = applicationSupport.path
+            processEnvironment["PROMPTMEET_WORK_DIR"] = applicationSupport
+                .appendingPathComponent("temp_sessions", isDirectory: true).path
+        }
         if let environmentFileURL = configuration.environmentFileURL {
             processEnvironment["PROMPTMEET_ENV_FILE"] = environmentFileURL.path
         }

@@ -14,26 +14,39 @@ struct SubtitleStreamPage: Equatable, Sendable, Identifiable {
 
 /// Adaptive flow metrics for the subtitle stream.
 ///
-/// The flow speed adapts in real time to the volume of pending text: a quiet
-/// stream moves at the base pace while a burst raises the speed (up to a
-/// readable cap) so buffered subtitles drain without ever covering what the
-/// user is reading. Speed is a pure function of the pending character count,
-/// so it changes smoothly and never jumps.
+/// The flow speed tracks the generation rate in real time: subtitles (and
+/// their translations, which are part of each page's measured width) scroll
+/// past as fast as they are produced, so the buffer never accumulates. A
+/// quiet stream moves at the natural base pace, and a burst raises the speed
+/// (up to a safety cap) until the backlog drains. Speed is a pure function of
+/// the measured entry rate and the pending width, so it changes smoothly and
+/// never jumps.
 enum SubtitleFlowMetrics {
-    /// Natural flow pace when the buffer is empty or nearly empty.
+    /// Natural flow pace when nothing is being generated.
     static let baseSpeed: CGFloat = 26
-    /// Readable cap: faster than this and the text stops being readable.
-    static let maximumSpeed: CGFloat = 74
-    /// Speed gained per pending character; bounded by `maximumSpeed`.
-    static let speedPerPendingCharacter: CGFloat = 0.25
+    /// Safety cap: high enough to clear any realistic meeting's generation
+    /// rate while keeping the stream readable during traversal.
+    static let maximumSpeed: CGFloat = 260
+    /// Headroom over the measured entry rate so the flow outruns generation
+    /// and the backlog drains instead of growing.
+    static let keepUpGain: CGFloat = 1.15
+    /// Extra speed per point of pending (buffered) width during bursts.
+    static let drainGain: CGFloat = 0.08
+    /// Sliding window over which the entry rate is measured, matching the
+    /// per-segment transcription cadence.
+    static let rateWindow: TimeInterval = 8
     /// Visual gap between consecutive subtitle pages.
     static let traverseGap: CGFloat = 28
 
-    static func speed(pendingCharacters: Int) -> CGFloat {
-        min(
-            baseSpeed + CGFloat(max(0, pendingCharacters)) * speedPerPendingCharacter,
-            maximumSpeed
-        )
+    /// Flow speed in points/second for the given measured generation rate
+    /// (points of content entering the buffer per second) and pending width.
+    static func speed(
+        entryRatePtsPerSecond: CGFloat,
+        pendingWidth: CGFloat
+    ) -> CGFloat {
+        let rateDriven = keepUpGain * max(0, entryRatePtsPerSecond)
+        let drainDriven = drainGain * max(0, pendingWidth)
+        return min(baseSpeed + rateDriven + drainDriven, maximumSpeed)
     }
 }
 
@@ -44,12 +57,21 @@ enum SubtitleFlowMetrics {
 /// how far the stream has moved; fully traversed pages drop off the head, and
 /// the buffer is bounded so memory stays constant over long meetings.
 struct SubtitleStreamFlow: Equatable, Sendable {
+    private struct AppendEntry: Equatable, Sendable {
+        let time: TimeInterval
+        let id: UUID
+    }
+
     private(set) var pages: [SubtitleStreamPage] = []
     /// Strip position in points, relative to the head page (0 = head page
     /// left-aligned with the viewport).
     private(set) var cursor: CGFloat = 0
     let maximumPages: Int
     let maximumCharacters: Int
+    /// Model time in seconds, advanced by `tick`.
+    private var modelTime: TimeInterval = 0
+    /// Pages appended within the rate window, for the generation-rate estimate.
+    private var appendWindow: [AppendEntry] = []
 
     init(
         maximumPages: Int = 30,
@@ -66,10 +88,30 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         pages.reduce(0) { $0 + $1.text.count }
     }
 
+    /// Width still buffered, including traverse gaps.
+    var pendingWidth: CGFloat {
+        guard !pages.isEmpty else { return 0 }
+        return pages.reduce(CGFloat(0)) { $0 + $1.width }
+            + CGFloat(pages.count - 1) * SubtitleFlowMetrics.traverseGap
+    }
+
+    /// Measured generation rate: points of content appended within the rate
+    /// window, per second. Translations count through each page's measured
+    /// width, so subtitles and translations together keep the flow caught up.
+    var entryRatePtsPerSecond: CGFloat {
+        guard !appendWindow.isEmpty else { return 0 }
+        let windowedWidth = appendWindow.reduce(CGFloat(0)) { sum, entry in
+            let width = pages.first { $0.id == entry.id }?.width ?? 0
+            return sum + width
+        }
+        return windowedWidth / CGFloat(SubtitleFlowMetrics.rateWindow)
+    }
+
     /// Buffers a new subtitle page. Never replaces existing content.
     mutating func append(_ page: SubtitleStreamPage) {
         guard !page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         pages.append(page)
+        appendWindow.append(AppendEntry(time: modelTime, id: page.id))
         trimToBounds()
     }
 
@@ -89,10 +131,14 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     @discardableResult
     mutating func tick(deltaTime: TimeInterval) -> Bool {
         guard !pages.isEmpty, deltaTime > 0 else { return false }
-        let distance = SubtitleFlowMetrics.speed(pendingCharacters: pendingCharacterCount)
-            * CGFloat(deltaTime)
-        cursor += distance
-        var changed = distance > 0
+        modelTime += deltaTime
+        pruneAppendWindow()
+        let speed = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: entryRatePtsPerSecond,
+            pendingWidth: pendingWidth
+        )
+        cursor += speed * CGFloat(deltaTime)
+        var changed = speed > 0
         // An unmeasured page (width 0) is never popped: the measured width
         // arrives within a frame of appending.
         while !pages.isEmpty,
@@ -106,6 +152,13 @@ struct SubtitleStreamFlow: Equatable, Sendable {
             cursor = 0
         }
         return changed
+    }
+
+    private mutating func pruneAppendWindow() {
+        let cutoff = modelTime - SubtitleFlowMetrics.rateWindow
+        while let first = appendWindow.first, first.time < cutoff {
+            appendWindow.removeFirst()
+        }
     }
 
     /// Pages (and their strip positions) currently overlapping the viewport.
@@ -135,6 +188,8 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     mutating func reset() {
         pages = []
         cursor = 0
+        modelTime = 0
+        appendWindow = []
     }
 
     private mutating func trimToBounds() {

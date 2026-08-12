@@ -217,14 +217,17 @@ final class IslandGeometryTests: XCTestCase {
 
         XCTAssertEqual(
             flow.cursor,
-            SubtitleFlowMetrics.speed(pendingCharacters: 4),
+            SubtitleFlowMetrics.speed(
+                entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
+                pendingWidth: flow.pendingWidth
+            ),
             accuracy: 0.001
         )
     }
 
     func testSubtitleFlowSpeedStaysWithinReadableBounds() {
-        let quiet = SubtitleFlowMetrics.speed(pendingCharacters: 0)
-        let burst = SubtitleFlowMetrics.speed(pendingCharacters: 2_000)
+        let quiet = SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 0, pendingWidth: 0)
+        let burst = SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 5_000, pendingWidth: 10_000)
 
         XCTAssertEqual(quiet, SubtitleFlowMetrics.baseSpeed, accuracy: 0.001)
         XCTAssertEqual(burst, SubtitleFlowMetrics.maximumSpeed, accuracy: 0.001)

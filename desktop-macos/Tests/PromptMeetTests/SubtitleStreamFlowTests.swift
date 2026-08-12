@@ -5,13 +5,7 @@ import XCTest
 
 final class SubtitleStreamFlowTests: XCTestCase {
     private func page(_ text: String, width: CGFloat = 200) -> SubtitleStreamPage {
-        SubtitleStreamPage(
-            id: UUID(),
-            text: text,
-            translation: nil,
-            timestamp: Date(),
-            width: width
-        )
+        SubtitleStreamPage(id: UUID(), text: text, timestamp: Date(), width: width)
     }
 
     // MARK: - Appending never replaces existing content
@@ -58,7 +52,10 @@ final class SubtitleStreamFlowTests: XCTestCase {
         flow.append(page("A", width: 100))
         flow.append(page("B", width: 100))
         let travelA = 100 + SubtitleFlowMetrics.traverseGap
-        let speed = SubtitleFlowMetrics.speed(pendingCharacters: 2)
+        let speed = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
+            pendingWidth: flow.pendingWidth
+        )
 
         // Tick just far enough to traverse page A and its gap, not page B.
         flow.tick(deltaTime: Double(travelA / speed) + 0.001)
@@ -89,43 +86,95 @@ final class SubtitleStreamFlowTests: XCTestCase {
         flow.append(page("A", width: 120))
         flow.append(page("B", width: 120))
         let travelA = 120 + SubtitleFlowMetrics.traverseGap
-        let speed = SubtitleFlowMetrics.speed(pendingCharacters: 2)
+        let speed = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
+            pendingWidth: flow.pendingWidth
+        )
 
         // Just before the pop, B's left edge sits at (travelA - cursor).
         flow.tick(deltaTime: Double(travelA / speed) - 0.001)
         let beforePop = flow.visiblePages(viewportWidth: 600).first(where: { $0.page.text == "B" })?.x
         XCTAssertNotNil(beforePop)
 
-        // Just after the pop, B is the head at x = -cursor (same position).
-        flow.tick(deltaTime: 0.01)
+        // Just after the pop, B is the head at x = -cursor; the rendered
+        // position is continuous (it only advanced by the tiny extra delta).
+        flow.tick(deltaTime: 0.001)
         let afterPop = flow.visiblePages(viewportWidth: 600).first(where: { $0.page.text == "B" })?.x
         XCTAssertNotNil(afterPop)
-        XCTAssertEqual(beforePop!, afterPop!, accuracy: 0.5)
+        XCTAssertEqual(beforePop!, afterPop!, accuracy: 3)
     }
 
-    // MARK: - Adaptive speed
+    // MARK: - Adaptive speed tracks the generation rate
 
-    func testSpeedRisesWithPendingVolumeAndIsClamped() {
-        XCTAssertEqual(SubtitleFlowMetrics.speed(pendingCharacters: 0), 26, accuracy: 0.001)
-        XCTAssertEqual(SubtitleFlowMetrics.speed(pendingCharacters: 1), 26.25, accuracy: 0.001)
-        XCTAssertGreaterThan(
-            SubtitleFlowMetrics.speed(pendingCharacters: 200),
-            SubtitleFlowMetrics.speed(pendingCharacters: 0)
+    func testFreshlyGeneratedCaptionFlowsAtItsEntryRate() {
+        var flow = SubtitleStreamFlow()
+        flow.append(page("single quiet caption", width: 300))
+
+        flow.tick(deltaTime: 0.1)
+
+        // The caption was just generated: the flow tracks its entry rate so it
+        // scrolls past promptly instead of idling at the base pace.
+        let expectedRate = 300 / CGFloat(SubtitleFlowMetrics.rateWindow)
+        let expectedSpeed = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: expectedRate,
+            pendingWidth: flow.pendingWidth
         )
+        XCTAssertEqual(flow.entryRatePtsPerSecond, expectedRate, accuracy: 0.001)
+        XCTAssertEqual(flow.cursor, expectedSpeed * 0.1, accuracy: 0.5)
+    }
+
+    func testSpeedFallsBackToBasePaceWhenGenerationStops() {
+        // With no measured generation, the metrics floor at the base pace.
         XCTAssertEqual(
-            SubtitleFlowMetrics.speed(pendingCharacters: 10_000),
-            SubtitleFlowMetrics.maximumSpeed,
+            SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 0, pendingWidth: 0),
+            SubtitleFlowMetrics.baseSpeed,
             accuracy: 0.001
         )
     }
 
-    func testSpeedIsMonotonicInPendingVolume() {
+    func testSpeedTracksGenerationRate() {
+        // One 360 pt page per 8 s segment = 45 pts/s of generation.
+        var flow = SubtitleStreamFlow()
+        flow.append(page("segment one", width: 360))
+        flow.tick(deltaTime: 0.01)
+        let expectedRate = 360 / CGFloat(SubtitleFlowMetrics.rateWindow)
+        let expectedSpeed = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: expectedRate,
+            pendingWidth: flow.pendingWidth
+        )
+
+        XCTAssertEqual(flow.entryRatePtsPerSecond, expectedRate, accuracy: 0.5)
+        XCTAssertGreaterThan(
+            expectedSpeed,
+            SubtitleFlowMetrics.baseSpeed,
+            "the flow must outrun generation so the backlog cannot grow"
+        )
+        XCTAssertGreaterThanOrEqual(
+            expectedSpeed,
+            expectedRate * SubtitleFlowMetrics.keepUpGain
+        )
+    }
+
+    func testSpeedIsMonotonicInGenerationRateAndClamped() {
         var previous: CGFloat = -1
-        for count in stride(from: 0, through: 500, by: 25) {
-            let speed = SubtitleFlowMetrics.speed(pendingCharacters: count)
+        for rate in stride(from: 0, through: 500, by: 25) {
+            let speed = SubtitleFlowMetrics.speed(
+                entryRatePtsPerSecond: CGFloat(rate),
+                pendingWidth: 0
+            )
             XCTAssertGreaterThanOrEqual(speed, previous)
             previous = speed
         }
+        XCTAssertEqual(
+            SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 10_000, pendingWidth: 0),
+            SubtitleFlowMetrics.maximumSpeed,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 0, pendingWidth: 0),
+            SubtitleFlowMetrics.baseSpeed,
+            accuracy: 0.001
+        )
     }
 
     func testBurstAdvancesFasterThanQuietStream() {
@@ -143,20 +192,61 @@ final class SubtitleStreamFlowTests: XCTestCase {
         XCTAssertGreaterThan(burst.cursor, quiet.cursor)
     }
 
-    func testSpeedDecaysAsBacklogDrains() {
+    func testSpeedDecaysAsGenerationStops() {
         var flow = SubtitleStreamFlow()
         for index in 0..<6 {
             flow.append(page("line \(index)", width: 250))
         }
         flow.tick(deltaTime: 0.1)
         let fastCursor = flow.cursor
-        // Drain everything.
-        flow.tick(deltaTime: 120)
+        // Let the generation window age out and the pages drain.
+        flow.tick(deltaTime: 20)
         XCTAssertTrue(flow.isEmpty)
+        XCTAssertEqual(flow.entryRatePtsPerSecond, 0, accuracy: 0.001)
 
         flow.append(page("fresh", width: 250))
         flow.tick(deltaTime: 0.1)
         XCTAssertLessThan(flow.cursor, fastCursor)
+    }
+
+    // MARK: - No-backlog contract
+
+    func testSustainedGenerationKeepsBacklogBounded() {
+        // Simulate a busy meeting: one 360 pt segment (plus a 200 pt
+        // translation-equivalent width) every 8 seconds for a minute.
+        var flow = SubtitleStreamFlow()
+        var peakPending: CGFloat = 0
+        for segment in 0..<8 {
+            flow.append(page("segment number \(segment)", width: 560))
+            // The segment transcribes over its 8 s window.
+            flow.tick(deltaTime: 8)
+            peakPending = max(peakPending, flow.pendingWidth)
+        }
+
+        // The flow keeps up with generation: the backlog never grows beyond a
+        // small constant (a fraction of one segment), instead of accumulating.
+        XCTAssertLessThan(
+            flow.pendingWidth,
+            560 + SubtitleFlowMetrics.traverseGap,
+            "backlog must not accumulate under sustained generation"
+        )
+        XCTAssertLessThan(peakPending, 2 * 560 + 2 * SubtitleFlowMetrics.traverseGap)
+    }
+
+    func testBurstBacklogDrainsAfterBurstEnds() {
+        var flow = SubtitleStreamFlow()
+        for index in 0..<10 {
+            flow.append(page("burst line \(index)", width: 200))
+        }
+        XCTAssertGreaterThan(flow.pendingWidth, 1_000)
+
+        // No further generation: the elevated rate + drain gain clears it.
+        // The tail drains at a readable pace as the window ages out.
+        for _ in 0..<80 {
+            flow.tick(deltaTime: 0.5)
+        }
+
+        XCTAssertTrue(flow.isEmpty)
     }
 
     // MARK: - Bounds

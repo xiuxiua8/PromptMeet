@@ -248,7 +248,14 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
         try data.write(to: fileURL, options: .atomic)
     }
 
-    private static func defaultFileURL() -> URL {
+    static func defaultFileURL() -> URL {
+        // PROMPTMEET_DATA_DIR isolates the outbox per instance so packaged
+        // launches never drain another lane's pending work.
+        if let dataDirectory = ProcessInfo.processInfo.environment["PROMPTMEET_DATA_DIR"],
+           !dataDirectory.isEmpty {
+            return URL(fileURLWithPath: dataDirectory)
+                .appendingPathComponent("transcript-outbox.json")
+        }
         let base: URL
         if Bundle.main.bundleIdentifier == "com.apple.dt.xctest.tool" {
             base = FileManager.default.temporaryDirectory

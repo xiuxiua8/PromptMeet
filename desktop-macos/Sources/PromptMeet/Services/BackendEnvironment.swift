@@ -3,9 +3,17 @@ import Foundation
 struct BackendEnvironment: Equatable {
     var baseURL: URL
 
-    static let local = BackendEnvironment(
-        baseURL: URL(string: "http://127.0.0.1:8000")!
-    )
+    /// Loopback companion backend. `PROMPTMEET_BACKEND_URL` overrides the
+    /// endpoint so packaged instances can run against an isolated companion
+    /// instead of one another's.
+    static var local: BackendEnvironment {
+        BackendEnvironment(
+            baseURL: URL(
+                string: ProcessInfo.processInfo.environment["PROMPTMEET_BACKEND_URL"]
+                    ?? "http://127.0.0.1:8000"
+            )!
+        )
+    }
 
     func request(path: String, method: String = "GET") -> URLRequest {
         let normalizedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
