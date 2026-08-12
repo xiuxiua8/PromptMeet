@@ -8,6 +8,7 @@ struct LocalTranscript: Equatable, Sendable {
   let timestamp: Date
   let meetingTime: Duration?
   let translationTarget: String?
+  let language: TranscriptLanguage?
 
   init(
     id: UUID = UUID(),
@@ -15,7 +16,8 @@ struct LocalTranscript: Equatable, Sendable {
     text: String,
     timestamp: Date = Date(),
     meetingTime: Duration? = nil,
-    translationTarget: String? = nil
+    translationTarget: String? = nil,
+    language: TranscriptLanguage? = nil
   ) {
     self.id = id
     self.source = source
@@ -23,6 +25,7 @@ struct LocalTranscript: Equatable, Sendable {
     self.timestamp = timestamp
     self.meetingTime = meetingTime
     self.translationTarget = translationTarget
+    self.language = language
   }
 
   var speaker: String {
@@ -48,6 +51,7 @@ protocol LocalTranscriptionServicing: Sendable {
 actor LocalTranscriptionService: LocalTranscriptionServicing {
   nonisolated static let defaultSegmentDuration: TimeInterval = 8
   private nonisolated static let systemAudioInactivityDuration = Duration.milliseconds(600)
+  private nonisolated static let recentLanguageWindow = 12
   private static let logger = Logger(
     subsystem: "com.promptmeet.desktop",
     category: "speech-gate"
@@ -68,7 +72,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
   private let preferences: WhisperPreferences
   private let segmentDuration: TimeInterval
   private var segmenter: PCMTranscriptionSegmenter
-  private var engine: (any LocalTranscriptionEngine)?
+  private var gatedEngine: WhisperLanguageGatedEngine?
   private var onPartialTranscript: (@Sendable (String) -> Void)?
   private var onTranscript: (@Sendable (LocalTranscript) -> Void)?
   private var onSignalState: (@Sendable (NativeAudioSource, AudioSignalState) -> Void)?
@@ -78,6 +82,8 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
   private var inactivityTasks: [NativeAudioSource: Task<Void, Never>] = [:]
   private var inactivityRevisions: [NativeAudioSource: UInt64] = [:]
   private var activeGeneration: UInt64 = 0
+  private var recentLanguages: [TranscriptLanguage] = []
+  private var droppedUtteranceCount = 0
 
   init(
     repository: WhisperModelRepository = WhisperModelRepository(),
@@ -110,14 +116,19 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     onSignalState: @escaping @Sendable (NativeAudioSource, AudioSignalState) -> Void,
     onError: @escaping @Sendable (String) -> Void
   ) async throws {
-    let newEngine = try engineFactory.makeEngine()
-    try await newEngine.prepare()
+    let rawEngine = try engineFactory.makeEngine()
+    try await rawEngine.prepare()
     invalidateCurrentWork()
-    engine = newEngine
+    gatedEngine = WhisperLanguageGatedEngine(
+      underlying: rawEngine,
+      preference: WhisperLanguagePreference(rawValue: preferences.language)
+    )
     self.onPartialTranscript = onPartialTranscript
     self.onTranscript = onTranscript
     self.onSignalState = onSignalState
     self.onError = onError
+    recentLanguages = []
+    droppedUtteranceCount = 0
     segmenter = PCMTranscriptionSegmenter(segmentDuration: segmentDuration)
   }
 
@@ -137,8 +148,8 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     logDiagnostics(boundary: "stop")
     segmenter.discardBufferedAudio()
     invalidateCurrentWork()
-    let engineToStop = engine
-    engine = nil
+    let engineToStop = gatedEngine
+    gatedEngine = nil
     onPartialTranscript = nil
     onTranscript = nil
     onSignalState = nil
@@ -155,6 +166,13 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
 }
 
 private extension LocalTranscriptionService {
+  var majorityLanguage: TranscriptLanguage {
+    guard !recentLanguages.isEmpty else { return .chinese }
+    let zhCount = recentLanguages.filter { $0 == .chinese }.count
+    let enCount = recentLanguages.count - zhCount
+    return enCount > zhCount ? .english : .chinese
+  }
+
   func enqueuePreview(_ segment: PCMTranscriptionSegment) {
     pendingJobs.removeAll {
       if case .preview = $0.kind {
@@ -242,9 +260,12 @@ private extension LocalTranscriptionService {
       generation == activeGeneration,
       !pendingJobs.isEmpty {
       let job = pendingJobs.removeFirst()
-      guard job.generation == generation, let engine else { continue }
+      guard job.generation == generation, let gatedEngine else { continue }
       do {
-        let text = try await engine.transcribe(job.segment)
+        let result = try await gatedEngine.gated(
+          job.segment,
+          majorityHint: majorityLanguage
+        )
         guard
           !Task.isCancelled,
           generation == activeGeneration,
@@ -252,7 +273,7 @@ private extension LocalTranscriptionService {
         else {
           return
         }
-        publish(text, for: job)
+        publish(result, for: job)
       } catch is CancellationError {
         return
       } catch {
@@ -265,27 +286,47 @@ private extension LocalTranscriptionService {
     beginProcessingIfNeeded()
   }
 
-  private func publish(_ text: String, for job: TranscriptionJob) {
-    switch job.kind {
-    case .preview:
-      if Self.containsContent(text) {
-        onPartialTranscript?(text)
-      }
-    case .final:
-      if Self.containsContent(text) {
-        onTranscript?(
-          LocalTranscript(
-            source: job.segment.source,
-            text: text,
-            timestamp: job.segment.capturedAt,
-            meetingTime: job.segment.meetingTime,
-            translationTarget: preferences.translationEnabled
-              ? preferences.translationTargetLanguage
-              : nil
+  private func publish(_ result: GatedTranscription, for job: TranscriptionJob) {
+    switch result {
+    case .accepted(let transcript):
+      switch job.kind {
+      case .preview:
+        if Self.containsContent(transcript.text) {
+          onPartialTranscript?(transcript.text)
+        }
+      case .final:
+        if Self.containsContent(transcript.text) {
+          onTranscript?(
+            LocalTranscript(
+              source: job.segment.source,
+              text: transcript.text,
+              timestamp: job.segment.capturedAt,
+              meetingTime: job.segment.meetingTime,
+              translationTarget: preferences.translationEnabled
+                ? preferences.translationTargetLanguage
+                : nil,
+              language: transcript.language
+            )
           )
-        )
+          recordAcceptedLanguage(transcript.language)
+        }
+        onPartialTranscript?("")
       }
-      onPartialTranscript?("")
+    case .dropped(let reason):
+      droppedUtteranceCount += 1
+      Self.logger.info(
+        "transcript_dropped reason=\(reason.name, privacy: .public)"
+      )
+      if job.kind == .preview {
+        onPartialTranscript?("")
+      }
+    }
+  }
+
+  func recordAcceptedLanguage(_ language: TranscriptLanguage) {
+    recentLanguages.append(language)
+    if recentLanguages.count > Self.recentLanguageWindow {
+      recentLanguages.removeFirst(recentLanguages.count - Self.recentLanguageWindow)
     }
   }
 
@@ -316,10 +357,26 @@ private extension LocalTranscriptionService {
         + "dropped_silence=\(droppedSilence) dropped_noise=\(droppedNoise) utterances=\(utterances)"
       Self.logger.info("\(diagnosticSummary, privacy: .public)")
     }
+    let zhCount = recentLanguages.filter { $0 == .chinese }.count
+    let enCount = recentLanguages.count - zhCount
+    let dropped = self.droppedUtteranceCount
+    Self.logger.info(
+      "lang_gate drop=\(dropped, privacy: .public) zh=\(zhCount, privacy: .public) en=\(enCount, privacy: .public)"
+    )
   }
 
   static func containsContent(_ text: String) -> Bool {
     text.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
+  }
+}
+
+extension WhisperLanguageGate.Reason {
+  var name: String {
+    switch self {
+    case .empty: "empty"
+    case .thirdLanguageAfterRetry: "third_language"
+    case .unmatchedScriptAfterRetry: "unmatched_script"
+    }
   }
 }
 

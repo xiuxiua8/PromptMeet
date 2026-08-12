@@ -48,7 +48,10 @@ struct WhisperCLIEngine<Runner: WhisperProcessRunning>: LocalTranscriptionEngine
         self.runner = runner
     }
 
-    func transcribe(_ segment: PCMTranscriptionSegment) async throws -> String {
+    func transcribe(
+        _ segment: PCMTranscriptionSegment,
+        language requestLanguage: String
+    ) async throws -> RawWhisperTranscription {
         guard FileManager.default.fileExists(atPath: executableURL.path) else {
             throw LocalTranscriptionError.runtimeNotInstalled
         }
@@ -65,12 +68,17 @@ struct WhisperCLIEngine<Runner: WhisperProcessRunning>: LocalTranscriptionEngine
             arguments: [
                 "-m", modelURL.path,
                 "-f", audioURL.path,
-                "-l", language,
+                "-l", requestLanguage,
                 "-nt",
                 "-np"
             ]
         )
-        return Self.normalized(output)
+        let text = Self.normalized(output)
+        return RawWhisperTranscription(
+            text: text,
+            detectedLanguage: nil,
+            probabilities: [:]
+        )
     }
 
     private static func normalized(_ output: String) -> String {

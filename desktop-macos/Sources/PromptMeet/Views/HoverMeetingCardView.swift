@@ -3,13 +3,6 @@ import SwiftUI
 struct HoverMeetingCardView: View {
     @ObservedObject var store: MeetingStore
 
-    private var transcriptFlow: String {
-        TranscriptFlowFormatter.text(
-            lines: store.state.transcript,
-            activeText: store.state.activeTranscript
-        )
-    }
-
     private var controlPresentation: MeetingControlPresentation {
         MeetingControlPresentation(
             phase: store.state.phase,
@@ -63,14 +56,16 @@ extension HoverMeetingCardView {
                     .lineLimit(1)
             }
 
-            if transcriptFlow.isEmpty {
+            if store.state.subtitleFlow.isEmpty
+                && store.state.activeTranscript.isEmpty {
                 Text(controlPresentation.transcriptPlaceholder)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(VisualTokens.secondaryText)
                     .frame(maxWidth: .infinity, minHeight: 92, alignment: .center)
             } else {
                 RollingCaptionView(
-                    text: transcriptFlow,
+                    pages: store.state.subtitleFlow.pages,
+                    liveText: store.state.activeTranscript,
                     font: .system(size: 12, weight: .regular),
                     viewportHeight: 92,
                     topPadding: 0

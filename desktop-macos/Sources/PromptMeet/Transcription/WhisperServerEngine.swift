@@ -12,7 +12,7 @@ enum WhisperServerRequest {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         var body = Data()
         body.appendMultipartField(name: "language", value: language, boundary: boundary)
-        body.appendMultipartField(name: "response_format", value: "text", boundary: boundary)
+        body.appendMultipartField(name: "response_format", value: "verbose_json", boundary: boundary)
         body.appendMultipartFile(
             name: "file",
             filename: "segment.wav",
@@ -27,20 +27,38 @@ enum WhisperServerRequest {
 }
 
 enum WhisperServerResponse {
-    static func transcript(data: Data, statusCode: Int) throws -> String {
+    static func transcription(data: Data, statusCode: Int) throws -> RawWhisperTranscription {
         guard (200..<300).contains(statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "HTTP \(statusCode)"
             throw LocalTranscriptionError.processFailed(message)
         }
-        return (String(data: data, encoding: .utf8) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let text = object["text"] as? String
+        else {
+            let message = String(data: data, encoding: .utf8) ?? "invalid verbose_json"
+            throw LocalTranscriptionError.processFailed(message)
+        }
+        let detectedLanguage = object["detected_language"] as? String
+        var probabilities: [String: Double] = [:]
+        if let rawProbabilities = object["language_probabilities"] as? [String: Any] {
+            for (key, value) in rawProbabilities {
+                if let number = value as? NSNumber {
+                    probabilities[key] = number.doubleValue
+                }
+            }
+        }
+        return RawWhisperTranscription(
+            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            detectedLanguage: detectedLanguage,
+            probabilities: probabilities
+        )
     }
 }
 
 actor WhisperServerEngine: LocalTranscriptionEngine {
     private let executableURL: URL
     private let modelURL: URL
-    private let language: String
     private let port: Int
     private let session: URLSession
     private var process: Process?
@@ -48,13 +66,11 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
     init(
         executableURL: URL,
         modelURL: URL,
-        language: String,
         port: Int = Int.random(in: 28_000...48_000),
         session: URLSession? = nil
     ) {
         self.executableURL = executableURL
         self.modelURL = modelURL
-        self.language = language
         self.port = port
         if let session {
             self.session = session
@@ -68,12 +84,11 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
 
     nonisolated static func launchArguments(
         modelPath: String,
-        language: String,
         port: Int
     ) -> [String] {
         [
             "-m", modelPath,
-            "-l", language,
+            "-l", "auto",
             "-nt",
             "-nc",
             "-sns",
@@ -96,7 +111,6 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
         process.executableURL = executableURL
         process.arguments = Self.launchArguments(
             modelPath: modelURL.path,
-            language: language,
             port: port
         )
         process.standardOutput = FileHandle.nullDevice
@@ -119,7 +133,10 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
         throw LocalTranscriptionError.serverStartFailed
     }
 
-    func transcribe(_ segment: PCMTranscriptionSegment) async throws -> String {
+    func transcribe(
+        _ segment: PCMTranscriptionSegment,
+        language: String
+    ) async throws -> RawWhisperTranscription {
         guard process?.isRunning == true else {
             throw LocalTranscriptionError.serverStartFailed
         }
@@ -132,7 +149,7 @@ actor WhisperServerEngine: LocalTranscriptionEngine {
         guard let response = response as? HTTPURLResponse else {
             throw BackendClientError.invalidResponse
         }
-        return try WhisperServerResponse.transcript(data: data, statusCode: response.statusCode)
+        return try WhisperServerResponse.transcription(data: data, statusCode: response.statusCode)
     }
 
     func shutdown() async {

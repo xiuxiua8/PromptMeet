@@ -61,6 +61,7 @@ struct MeetingState: Equatable {
     var selectedArchivedMeetingID: String?
     var timeline: [MeetingTimelineEvent] = []
     var conversationTurns: [ConversationTurn] = []
+    var subtitleFlow = SubtitleStreamFlow()
 
     var islandCaption: IslandCaption {
         if !activeTranscript.isEmpty {

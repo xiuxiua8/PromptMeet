@@ -245,6 +245,7 @@ private struct FixedTranscriptionEngineFactory: LocalTranscriptionEngineBuilding
 
 private actor RecordingTranscriptionEngine: LocalTranscriptionEngine {
   private(set) var segments: [PCMTranscriptionSegment] = []
+  private(set) var requestedLanguages: [String] = []
   private let response: String
   private let delay: Duration?
 
@@ -255,12 +256,16 @@ private actor RecordingTranscriptionEngine: LocalTranscriptionEngine {
 
   var submissionCount: Int { segments.count }
 
-  func transcribe(_ segment: PCMTranscriptionSegment) async throws -> String {
+  func transcribe(
+    _ segment: PCMTranscriptionSegment,
+    language: String
+  ) async throws -> RawWhisperTranscription {
     segments.append(segment)
+    requestedLanguages.append(language)
     if let delay {
       try? await Task.sleep(for: delay)
     }
-    return response
+    return RawWhisperTranscription.plain(response)
   }
 }
 

@@ -201,48 +201,60 @@ final class IslandGeometryTests: XCTestCase {
         XCTAssertEqual(state.activeCaption, "我们先确认今天的讨论目标。")
     }
 
-    func testTickerStaysLeadingWhenContentFits() {
+    func testSubtitleFlowAdvancesAtAdaptiveSpeed() {
+        var flow = SubtitleStreamFlow()
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "字幕内容",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
+        )
+
+        flow.tick(deltaTime: 1)
+
         XCTAssertEqual(
-            SubtitleTickerMetrics.offset(
-                elapsed: 20,
-                contentWidth: 180,
-                viewportWidth: 220
-            ),
-            0
+            flow.cursor,
+            SubtitleFlowMetrics.speed(pendingCharacters: 4),
+            accuracy: 0.001
         )
     }
 
-    func testTickerWaitsBeforeMovingOverflowingCaption() {
-        XCTAssertEqual(
-            SubtitleTickerMetrics.offset(
-                elapsed: SubtitleTickerMetrics.leadingPause / 2,
-                contentWidth: 420,
-                viewportWidth: 220
-            ),
-            0
-        )
+    func testSubtitleFlowSpeedStaysWithinReadableBounds() {
+        let quiet = SubtitleFlowMetrics.speed(pendingCharacters: 0)
+        let burst = SubtitleFlowMetrics.speed(pendingCharacters: 2_000)
+
+        XCTAssertEqual(quiet, SubtitleFlowMetrics.baseSpeed, accuracy: 0.001)
+        XCTAssertEqual(burst, SubtitleFlowMetrics.maximumSpeed, accuracy: 0.001)
+        XCTAssertLessThan(SubtitleFlowMetrics.baseSpeed, SubtitleFlowMetrics.maximumSpeed)
     }
 
-    func testTickerLoopsWithinOneTravelDistance() {
-        let offset = SubtitleTickerMetrics.offset(
-            elapsed: 5,
-            contentWidth: 420,
-            viewportWidth: 220
+    func testSubtitleFlowVisibleWindowShowsOnlyPagesUnderViewport() {
+        var flow = SubtitleStreamFlow()
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "first",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
+        )
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "second",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
         )
 
-        XCTAssertLessThan(offset, 0)
-        XCTAssertGreaterThan(offset, -(420 + SubtitleTickerMetrics.loopGap))
-    }
+        let visible = flow.visiblePages(viewportWidth: 220)
 
-    func testCaptionChangeRestartsTickerWithoutDiscardingMeasuredWidth() {
-        let start = Date(timeIntervalSince1970: 100)
-        let restart = Date(timeIntervalSince1970: 200)
-        var state = SubtitleTickerState(cycleStartedAt: start)
-        state.updateContentWidth(640)
-
-        state.restartCycle(at: restart)
-
-        XCTAssertEqual(state.contentWidth, 640)
-        XCTAssertEqual(state.cycleStartedAt, restart)
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertEqual(visible.first?.page.text, "first")
     }
 }
