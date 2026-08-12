@@ -156,7 +156,12 @@ final class MeetingStoreTests: XCTestCase {
         let store = MeetingStore(
             backend: backend,
             capture: NativeAudioCaptureSpy(),
-            companion: companion
+            companion: companion,
+            transcriptOutbox: TranscriptOutboxStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("promptmeet-reload-test-\(UUID().uuidString)")
+                    .appendingPathComponent("transcript-outbox.json")
+            )
         )
         await store.startMeetingNow()
 

@@ -237,8 +237,17 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
     }
 
     private static func defaultFileURL() -> URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PromptMeet", isDirectory: true)
-            .appendingPathComponent("transcript-outbox.json")
+        let base: URL
+        if Bundle.main.bundleIdentifier == "com.apple.dt.xctest.tool" {
+            base = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "promptmeet-tests-\(ProcessInfo.processInfo.processIdentifier)",
+                    isDirectory: true
+                )
+        } else {
+            base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("PromptMeet", isDirectory: true)
+        }
+        return base.appendingPathComponent("transcript-outbox.json")
     }
 }

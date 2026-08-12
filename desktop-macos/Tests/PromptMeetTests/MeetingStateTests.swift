@@ -312,6 +312,8 @@ final class MeetingStateTests: XCTestCase {
     state.reduce(.questionsGenerated([]))
     state.reduce(.questionsGenerated(["只有一个问题"]))
     state.reduce(.questionsGenerated(["重复问题", "重复问题", "第三个问题"]))
+    state.reduce(.questionsGenerated(["问题一", "问题二", "问题三", "问题四"]))
+    state.reduce(.questionsGenerated(["  重复 ", "重复"]))
 
     XCTAssertEqual(state.generatedQuestions, previous)
   }
