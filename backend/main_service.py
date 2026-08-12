@@ -1200,8 +1200,20 @@ async def generate_questions(
                     question_generation_tasks.pop(session_id, None)
             if latest_question_generations.get(session_id) != generation:
                 return {"success": True, "superseded": True}
-            accepted = 1 <= len(questions) <= 3
-            payload = {"questions": questions if accepted else []}
+            normalized = []
+            seen = set()
+            for item in questions:
+                if not isinstance(item, dict):
+                    continue
+                question = item.get("question")
+                if not isinstance(question, str):
+                    continue
+                question = question.strip()
+                if question and question not in seen:
+                    seen.add(question)
+                    normalized.append(item)
+            accepted = 2 <= len(normalized) <= 3
+            payload = {"questions": normalized if accepted else []}
             if request is not None:
                 payload.update(
                     {
@@ -1223,7 +1235,7 @@ async def generate_questions(
                     session_id,
                     generation_id,
                     context_revision,
-                    [item["question"] for item in questions],
+                    [item["question"] for item in normalized],
                 )
                 await broadcast_meeting_event(session_id, event)
             await on_questions_generated(session_id, payload)
