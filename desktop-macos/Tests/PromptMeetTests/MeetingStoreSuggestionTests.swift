@@ -96,7 +96,7 @@ extension MeetingStoreTests {
         XCTAssertEqual(store.state.suggestionRefresh.phase, .ready)
     }
 
-    func testEachFinalTranscriptAutomaticallyRefreshesSuggestedQuestions() async {
+    func testEachFinalTranscriptAutomaticallyRefreshesSuggestedQuestions() async throws {
         let backend = BackendClientSpy()
         let capture = NativeAudioCaptureSpy()
         let store = MeetingStore(
@@ -108,17 +108,12 @@ extension MeetingStoreTests {
         await store.startMeetingNow()
 
         capture.emit(LocalTranscript(source: .microphone, text: "第一条"))
-        try? await Task.sleep(for: .milliseconds(40))
+        try await waitUntil { backend.questionRequests.count == 1 }
         capture.emit(LocalTranscript(source: .microphone, text: "第二条"))
-        try? await Task.sleep(for: .milliseconds(40))
-
-        XCTAssertEqual(
-            backend.questionRequests.count,
-            2
-        )
+        try await waitUntil { backend.questionRequests.count == 2 }
     }
 
-    func testSuggestedQuestionsRefreshAfterEveryNewTranscript() async {
+    func testSuggestedQuestionsRefreshAfterEveryNewTranscript() async throws {
         let backend = BackendClientSpy()
         let capture = NativeAudioCaptureSpy()
         let store = MeetingStore(
@@ -130,14 +125,9 @@ extension MeetingStoreTests {
         await store.startMeetingNow()
 
         capture.emit(LocalTranscript(source: .microphone, text: "第一条"))
-        try? await Task.sleep(for: .milliseconds(40))
+        try await waitUntil { backend.questionRequests.count == 1 }
         capture.emit(LocalTranscript(source: .microphone, text: "第二条"))
-        try? await Task.sleep(for: .milliseconds(40))
-
-        XCTAssertEqual(
-            backend.questionRequests.count,
-            2
-        )
+        try await waitUntil { backend.questionRequests.count == 2 }
     }
 
     func testSuggestedQuestionRefreshCoalescesTranscriptsArrivingDuringGeneration() async {
