@@ -95,7 +95,9 @@ def test_selector_obeys_budget_keeps_relevant_visual_evidence_and_stable_order()
     ]
 
 
-def test_compression_finds_bounded_prefix_without_character_by_character_rescans() -> None:
+def test_compression_finds_bounded_prefix_without_character_by_character_rescans() -> (
+    None
+):
     calls = 0
 
     def estimator(value: str) -> int:

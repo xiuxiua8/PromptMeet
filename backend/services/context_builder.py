@@ -224,14 +224,20 @@ class MeetingContextBuilder:
             rendered = self.render_event(event)
             prefix = f"[M{event.sequence}] "
             candidate_lines = [*evidence_lines, f"{prefix}{rendered}"]
-            if self.token_estimator("\n".join(candidate_lines)) <= budget.evidence_tokens:
+            if (
+                self.token_estimator("\n".join(candidate_lines))
+                <= budget.evidence_tokens
+            ):
                 bounded = rendered
             else:
                 low = 0
                 high = len(rendered)
                 while low < high:
                     midpoint = (low + high + 1) // 2
-                    candidate_lines = [*evidence_lines, f"{prefix}{rendered[:midpoint]}"]
+                    candidate_lines = [
+                        *evidence_lines,
+                        f"{prefix}{rendered[:midpoint]}",
+                    ]
                     if (
                         self.token_estimator("\n".join(candidate_lines))
                         <= budget.evidence_tokens
