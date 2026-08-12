@@ -601,6 +601,17 @@ def test_unsuccessful_suggestion_generation_never_overwrites_last_good_set(
     )
     assert empty.status_code == 200
     assert empty.json()["accepted"] is False
+    agent.questions = [
+        {"question": "谁负责上线？"},
+        {"question": " 谁负责上线？ "},
+        {"question": "周五谁值班？"},
+    ]
+    duplicate = client.post(
+        f"/api/sessions/{meeting_id}/generate-questions",
+        json={"generation_id": "generation-duplicate", "context_revision": 5},
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["accepted"] is False
 
     record = client.get(f"/api/meetings/{meeting_id}").json()
     suggestion_events = [
@@ -613,13 +624,13 @@ def test_unsuccessful_suggestion_generation_never_overwrites_last_good_set(
     ]
     assert generated_payloads[-2] == {
         "questions": [],
-        "generation_id": "generation-single",
-        "context_revision": 3,
+        "generation_id": "generation-empty",
+        "context_revision": 4,
     }
     assert generated_payloads[-1] == {
         "questions": [],
-        "generation_id": "generation-empty",
-        "context_revision": 4,
+        "generation_id": "generation-duplicate",
+        "context_revision": 5,
     }
 
 

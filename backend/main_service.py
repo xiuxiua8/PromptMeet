@@ -1202,6 +1202,7 @@ async def generate_questions(
                 return {"success": True, "superseded": True}
             normalized = []
             seen = set()
+            duplicated = False
             for item in questions:
                 if not isinstance(item, dict):
                     continue
@@ -1209,10 +1210,14 @@ async def generate_questions(
                 if not isinstance(question, str):
                     continue
                 question = question.strip()
-                if question and question not in seen:
+                if not question:
+                    continue
+                if question in seen:
+                    duplicated = True
+                else:
                     seen.add(question)
                     normalized.append(item)
-            accepted = 2 <= len(normalized) <= 3
+            accepted = not duplicated and 2 <= len(normalized) <= 3
             payload = {"questions": normalized if accepted else []}
             if request is not None:
                 payload.update(
