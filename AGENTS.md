@@ -57,6 +57,8 @@ swift test
 swift build -c release
 ```
 
+`MeetingStore` unit tests must inject the in-memory `TranscriptOutboxSpy` from `Tests/PromptMeetTests/TranscriptOutboxSpy.swift` instead of the default on-disk `TranscriptOutboxStore`: tests that hit the real outbox pollute the shared app-support directory and each other's runs (recovery loops then see leftover pending meetings).
+
 ### macOS app bundle
 
 ```bash
