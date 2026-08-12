@@ -76,7 +76,19 @@ actor TranscriptOutboxStore: TranscriptOutboxStoring {
     private var loaded = false
 
     init(fileURL: URL? = nil) {
-        self.fileURL = fileURL ?? Self.defaultFileURL()
+        if let fileURL {
+            self.fileURL = fileURL
+        } else if ProcessInfo.processInfo.environment["SWIFT_TESTING_ENABLED"] != nil {
+            // Test instances each get an isolated temporary file. The production
+            // default path is shared app data, so without this an offline-ended
+            // meeting left by one test would be re-finalized by another test and
+            // inflate its backend call counts (and pollute real app data).
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PromptMeet-TestOutbox", isDirectory: true)
+            self.fileURL = directory.appendingPathComponent(UUID().uuidString + ".json")
+        } else {
+            self.fileURL = Self.defaultFileURL()
+        }
     }
 
     func enqueue(_ transcript: LocalTranscript, meetingID: String) async throws {
