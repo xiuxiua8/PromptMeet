@@ -199,6 +199,8 @@ question_generation_tasks: dict[str, asyncio.Task] = {}
 latest_question_generations: dict[str, tuple[str, int]] = {}
 summary_generation_locks: dict[str, asyncio.Lock] = {}
 meeting_title_tasks: dict[str, asyncio.Task] = {}
+meeting_translation_tasks: dict[tuple[str, str], asyncio.Task] = {}
+meeting_translation_retry_keys: set[tuple[str, str]] = set()
 
 
 def finish_question_task(task: asyncio.Task) -> None:
@@ -469,16 +471,67 @@ async def process_native_transcript(session_id: str, transcript: dict) -> bool:
     if inserted is None:
         return False
     target = transcript.get("translation_target")
-    if inserted and DESKTOP_MODE and desktop_agent_service is not None and target:
-        asyncio.create_task(
-            translate_native_transcript(
-                session_id,
-                transcript["id"],
-                transcript["text"],
-                target,
-            )
+    if DESKTOP_MODE and desktop_agent_service is not None and target:
+        schedule_native_transcript_translation(
+            session_id,
+            transcript,
+            target,
+            is_new=inserted,
         )
     return True
+
+
+def schedule_native_transcript_translation(
+    session_id: str,
+    transcript: dict,
+    target_language: str,
+    *,
+    is_new: bool,
+) -> None:
+    transcript_id = str(transcript.get("id") or "")
+    record = meeting_repository.get(session_id)
+    if record is None:
+        return
+    event = next(
+        (
+            item
+            for item in record.events
+            if item.kind == EventKind.TRANSCRIPT
+            and isinstance(item.payload, TranscriptPayload)
+            and item.payload.segment_id == transcript_id
+        ),
+        None,
+    )
+    if (
+        event is None
+        or event.payload.translated_text
+        or event.payload.text != str(transcript.get("text") or "").strip()
+    ):
+        return
+    key = (session_id, transcript_id)
+    active = meeting_translation_tasks.get(key)
+    if active is not None and not active.done():
+        return
+    if not is_new:
+        if key in meeting_translation_retry_keys:
+            return
+        meeting_translation_retry_keys.add(key)
+    task = asyncio.create_task(
+        translate_native_transcript(
+            session_id,
+            transcript_id,
+            event.payload.text,
+            target_language,
+        ),
+        name=f"transcript-translation-{session_id}-{transcript_id}",
+    )
+    meeting_translation_tasks[key] = task
+
+    def finish_translation(completed: asyncio.Task) -> None:
+        if meeting_translation_tasks.get(key) is completed:
+            meeting_translation_tasks.pop(key, None)
+
+    task.add_done_callback(finish_translation)
 
 
 async def translate_native_transcript(
@@ -607,9 +660,7 @@ async def get_available_windows():
 async def create_session(request: SessionCreateRequest | None = None):
     """创建新的会议会话"""
     session_id = (
-        request.session_id
-        if request and request.session_id
-        else str(uuid.uuid4())
+        request.session_id if request and request.session_id else str(uuid.uuid4())
     )
     existing_record = meeting_repository.get(session_id)
     if existing_record is not None:
@@ -676,9 +727,7 @@ async def get_session(session_id: str):
 
 
 @app.post("/api/sessions/{session_id}/rehydrate")
-async def rehydrate_session(
-    session_id: str, request: SessionRehydrateRequest
-):
+async def rehydrate_session(session_id: str, request: SessionRehydrateRequest):
     record = meeting_repository.get(session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="会议持久记录不存在")
@@ -887,9 +936,7 @@ def accumulated_summary_progress(
         for event_id in payload.source_event_ids:
             event = sources.get(event_id)
             if event is not None:
-                progress[event_id] = len(
-                    DesktopAgentService.summary_event_text(event)
-                )
+                progress[event_id] = len(DesktopAgentService.summary_event_text(event))
         for event_id, offset in payload.source_progress.items():
             event = sources.get(event_id)
             if event is None:
@@ -953,8 +1000,7 @@ async def generate_desktop_summary(
     previous_summaries = [
         event
         for event in record.events
-        if event.kind == EventKind.SUMMARY
-        and isinstance(event.payload, SummaryPayload)
+        if event.kind == EventKind.SUMMARY and isinstance(event.payload, SummaryPayload)
     ]
     source_by_id = {event.event_id: event for event in source_events}
     source_progress = accumulated_summary_progress(previous_summaries, source_events)
@@ -989,8 +1035,7 @@ async def generate_desktop_summary(
     latest_summaries = [
         event
         for event in latest_record.events
-        if event.kind == EventKind.SUMMARY
-        and isinstance(event.payload, SummaryPayload)
+        if event.kind == EventKind.SUMMARY and isinstance(event.payload, SummaryPayload)
     ]
     latest_progress = accumulated_summary_progress(latest_summaries, source_events)
     advanced_progress: dict[str, int] = {}
@@ -1730,9 +1775,7 @@ async def export_session(session_id: str):
 # ============= IPC 回调处理 =============
 
 
-async def on_transcript_received(
-    session_id: str, transcript_data: dict
-) -> bool | None:
+async def on_transcript_received(session_id: str, transcript_data: dict) -> bool | None:
     """收到转录结果的回调"""
     try:
         # 创建转录片段对象

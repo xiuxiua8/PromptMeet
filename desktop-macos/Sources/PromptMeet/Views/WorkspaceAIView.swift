@@ -210,11 +210,9 @@ extension WorkspaceView {
 
     var suggestionsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Image(systemName: "questionmark.bubble")
-                Text("猜你想问")
-                Spacer()
-                if !isViewingHistory {
+            if !isViewingHistory {
+                HStack {
+                    Spacer()
                     Button(action: store.requestQuestions) {
                         Image(systemName: "arrow.clockwise")
                             .frame(width: 24, height: 24)
@@ -223,10 +221,10 @@ extension WorkspaceView {
                     .disabled(!store.hasMeetingContext || store.state.suggestionRefresh.phase == .loading)
                     .help("刷新问题")
                 }
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(VisualTokens.secondaryText)
+                .padding(.bottom, 2)
             }
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(VisualTokens.sky)
-            .padding(.bottom, 8)
 
             if !visibleSuggestionQuestions.isEmpty {
                 ForEach(visibleSuggestionQuestions, id: \.self) { question in

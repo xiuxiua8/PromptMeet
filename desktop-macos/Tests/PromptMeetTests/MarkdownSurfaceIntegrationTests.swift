@@ -24,6 +24,18 @@ final class MarkdownSurfaceIntegrationTests: XCTestCase {
         XCTAssertTrue(renderer.contains(".fixedSize(horizontal: false, vertical: true)"))
     }
 
+    func testSuggestionSurfaceOmitsCompetingHeadingAndKeepsRefreshAffordance() throws {
+        let workspace = try source("Sources/PromptMeet/Views/WorkspaceAIView.swift")
+        let suggestions = try XCTUnwrap(
+            workspace.components(separatedBy: "var suggestionsSection: some View").last?
+                .components(separatedBy: "var visibleSuggestionQuestions").first
+        )
+
+        XCTAssertFalse(suggestions.contains("Text(\"猜你想问\")"))
+        XCTAssertTrue(suggestions.contains("Button(action: store.requestQuestions)"))
+        XCTAssertTrue(suggestions.contains("visibleSuggestionQuestions"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

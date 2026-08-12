@@ -282,9 +282,7 @@ def test_summary_chunks_oversized_events_with_monotonic_exact_progress(
     offsets = []
     completed = set()
     for _ in range(10):
-        result = asyncio.run(
-            service.summarize_meeting(record, record.events, progress)
-        )
+        result = asyncio.run(service.summarize_meeting(record, record.events, progress))
         assert result.source_progress
         for event_id, offset in result.source_progress.items():
             assert offset > progress.get(event_id, 0)
@@ -710,6 +708,36 @@ class ImageFallbackClient:
         type(self).payloads.append(kwargs["json"])
         if len(type(self).payloads) == 1:
             return ImageRejectingStreamResponse(endpoint)
+        return FakeAgentStreamResponse(
+            {"role": "assistant", "content": "已基于文字上下文回答。"}
+        )
+
+
+class SSEImageRejectingStreamResponse(FakeAgentStreamResponse):
+    def __init__(self):
+        super().__init__({})
+
+    async def aiter_lines(self):
+        yield "data: " + json.dumps(
+            {
+                "type": "response.failed",
+                "response": {
+                    "error": {
+                        "message": (
+                            "secret-runtime-key image_url input is not supported"
+                        )
+                    }
+                },
+            }
+        )
+
+
+class SSEImageFallbackClient(ImageFallbackClient):
+    def stream(self, method: str, endpoint: str, **kwargs):
+        type(self).endpoints.append(endpoint)
+        type(self).payloads.append(kwargs["json"])
+        if len(type(self).payloads) == 1:
+            return SSEImageRejectingStreamResponse()
         return FakeAgentStreamResponse(
             {"role": "assistant", "content": "已基于文字上下文回答。"}
         )
@@ -1141,6 +1169,74 @@ def test_openai_compatible_image_rejection_retries_text_only_on_same_route(
     assert result.model == "proxy-vision-model"
     assert result.answer == "已基于文字上下文回答。"
     assert result.image_rejection == "HTTP 400: image input rejected"
+    assert "secret-runtime-key" not in result.image_rejection
+
+
+def test_sse_image_rejection_retries_text_only_with_truthful_metadata(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_path = tmp_path / "assets/meeting-sse/screen.png"
+    asset_path.parent.mkdir(parents=True)
+    asset_path.write_bytes(b"placeholder-image-bytes")
+    record = MeetingRecord(
+        meeting_id="meeting-sse",
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        events=[
+            MeetingEvent(
+                event_id="screen-event",
+                meeting_id="meeting-sse",
+                sequence=1,
+                occurred_at=datetime(2026, 7, 28, 10, tzinfo=UTC),
+                kind=EventKind.SCREENSHOT,
+                provenance=EventProvenance(source="native_screenshot"),
+                payload=ScreenshotPayload(
+                    asset_id="screen",
+                    relative_path="assets/meeting-sse/screen.png",
+                    mime_type="image/png",
+                    sha256="placeholder",
+                ),
+            )
+        ],
+    )
+    SSEImageFallbackClient.endpoints = []
+    SSEImageFallbackClient.payloads = []
+    monkeypatch.setattr(
+        "services.desktop_agent_service.httpx.AsyncClient",
+        lambda **kwargs: SSEImageFallbackClient(),
+    )
+    service = DesktopAgentService(
+        environment={
+            "PROMPTMEET_AI_PROVIDER": "openai",
+            "OPENAI_API_KEY": "placeholder-key",
+            "OPENAI_API_BASE": "http://localhost:52251/v1/",
+            "OPENAI_ANSWER_MODEL": "proxy-vision-model",
+            "PROMPTMEET_ANSWER_SUPPORTS_VISION": "1",
+            "PROMPTMEET_WEB_SEARCH_ENABLED": "0",
+        },
+        assets_root=tmp_path,
+    )
+
+    async def collect(message: dict) -> None:
+        return None
+
+    result = asyncio.run(service.answer_meeting(record, "图上是什么？", collect))
+
+    expected_endpoint = "http://localhost:52251/v1/chat/completions"
+    assert SSEImageFallbackClient.endpoints == [expected_endpoint, expected_endpoint]
+    assert [payload["model"] for payload in SSEImageFallbackClient.payloads] == [
+        "proxy-vision-model",
+        "proxy-vision-model",
+    ]
+    first_user_content = SSEImageFallbackClient.payloads[0]["messages"][-1]["content"]
+    assert any(part.get("type") == "image_url" for part in first_user_content)
+    second_developer_content = SSEImageFallbackClient.payloads[1]["messages"][1][
+        "content"
+    ]
+    assert "模型没有看到截图像素" in second_developer_content
+    assert result.answer == "已基于文字上下文回答。"
+    assert result.degraded_vision is True
+    assert result.image_rejection == "SSE response.failed: image input rejected"
     assert "secret-runtime-key" not in result.image_rejection
 
 

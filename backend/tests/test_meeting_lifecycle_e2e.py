@@ -305,6 +305,174 @@ def test_successful_live_translation_is_persisted_before_broadcast(
     }
 
 
+def test_failed_live_translation_retries_once_on_safe_resubmission(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    main_service = importlib.import_module("main_service")
+    repository = MeetingRepository(tmp_path)
+    ingestion = MeetingIngestionService(repository)
+    meeting_id = "translation-retry-meeting"
+    segment_id = "5E2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    ingestion.start(meeting_id, datetime(2026, 7, 25, tzinfo=UTC))
+    attempts = 0
+    retry_started = asyncio.Event()
+    release_retry = asyncio.Event()
+
+    class FlakyTranslationAgent:
+        async def translate(self, text, target_language):
+            nonlocal attempts
+            attempts += 1
+            assert (text, target_language) == ("Hello again", "zh")
+            if attempts == 1:
+                raise RuntimeError("transient translation failure")
+            retry_started.set()
+            await release_retry.wait()
+            return "再次问好"
+
+    async def ignore_broadcast(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main_service, "DESKTOP_MODE", True)
+    monkeypatch.setattr(main_service, "meeting_repository", repository)
+    monkeypatch.setattr(main_service, "meeting_ingestion", ingestion)
+    monkeypatch.setattr(
+        main_service,
+        "desktop_agent_service",
+        FlakyTranslationAgent(),
+    )
+    monkeypatch.setattr(
+        main_service.websocket_manager,
+        "broadcast_to_session",
+        ignore_broadcast,
+    )
+    monkeypatch.setattr(main_service, "persist_session", ignore_broadcast)
+
+    transcript = {
+        "id": segment_id,
+        "text": "Hello again",
+        "speaker": "会议",
+        "source": "system",
+        "timestamp": "2026-07-25T10:00:00+00:00",
+        "translation_target": "zh",
+    }
+
+    async def run_scenario() -> None:
+        assert await main_service.process_native_transcript(meeting_id, transcript)
+        for _ in range(20):
+            if attempts == 1:
+                break
+            await asyncio.sleep(0)
+        assert attempts == 1
+
+        assert await main_service.process_native_transcript(meeting_id, transcript)
+        for _ in range(20):
+            if attempts == 2:
+                break
+            await asyncio.sleep(0)
+        assert attempts == 2
+        await retry_started.wait()
+
+        await asyncio.gather(
+            main_service.process_native_transcript(meeting_id, transcript),
+            main_service.process_native_transcript(meeting_id, transcript),
+        )
+        await asyncio.sleep(0)
+        assert attempts == 2
+
+        release_retry.set()
+        for _ in range(20):
+            record = repository.get(meeting_id)
+            event = next(
+                item for item in record.events if item.kind == EventKind.TRANSCRIPT
+            )
+            if event.payload.translated_text == "再次问好":
+                break
+            await asyncio.sleep(0)
+
+        assert await main_service.process_native_transcript(meeting_id, transcript)
+        await asyncio.sleep(0)
+        assert attempts == 2
+
+    asyncio.run(run_scenario())
+
+    record = repository.get(meeting_id)
+    transcripts = [
+        event for event in record.events if event.kind == EventKind.TRANSCRIPT
+    ]
+    assert len(transcripts) == 1
+    assert transcripts[0].payload.translated_text == "再次问好"
+
+
+def test_live_translation_does_not_retry_without_bound(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    main_service = importlib.import_module("main_service")
+    repository = MeetingRepository(tmp_path)
+    ingestion = MeetingIngestionService(repository)
+    meeting_id = "translation-bounded-retry"
+    segment_id = "6E2CB506-925E-4A6E-BB68-E5006AB09BDF"
+    ingestion.start(meeting_id, datetime(2026, 7, 25, tzinfo=UTC))
+    attempts = 0
+
+    class FailingTranslationAgent:
+        async def translate(self, text, target_language):
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("translation remains unavailable")
+
+    async def ignore_broadcast(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main_service, "DESKTOP_MODE", True)
+    monkeypatch.setattr(main_service, "meeting_repository", repository)
+    monkeypatch.setattr(main_service, "meeting_ingestion", ingestion)
+    monkeypatch.setattr(
+        main_service,
+        "desktop_agent_service",
+        FailingTranslationAgent(),
+    )
+    monkeypatch.setattr(
+        main_service.websocket_manager,
+        "broadcast_to_session",
+        ignore_broadcast,
+    )
+    monkeypatch.setattr(main_service, "persist_session", ignore_broadcast)
+
+    transcript = {
+        "id": segment_id,
+        "text": "Still waiting",
+        "speaker": "会议",
+        "source": "system",
+        "timestamp": "2026-07-25T10:00:00+00:00",
+        "translation_target": "zh",
+    }
+
+    async def submit_and_finish_attempt() -> None:
+        assert await main_service.process_native_transcript(meeting_id, transcript)
+        for _ in range(20):
+            if not main_service.meeting_translation_tasks:
+                return
+            await asyncio.sleep(0)
+
+    async def run_scenario() -> None:
+        await submit_and_finish_attempt()
+        await submit_and_finish_attempt()
+        await submit_and_finish_attempt()
+        await submit_and_finish_attempt()
+
+    asyncio.run(run_scenario())
+
+    assert attempts == 2
+    record = repository.get(meeting_id)
+    transcripts = [
+        event for event in record.events if event.kind == EventKind.TRANSCRIPT
+    ]
+    assert len(transcripts) == 1
+    assert transcripts[0].payload.translated_text is None
+
+
 def test_rapid_questions_keep_request_scoped_snapshots_and_answers(
     monkeypatch, tmp_path
 ) -> None:
@@ -454,9 +622,7 @@ def test_summary_milestones_store_revision_and_source_coverage_without_double_fi
     class SummaryAgent(FakeMeetingAgent):
         calls = []
 
-        async def summarize_meeting(
-            self, record, source_events, source_progress=None
-        ):
+        async def summarize_meeting(self, record, source_events, source_progress=None):
             self.calls.append(list(source_events))
             revision = 1 + len(
                 [event for event in record.events if event.kind == EventKind.SUMMARY]
@@ -566,9 +732,7 @@ def test_summary_partial_progress_persists_and_advances_without_no_action(
     configure(main_service, tmp_path / "meeting-data", monkeypatch)
 
     class ChunkSummaryAgent(FakeMeetingAgent):
-        async def summarize_meeting(
-            self, record, source_events, source_progress=None
-        ):
+        async def summarize_meeting(self, record, source_events, source_progress=None):
             evidence = next(
                 event for event in source_events if event.kind == EventKind.TRANSCRIPT
             )
@@ -681,16 +845,21 @@ def test_completed_session_rebind_and_finalization_are_idempotent(
     client = TestClient(main_service.app)
     meeting_id = "DE2CB506-925E-4A6E-BB68-E5006AB09BDF"
     started_at = "2026-07-25T10:00:00+00:00"
-    assert client.post(
-        "/api/sessions",
-        json={"session_id": meeting_id, "started_at": started_at},
-    ).status_code == 200
-    assert client.post(
-        f"/api/sessions/{meeting_id}/start-native-recording"
-    ).status_code == 200
-    assert client.post(
-        f"/api/sessions/{meeting_id}/stop-native-recording"
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/sessions",
+            json={"session_id": meeting_id, "started_at": started_at},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(f"/api/sessions/{meeting_id}/start-native-recording").status_code
+        == 200
+    )
+    assert (
+        client.post(f"/api/sessions/{meeting_id}/stop-native-recording").status_code
+        == 200
+    )
     completed = client.get(f"/api/meetings/{meeting_id}").json()
     main_service.session_manager.remove_session(meeting_id)
 
@@ -698,9 +867,7 @@ def test_completed_session_rebind_and_finalization_are_idempotent(
         "/api/sessions",
         json={"session_id": meeting_id, "started_at": started_at},
     )
-    restarted = client.post(
-        f"/api/sessions/{meeting_id}/start-native-recording"
-    )
+    restarted = client.post(f"/api/sessions/{meeting_id}/start-native-recording")
     stored = client.post(f"/api/sessions/{meeting_id}/store-session")
     record = client.get(f"/api/meetings/{meeting_id}").json()
     rebound_session = client.get(f"/api/sessions/{meeting_id}").json()["session"]
@@ -720,13 +887,14 @@ def test_incomplete_session_cannot_be_rebound_as_completed_finalization(
     client = TestClient(main_service.app)
     meeting_id = "EE2CB506-925E-4A6E-BB68-E5006AB09BDF"
     started_at = "2026-07-25T10:00:00+00:00"
-    assert client.post(
-        "/api/sessions",
-        json={"session_id": meeting_id, "started_at": started_at},
-    ).status_code == 200
-    assert client.post(
-        f"/api/sessions/{meeting_id}/mark-incomplete"
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/sessions",
+            json={"session_id": meeting_id, "started_at": started_at},
+        ).status_code
+        == 200
+    )
+    assert client.post(f"/api/sessions/{meeting_id}/mark-incomplete").status_code == 200
     main_service.session_manager.remove_session(meeting_id)
 
     rebound = client.post(
@@ -750,9 +918,7 @@ def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
     class ValidatingSummaryAgent(FakeMeetingAgent):
         call_count = 0
 
-        async def summarize_meeting(
-            self, record, source_events, source_progress=None
-        ):
+        async def summarize_meeting(self, record, source_events, source_progress=None):
             self.call_count += 1
             evidence = [
                 event for event in source_events if event.kind != EventKind.SUMMARY
@@ -795,12 +961,16 @@ def test_invalid_summary_tasks_do_not_advance_persisted_coverage(
     valid = client.post(f"/api/sessions/{meeting_id}/generate-summary")
 
     assert invalid.json()["status"] == "failed"
-    assert not [event for event in after_invalid["events"] if event["kind"] == "summary"]
+    assert not [
+        event for event in after_invalid["events"] if event["kind"] == "summary"
+    ]
     assert valid.json()["status"] == "generated"
     assert valid.json()["event"]["payload"]["source_event_ids"]
 
 
-def test_rehydrate_restores_the_same_active_durable_session(monkeypatch, tmp_path) -> None:
+def test_rehydrate_restores_the_same_active_durable_session(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("PROMPTMEET_DESKTOP_MODE", "1")
     main_service = importlib.import_module("main_service")
     configure(main_service, tmp_path / "meeting-data", monkeypatch)
@@ -838,9 +1008,7 @@ def test_rehydrate_rejects_missing_and_completed_records(monkeypatch, tmp_path) 
     main_service = importlib.import_module("main_service")
     configure(main_service, tmp_path / "meeting-data", monkeypatch)
     client = TestClient(main_service.app)
-    missing = client.post(
-        "/api/sessions/missing/rehydrate", json={"is_paused": False}
-    )
+    missing = client.post("/api/sessions/missing/rehydrate", json={"is_paused": False})
     meeting_id = client.post("/api/sessions").json()["session_id"]
     main_service.meeting_repository.finish(
         meeting_id, datetime.now(UTC), MeetingStatus.COMPLETED
@@ -891,12 +1059,8 @@ def test_native_transcript_replay_is_idempotent_by_stable_segment_id(
         "timestamp": "2026-07-25T10:00:00+00:00",
     }
 
-    first = client.post(
-        f"/api/sessions/{meeting_id}/native-transcript", json=payload
-    )
-    replay = client.post(
-        f"/api/sessions/{meeting_id}/native-transcript", json=payload
-    )
+    first = client.post(f"/api/sessions/{meeting_id}/native-transcript", json=payload)
+    replay = client.post(f"/api/sessions/{meeting_id}/native-transcript", json=payload)
     record = client.get(f"/api/meetings/{meeting_id}").json()
     session = client.get(f"/api/sessions/{meeting_id}").json()["session"]
     transcripts = [event for event in record["events"] if event["kind"] == "transcript"]
@@ -1009,9 +1173,7 @@ def test_summary_generation_accepts_screenshot_only_meeting_input(
     configure(main_service, root, monkeypatch)
 
     class SummaryAgent(FakeMeetingAgent):
-        async def summarize_meeting(
-            self, record, source_events, source_progress=None
-        ):
+        async def summarize_meeting(self, record, source_events, source_progress=None):
             return MeetingSummaryResult(
                 summary={
                     "summary_text": "截图会议摘要",

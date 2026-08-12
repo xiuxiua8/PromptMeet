@@ -37,9 +37,7 @@ async def _completion_deadline(seconds: float):
         async with asyncio.timeout(seconds):
             yield
     except TimeoutError as error:
-        raise RuntimeError(
-            "AI 服务响应超时，请重试或检查提供方连接"
-        ) from error
+        raise RuntimeError("AI 服务响应超时，请重试或检查提供方连接") from error
 
 
 @dataclass(frozen=True)
@@ -60,6 +58,13 @@ class MeetingSummaryResult:
     source_event_ids: list[str]
     source_revision: int
     source_progress: dict[str, int]
+
+
+class StreamTerminalError(RuntimeError):
+    def __init__(self, event_type: str, message: str):
+        super().__init__("AI provider terminated the stream")
+        self.event_type = event_type
+        self.provider_message = message
 
 
 class _DuckDuckGoResultParser(HTMLParser):
@@ -181,7 +186,7 @@ class DesktopAgentService:
                 emit,
                 search_enabled=search_enabled,
             )
-        except httpx.HTTPStatusError as error:
+        except (httpx.HTTPStatusError, StreamTerminalError) as error:
             if not self._is_image_rejection(error, prompt_request):
                 raise self._runtime_failure(configuration, purpose, error) from error
             image_rejection = self._image_rejection_provenance(error)
@@ -197,7 +202,7 @@ class DesktopAgentService:
                     emit,
                     search_enabled=search_enabled,
                 )
-            except httpx.HTTPError as fallback_error:
+            except (httpx.HTTPError, StreamTerminalError) as fallback_error:
                 raise self._runtime_failure(
                     configuration, purpose, fallback_error
                 ) from fallback_error
@@ -290,9 +295,16 @@ class DesktopAgentService:
             and any(part.type == "image_asset" for part in message.content)
             for message in prompt_request.messages
         )
-        if not has_image or error.response.status_code not in {400, 415, 422}:
+        if not has_image:
             return False
-        response_text = error.response.text.casefold()
+        if isinstance(error, httpx.HTTPStatusError):
+            if error.response.status_code not in {400, 415, 422}:
+                return False
+            response_text = error.response.text.casefold()
+        elif isinstance(error, StreamTerminalError):
+            response_text = error.provider_message.casefold()
+        else:
+            return False
         return any(
             marker in response_text
             for marker in ("image", "vision", "multimodal", "image_url")
@@ -431,8 +443,10 @@ class DesktopAgentService:
         return encoded
 
     @staticmethod
-    def _image_rejection_provenance(error: httpx.HTTPStatusError) -> str:
-        return f"HTTP {error.response.status_code}: image input rejected"
+    def _image_rejection_provenance(error) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            return f"HTTP {error.response.status_code}: image input rejected"
+        return f"SSE {error.event_type}: image input rejected"
 
     async def answer(
         self,
@@ -546,7 +560,12 @@ class DesktopAgentService:
                         "response.failed",
                         "response.cancelled",
                     }:
-                        raise RuntimeError("AI provider terminated the stream")
+                        response = payload.get("response") or {}
+                        error = response.get("error") or payload.get("error") or {}
+                        message = (
+                            error.get("message") if isinstance(error, dict) else ""
+                        )
+                        raise StreamTerminalError(event_type, str(message or ""))
                     if event_type in {
                         "message_stop",
                         "response.completed",
@@ -753,9 +772,7 @@ class DesktopAgentService:
         try:
             summary = json.loads(response_content)
         except json.JSONDecodeError as error:
-            raise ValueError(
-                f"摘要模型返回了无法解析的 JSON：{error}"
-            ) from error
+            raise ValueError(f"摘要模型返回了无法解析的 JSON：{error}") from error
         if (
             not isinstance(summary, dict)
             or not str(summary.get("summary_text") or "").strip()
@@ -1207,7 +1224,7 @@ class DesktopAgentService:
     def _runtime_failure(
         configuration: ProviderConfiguration,
         purpose: str,
-        error: httpx.HTTPError,
+        error: Exception,
     ) -> RuntimeError:
         status = (
             f"，HTTP {error.response.status_code}"
