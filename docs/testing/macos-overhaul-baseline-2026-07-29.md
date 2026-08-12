@@ -70,7 +70,7 @@ The packaged app was launched, the workspace opened, the native picker opened an
 
 ### Failed or empty suggestions erase the useful surface and pollute the record
 
-- Expected: exactly three last-known-good suggestions remain above the composer until three newer successful suggestions atomically replace them.
+- Expected: the last-known-good suggestions remain above the composer until a newer successful set of one to three atomically replaces them.
 - Observed: each refresh persisted an empty suggestions event, produced a blank left timeline card, and left the right surface with only an empty-state sentence.
 - Repeatability: every transcript-triggered generation during the meeting returned and stored an empty set.
 - Exact setup: six system-audio transcript segments and one completed answer.
@@ -79,7 +79,7 @@ The packaged app was launched, the workspace opened, the native picker opened an
 - Visible symptom: no usable suggested questions and repeated blank timeline cards.
 - Proven path: historical meeting projection can restore a previously accepted non-empty suggestion set.
 - History comparison: `MeetingState.questionsGenerated` and timeline ingestion assign the refreshed array even when it is empty; the backend persists all returned arrays.
-- Smallest counterfactual: accept and persist only a deduplicated set of exactly three questions.
+- Smallest counterfactual: accept and persist only a deduplicated set of one to three questions.
 - Disconfirming evidence sought: generation IDs and context revisions correctly rejected stale generations.
 
 ### Screenshot status and capability disclosure are inconsistent

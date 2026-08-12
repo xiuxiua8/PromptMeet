@@ -15,7 +15,7 @@
 - Use test-driven development with observed red and green runs for every behavior change.
 - Do not push, create a PR, invoke no-mistakes, or mutate credentials and private meeting evidence.
 - Preserve stable island control anchors and complete 32 point hit regions at realistic host sizes.
-- Keep exactly three last-good suggestions visible until a newer successful set replaces them.
+- Keep one to three last-good suggestions visible until a newer successful set replaces them.
 - Keep the original transcript immutable when translation fails; successful translation enriches the matching event without adding a second transcript event.
 
 ## Reproduction record
@@ -139,7 +139,7 @@ func testTranscriptChurnDoesNotCancelUsefulInFlightSuggestionGeneration() async 
 
 func testInFlightSuggestionSetIsAcceptedBeforeCoalescedFollowUpStarts() async throws {
     // Emit a valid response for revision 1 after revision 2 is pending but before revision 2 starts.
-    // Assert the first exactly-three set becomes visible, then a later revision can replace it.
+    // Assert the first one-to-three set becomes visible, then a later revision can replace it.
 }
 ```
 

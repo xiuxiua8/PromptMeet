@@ -71,13 +71,13 @@
 - Test: `backend/tests/test_meeting_lifecycle_e2e.py`
 
 **Interfaces:**
-- Produces: exactly-three successful suggestion batches; retains prior successful questions during loading, cancellation, failure, empty or malformed results; deduplicates context tokens.
+- Produces: one-to-three successful suggestion batches; retains prior successful questions during loading, cancellation, failure, empty or malformed results; deduplicates context tokens.
 
-- [ ] Write failing Swift tests for preservation through loading, empty, failure, cancellation, and atomic replacement by three newer questions.
-- [ ] Write failing Python tests that only exactly-three normalized results are persisted and broadcast.
+- [ ] Write failing Swift tests for preservation through loading, empty, failure, cancellation, and atomic replacement by a newer one-to-three set.
+- [ ] Write failing Python tests that only one-to-three normalized results are persisted and broadcast.
 - [ ] Verify focused failures.
 - [ ] Change context refresh to accept semantic tokens for transcript, screenshot analysis, summary/task, and answer updates; coalesce debounce without clearing display state.
-- [ ] Make the backend prompt and result validator produce exactly three questions and skip persistence for unsuccessful batches.
+- [ ] Make the backend prompt and result validator produce one to three questions and skip persistence for unsuccessful batches.
 - [ ] Move three understated suggestion buttons immediately above the composer, outside the conversation scroll view.
 - [ ] Run focused and full Swift and Python suites.
 
