@@ -124,6 +124,12 @@ final class MeetingStore: ObservableObject {
         case "workspace", "workspace-compact", "workspace-large":
             state = .previewWorkspace
             isHovered = false
+        case "workspace-formula":
+            state = .previewFormulaWorkspace
+            isHovered = false
+        case "workspace-formula-streaming":
+            state = .previewFormulaWorkspaceStreaming
+            isHovered = false
         case "reader-short":
             state = .previewReader
             isHovered = false

@@ -2,6 +2,18 @@ import Foundation
 
 @testable import PromptMeet
 
+/// A per-test outbox store so meeting lifecycle tests never touch the real
+/// app's Application Support outbox file. Sharing the real file across
+/// parallel test cases left stale pending finalizations that changed
+/// health-check counts and polluted real app data.
+func isolatedTranscriptOutbox() -> TranscriptOutboxStore {
+    TranscriptOutboxStore(
+        fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("PromptMeetStoreTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("outbox.json")
+    )
+}
+
 @MainActor
 final class NativeAudioCaptureSpy: NativeAudioCaptureCoordinating {
     var startedSessionID: String?
