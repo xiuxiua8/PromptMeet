@@ -36,7 +36,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   private var sourceHandler: (@Sendable (CapturedPCM) -> Void)?
   private var transcriptionErrorHandler: (@Sendable (String) -> Void)?
   private var isPaused = false
-  private var captureGeneration: UInt64 = 0
+  private var recoveryGenerations: [NativeAudioSource: UInt64] = [:]
   private var recoveryTasks: [NativeAudioSource: Task<Void, Never>] = [:]
   private var recoveryAttempts: [NativeAudioSource: Int] = [:]
   private let recoveryDelay: (Int) -> Duration
@@ -111,7 +111,9 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     snapshot = AudioCaptureSnapshot()
     statusHandler = onStatus
     transcriptionErrorHandler = onTranscriptionError
-    captureGeneration &+= 1
+    for source in sources {
+      recoveryGenerations[source.source, default: 0] &+= 1
+    }
     cancelSourceRecoveries()
     isPaused = false
     let clock = NativeAudioMeetingClock()
@@ -176,6 +178,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     // restart must come back on resume, even though it is no longer active.
     for source in recoveryTasks.keys {
       resumableSources.insert(source)
+      recoveryGenerations[source, default: 0] &+= 1
     }
     frameDispatcher?.beginSuspension()
     await transcription.pause()
@@ -191,15 +194,23 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     guard isPaused else { return }
     guard let sourceHandler else { return }
     let sourcesToResume = resumableSources
+    for source in sources where sourcesToResume.contains(source.source) {
+      recoveryGenerations[source.source, default: 0] &+= 1
+    }
+    for source in sources where sourcesToResume.contains(source.source) {
+      // Resume restarts the source itself, so any pending automatic restart
+      // for it must be cancelled to avoid starting the same source twice.
+      if let task = recoveryTasks[source.source] {
+        task.cancel()
+        await task.value
+        recoveryTasks[source.source] = nil
+      }
+      recoveryAttempts[source.source] = 0
+    }
     isPaused = false
     await frameDispatcher?.resume()
     var failures: [String] = []
     for source in sources where sourcesToResume.contains(source.source) {
-      // Resume restarts the source itself, so any pending automatic restart
-      // for it must be cancelled to avoid starting the same source twice.
-      recoveryTasks[source.source]?.cancel()
-      recoveryTasks[source.source] = nil
-      recoveryAttempts[source.source] = 0
       do {
         update(source.source, state: .starting)
         try await startSource(source, handler: sourceHandler)
@@ -207,9 +218,13 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
         update(source.source, state: .active)
       } catch {
         await source.stop()
+        let state = Self.state(for: error)
         failures.append(error.localizedDescription)
-        update(source.source, state: Self.state(for: error))
+        update(source.source, state: state)
         transcriptionErrorHandler?(error.localizedDescription)
+        if case .failed = state {
+          scheduleSourceRecovery(source.source)
+        }
       }
     }
     guard !activeSources.isEmpty else {
@@ -225,8 +240,12 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     guard !isPaused, activeSources[requestedSource] == nil, let sourceHandler else { return }
     guard let source = sources.first(where: { $0.source == requestedSource }) else { return }
     // The manual retry replaces any in-flight automatic restart.
-    recoveryTasks[requestedSource]?.cancel()
-    recoveryTasks[requestedSource] = nil
+    recoveryGenerations[requestedSource, default: 0] &+= 1
+    if let task = recoveryTasks[requestedSource] {
+      task.cancel()
+      await task.value
+      recoveryTasks[requestedSource] = nil
+    }
     recoveryAttempts[requestedSource] = 0
     do {
       update(
@@ -242,7 +261,9 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   }
 
   func stop() async {
-    captureGeneration &+= 1
+    for source in sources {
+      recoveryGenerations[source.source, default: 0] &+= 1
+    }
     cancelSourceRecoveries()
     frameDispatcher?.beginSuspension()
     await transcription.stop()
@@ -314,7 +335,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
       activeSources[source] == nil,
       recoveryTasks[source] == nil
     else { return }
-    let generation = captureGeneration
+    let generation = recoveryGenerations[source, default: 0]
     let attempt = recoveryAttempts[source, default: 0]
     recoveryAttempts[source] = attempt + 1
     let delay = recoveryDelay(attempt)
@@ -334,7 +355,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     generation: UInt64
   ) async {
     guard
-      generation == captureGeneration,
+      generation == recoveryGenerations[source, default: 0],
       !isPaused,
       activeSources[source] == nil,
       let sourceHandler,
@@ -349,7 +370,7 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     update(source, state: .starting)
     do {
       try await startSource(capture, handler: sourceHandler)
-      guard generation == captureGeneration, !isPaused else {
+      guard generation == recoveryGenerations[source, default: 0], !isPaused else {
         recoveryTasks[source] = nil
         await capture.stop()
         return

@@ -141,6 +141,63 @@ final class NativeAudioRecoveryTests: XCTestCase {
   }
 
   @MainActor
+  func testPauseAndResumeDuringInFlightRestartNeverDoubleStarts() async throws {
+    let system = GatedNativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    let startTask = Task { try await start(coordinator, onStatus: { snapshots.append($0) }) }
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await startTask.value
+    await waitUntil { system.startCount == 1 }
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await system.waitUntilBlocked()
+    // Pause lands while the automatic restart is in flight; the stale start
+    // must not register again once resume restarts the source.
+    await coordinator.pause()
+    let resumeTask = Task { try await coordinator.resume() }
+    try? await Task.sleep(for: .milliseconds(30))
+    system.releaseStart()
+    try? await Task.sleep(for: .milliseconds(30))
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await resumeTask.value
+
+    XCTAssertEqual(system.startCount, 3)
+    XCTAssertEqual(system.stopCount, 2)
+    XCTAssertEqual(snapshots.last?.system, .active)
+  }
+
+  @MainActor
+  func testResumeRestartFailureAutoRecoversLikeRuntimeFailure() async throws {
+    let system = FailOnRestartCaptureSpy(
+      source: .system,
+      restartError: CaptureError.systemAudioRuntimeFailure("resume failed"),
+      failingStarts: 1
+    )
+    let microphone = NativeAudioSourceCaptureSpy(source: .microphone)
+    let coordinator = recoveryCoordinator(
+      sources: [system, microphone],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    try await start(coordinator, onStatus: { snapshots.append($0) })
+    await coordinator.pause()
+
+    try await coordinator.resume()
+
+    XCTAssertEqual(system.startCount, 2)
+    XCTAssertEqual(snapshots.last?.system, .failed("系统音频采集失败：resume failed"))
+    XCTAssertEqual(microphone.startCount, 2)
+    await waitUntil { system.startCount == 3 }
+    await waitUntil { snapshots.last?.system == .active }
+  }
+
+  @MainActor
   func testTerminalFailureOnRestartStopsRetryingAndAllowsManualRetry() async throws {
     let system = FailOnRestartCaptureSpy(
       source: .system,
