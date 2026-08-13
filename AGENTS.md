@@ -35,7 +35,7 @@ Desktop-mode services (`desktop_agent_service`, `desktop_storage`, `meeting_repo
 | --- | --- | --- |
 | Domain | `Domain/` | `MeetingTimeline`, `MeetingState`, `CaptureState`, `BackendEvent`, `StoredMeeting`, `MeetingHistorySearch` |
 | Services | `Services/` | `MeetingStore`, `MeetingAutomationScheduler`, `MeetingPreferences`, `BackendClient`, `CompanionLauncher`, `KeychainStore`, `AIProviderConfiguration` |
-| Views | `Views/` | `WorkspaceView`, `AIReaderView`, `HoverMeetingCardView`, `SettingsView`, `IslandRootView`; rich-text surface: `MarkdownDocument`, `MarkdownInline`, `MarkdownTableParser`, `FormulaParser`, `FormulaRenderer` |
+| Views | `Views/` | `WorkspaceView`, `AIReaderView`, `HoverMeetingCardView`, `SettingsView`, `IslandRootView`; rich-text surface: `MarkdownDocument`, `MarkdownInline`, `MarkdownTableParser`, `KaTeXFormulaRenderer`/`FormulaImageStore` |
 | Capture | `Capture/` | ScreenCaptureKit, microphone, system audio, screenshot upload |
 | Transcription | `Transcription/` | `whisper.cpp` CLI and server engines, model repository |
 | Windows | `Windows/` | Island, workspace, settings, reader controllers |
@@ -98,7 +98,7 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Suggested questions replace atomically only when a batch yields two or three unique, non-empty, exactly grounded choices; empty, single, duplicate-containing, or oversized batches never clear the last good set.
 - Summary and task automation uses pause-aware active recording milestones, serializes generation per meeting, reserves a fixed nonzero evidence allocation, persists exact per-event character progress for budgeted chunks, carries bounded prior context, retains still-active tasks by stable identity, treats generated structured content as current truth, rechecks source coverage before append, and stores append-only revisions.
 - AI configuration saves during active or paused meetings defer companion reload until persistence completes. Reload disconnects and clears the old backend session before restart, verifies health before history refresh, and keeps meeting-history deletion disabled throughout active meetings.
-- AI answers, summaries, decisions, key points, and structured tasks share the native Markdown renderer. Unsafe links remain inert, streaming delimiters stay stable, and structured tasks render as accessible checklists. Inline (`$...$`, `\(...\)`) and display (`$$...$$`, `\[...\]`) math render as real formulas with Greek letters, arrows, and operators; GFM tables render as aligned grids; malformed math falls back to readable plain text and unclosed delimiters never break the stream.
+- AI answers, summaries, decisions, key points, and structured tasks share the native Markdown renderer. Unsafe links remain inert, streaming delimiters stay stable, and structured tasks render as accessible checklists. Inline (`$...$`, `\(...\)`) and display (`$$...$$`, `\[...\]`) math render as real formulas via the bundled offline KaTeX distribution (one hidden WKWebView, content-cached images; unclosed delimiters stay literal while streaming and malformed math falls back to readable source). GFM tables render as aligned grids with rich cells.
 - AI provider endpoints and credentials are shared, while provider, model, and explicit vision capability route independently per token-spending workflow. Manual provider-scoped model identifiers require only non-empty validation.
 
 ## Authoritative documentation

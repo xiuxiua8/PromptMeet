@@ -4,6 +4,7 @@ struct MarkdownTextView: View {
     let markdown: String
     var mode: MarkdownParseMode = .completed
     var baseFontSize: CGFloat = 12
+    @ObservedObject var formulaStore: FormulaImageStore = .shared
 
     private var blocks: [MarkdownBlock] {
         MarkdownDocument.parse(markdown, mode: mode)
@@ -196,11 +197,12 @@ struct MarkdownTextView: View {
         }
     }
 
-    /// Renders a math span as an inline image, or a readable plain-text
-    /// fallback when the formula is unsupported or malformed.
+    /// Renders a math span as an inline image via the shared KaTeX store,
+    /// showing the readable formula source while the image renders and as
+    /// the fallback for unsupported or malformed input.
     private func formulaText(_ content: String, display: Bool) -> Text {
-        if let formula = FormulaRenderer.image(
-            for: content,
+        if let formula = formulaStore.image(
+            content: content,
             display: display,
             baseFontSize: baseFontSize
         ) {
@@ -208,7 +210,8 @@ struct MarkdownTextView: View {
                 .baselineOffset(-formula.baselineShift)
             return image.accessibilityLabel("公式：\(content)")
         }
-        return Text(verbatim: FormulaPlainText.plainText(content))
+        return Text(verbatim: content)
+            .accessibilityLabel("公式：\(content)")
     }
 
     private func list(_ lines: [String], ordered: Bool) -> some View {

@@ -5,50 +5,63 @@ import XCTest
 
 /// Rendering-level coverage for formulas: images, fallback text,
 /// emphasis and links around math, and the shared renderer wiring.
+@MainActor
 final class FormulaRenderingSurfaceTests: XCTestCase {
-    // MARK: - Rendering produces real images
+    // MARK: - Rendering produces real images (KaTeX)
 
-    func testRendererProducesNonEmptyImageForEnergyEquation() {
-        let formula = FormulaRenderer.image(for: "E = mc^2", display: false, baseFontSize: 12)
-        XCTAssertNotNil(formula)
-        XCTAssertGreaterThan(formula?.width ?? 0, 10)
-        XCTAssertGreaterThan(formula?.height ?? 0, 8)
+    func testRendererProducesNonEmptyImageForEnergyEquation() async throws {
+        let rendered = await FormulaImageStore.shared.render(
+            content: "E = mc^2", display: false, baseFontSize: 14
+        )
+        let formula = try XCTUnwrap(rendered)
+        XCTAssertGreaterThan(formula.width, 10)
+        XCTAssertGreaterThan(formula.height, 8)
+        XCTAssertGreaterThan(formula.image.size.width, 10)
     }
 
-    func testRendererProducesLargerImageForDisplayFormula() {
-        let inline = FormulaRenderer.image(
-            for: "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
+    func testRendererProducesLargerImageForDisplayFormula() async throws {
+        let inlineRendered = await FormulaImageStore.shared.render(
+            content: "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
             display: false,
-            baseFontSize: 12
+            baseFontSize: 14
         )
-        let display = FormulaRenderer.image(
-            for: "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
+        let displayRendered = await FormulaImageStore.shared.render(
+            content: "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
             display: true,
-            baseFontSize: 12
+            baseFontSize: 14
         )
-        XCTAssertNotNil(inline)
-        XCTAssertNotNil(display)
-        XCTAssertGreaterThan(display?.height ?? 0, inline?.height ?? 0)
+        let inline = try XCTUnwrap(inlineRendered)
+        let display = try XCTUnwrap(displayRendered)
+        XCTAssertGreaterThan(display.height, inline.height)
     }
 
-    func testRendererReturnsNilForMalformedInput() {
-        XCTAssertNil(
-            FormulaRenderer.image(for: "\\frac{1}{3", display: false, baseFontSize: 12)
+    func testRendererHandlesMixedChineseAndSymbols() async throws {
+        let rendered = await FormulaImageStore.shared.render(
+            content: "\\alpha + \\beta = \\gamma，\\infty",
+            display: false,
+            baseFontSize: 14
         )
-        XCTAssertNil(
-            FormulaRenderer.image(for: "x^", display: false, baseFontSize: 12)
-        )
+        let formula = try XCTUnwrap(rendered)
+        XCTAssertGreaterThan(formula.width, 20)
     }
 
-    func testRendererImagesHaveTransparentBackground() {
-        guard let formula = FormulaRenderer.image(for: "E = mc^2", display: false, baseFontSize: 12) else {
-            return XCTFail("expected a rendered formula")
-        }
-        guard let rep = formula.image.representations.first as? NSBitmapImageRep,
-            let data = rep.representation(using: .png, properties: [:]) else {
-            return XCTFail("expected PNG data")
-        }
-        XCTAssertGreaterThan(data.count, 100)
+    func testRendererReturnsNilForMalformedInput() async throws {
+        let malformed = try await FormulaImageStore.shared.render(
+            content: "\\frac{1}{3",
+            display: false,
+            baseFontSize: 14
+        )
+        XCTAssertNil(malformed)
+    }
+
+    func testRendererImagesHaveTransparentBackground() async throws {
+        let rendered = await FormulaImageStore.shared.render(
+            content: "E = mc^2", display: false, baseFontSize: 14
+        )
+        let formula = try XCTUnwrap(rendered)
+        let rep = try XCTUnwrap(formula.image.representations.first as? NSBitmapImageRep)
+        let corner = rep.colorAt(x: 1, y: 1)
+        XCTAssertLessThan(corner?.alphaComponent ?? 1, 0.5, "image corner must be transparent")
     }
 
     // MARK: - Pieces path: emphasis and links survive formulas
@@ -192,7 +205,8 @@ final class FormulaRenderingSurfaceTests: XCTestCase {
 
         XCTAssertTrue(renderer.contains("inlinePieces"))
         XCTAssertTrue(renderer.contains("Image(nsImage:"))
-        XCTAssertTrue(renderer.contains("FormulaPlainText.plainText"))
+        XCTAssertTrue(renderer.contains("FormulaImageStore"))
+        XCTAssertTrue(renderer.contains("baselineOffset"))
         XCTAssertTrue(renderer.contains("case .table"))
         let document = try String(
             contentsOf: packageRoot.appendingPathComponent("Sources/PromptMeet/Views/MarkdownDocument.swift"),
