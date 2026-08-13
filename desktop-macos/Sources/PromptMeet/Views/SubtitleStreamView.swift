@@ -9,10 +9,20 @@ import SwiftUI
 /// cursor never jumps - pages enter, traverse, and exit continuously.
 struct SubtitleStreamView: View {
     @ObservedObject var store: MeetingStore
+    @ObservedObject var driver: SubtitleStreamDriver
     var font: Font = .system(size: 12, weight: .medium, design: .rounded)
     var viewportHeight: CGFloat = 21
 
-    @StateObject private var driver = SubtitleStreamDriver()
+    init(
+        store: MeetingStore,
+        font: Font = .system(size: 12, weight: .medium, design: .rounded),
+        viewportHeight: CGFloat = 21
+    ) {
+        self.store = store
+        self.driver = store.subtitleStreamDriver
+        self.font = font
+        self.viewportHeight = viewportHeight
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -63,7 +73,7 @@ struct SubtitleStreamView: View {
             driver.stop()
         }
         .onChange(of: store.state.subtitleFlow) { _, newFlow in
-            driver.syncPages(newFlow.pages)
+            driver.syncPages(newFlow.pages, sessionID: store.sessionID)
         }
         .onChange(of: store.state.activeTranscript) { _, text in
             driver.updateLiveText(text)
@@ -140,7 +150,10 @@ private struct SubtitleLiveTailWidthKey: PreferenceKey {
 }
 
 /// Drives the subtitle flow at 30 fps outside view updates and keeps the
-/// measured widths and live partial alongside the pure flow model.
+/// measured widths and live partial alongside the pure flow model. The driver
+/// is owned by the meeting store, so the flow state (cursor, measured widths,
+/// rate window) survives view teardown: hovering the island, pausing, or
+/// hiding the island never restarts the stream.
 @MainActor
 final class SubtitleStreamDriver: ObservableObject {
     @Published private(set) var flow = SubtitleStreamFlow()
@@ -149,6 +162,7 @@ final class SubtitleStreamDriver: ObservableObject {
     private var timer: Timer?
     private var lastTickDate: Date?
     private var liveText: String = ""
+    private var lastSessionID: String?
 
     let liveTailID = UUID()
 
@@ -166,9 +180,9 @@ final class SubtitleStreamDriver: ObservableObject {
     }
 
     func start(store: MeetingStore) {
-        flow = store.state.subtitleFlow
         liveText = store.state.activeTranscript
         lastTickDate = Date()
+        syncPages(store.state.subtitleFlow.pages, sessionID: store.sessionID)
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -182,11 +196,19 @@ final class SubtitleStreamDriver: ObservableObject {
         timer = nil
     }
 
-    func syncPages(_ newPages: [SubtitleStreamPage]) {
-        let existing = Set(flow.pages.map(\.id))
-        for page in newPages where !existing.contains(page.id) {
-            flow.append(page)
+    func syncPages(_ newPages: [SubtitleStreamPage], sessionID: String?) {
+        if sessionID != lastSessionID {
+            lastSessionID = sessionID
+            flow.reset()
         }
+        for page in newPages {
+            flow.merge(page)
+        }
+    }
+
+    func reset() {
+        lastSessionID = nil
+        flow.reset()
     }
 
     func updateLiveText(_ text: String) {

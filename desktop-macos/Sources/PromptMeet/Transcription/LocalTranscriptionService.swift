@@ -84,6 +84,7 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
   private var activeGeneration: UInt64 = 0
   private var recentLanguages: [TranscriptLanguage] = []
   private var droppedUtteranceCount = 0
+  private var languagePreference: WhisperLanguagePreference = .auto
 
   init(
     repository: WhisperModelRepository = WhisperModelRepository(),
@@ -119,9 +120,11 @@ actor LocalTranscriptionService: LocalTranscriptionServicing {
     let rawEngine = try engineFactory.makeEngine()
     try await rawEngine.prepare()
     invalidateCurrentWork()
+    let languagePreference = WhisperLanguagePreference(rawValue: preferences.language)
+    self.languagePreference = languagePreference
     gatedEngine = WhisperLanguageGatedEngine(
       underlying: rawEngine,
-      preference: WhisperLanguagePreference(rawValue: preferences.language)
+      preference: languagePreference
     )
     self.onPartialTranscript = onPartialTranscript
     self.onTranscript = onTranscript
@@ -308,7 +311,12 @@ private extension LocalTranscriptionService {
               language: transcript.language
             )
           )
-          recordAcceptedLanguage(transcript.language)
+          switch languagePreference {
+          case .auto, .gated:
+            recordAcceptedLanguage(transcript.language)
+          case .explicit:
+            break
+          }
         }
         onPartialTranscript?("")
       }
@@ -317,9 +325,7 @@ private extension LocalTranscriptionService {
       Self.logger.info(
         "transcript_dropped reason=\(reason.name, privacy: .public)"
       )
-      if job.kind == .preview {
-        onPartialTranscript?("")
-      }
+      onPartialTranscript?("")
     }
   }
 

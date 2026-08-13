@@ -156,6 +156,47 @@ final class SubtitleStreamFlowTests: XCTestCase {
 
     // MARK: - Visibility window
 
+    func testHeadPageIsAlwaysRenderedUntilItsWidthIsMeasured() {
+        var flow = SubtitleStreamFlow()
+        flow.append(page("first", width: 0))
+
+        let visible = flow.visiblePages(viewportWidth: 300)
+
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertEqual(visible[0].page.text, "first")
+        XCTAssertEqual(visible[0].x, 0, accuracy: 0.001)
+    }
+
+    func testMergeCopiesLateTranslationOntoExistingPageWithoutResettingState() {
+        var flow = SubtitleStreamFlow()
+        let original = page("今天讨论了项目进度")
+        flow.append(original)
+        flow.tick(deltaTime: 2)
+
+        let cursor = flow.cursor
+        flow.merge(
+            SubtitleStreamPage(
+                id: original.id,
+                text: original.text,
+                translation: "Today we discussed progress",
+                timestamp: original.timestamp
+            )
+        )
+
+        XCTAssertEqual(flow.pages.count, 1)
+        XCTAssertEqual(flow.pages[0].translation, "Today we discussed progress")
+        XCTAssertEqual(flow.pages[0].width, original.width, accuracy: 0.001)
+        XCTAssertEqual(flow.cursor, cursor, accuracy: 0.001)
+    }
+
+    func testMergeAppendsNewPages() {
+        var flow = SubtitleStreamFlow()
+        flow.merge(page("第一段", width: 120))
+        flow.merge(page("第二段", width: 200))
+
+        XCTAssertEqual(flow.pages.map(\.text), ["第一段", "第二段"])
+    }
+
     func testVisiblePagesCoverTheViewportWindow() {
         var flow = SubtitleStreamFlow()
         flow.append(page("first", width: 200))

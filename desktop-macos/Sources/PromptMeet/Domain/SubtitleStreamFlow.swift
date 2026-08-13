@@ -155,6 +155,19 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         pages[index].width = width
     }
 
+    /// Merges one store-flow page into the buffer: in-place store mutations
+    /// (e.g. a late translation) are copied onto the existing page, while new
+    /// pages append. Measured widths are never overwritten by the store copy.
+    mutating func merge(_ page: SubtitleStreamPage) {
+        if let index = pages.firstIndex(where: { $0.id == page.id }) {
+            pages[index].text = page.text
+            pages[index].translation = page.translation
+            pages[index].timestamp = page.timestamp
+        } else {
+            append(page)
+        }
+    }
+
     /// Advances the stream by `deltaTime` at the adaptive speed and drops
     /// fully traversed pages. Returns true when the cursor moved. The smoothed
     /// speed always decays toward the base pace - even between captions - so
@@ -207,13 +220,15 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     }
 
     /// Pages (and their strip positions) currently overlapping the viewport.
+    /// The head page is always included - even before its width is measured -
+    /// so it renders, gets measured, and can be popped once fully traversed.
     /// Pure: does not mutate the flow.
     func visiblePages(viewportWidth: CGFloat) -> [(page: SubtitleStreamPage, x: CGFloat)] {
         guard !pages.isEmpty else { return [] }
         var result: [(SubtitleStreamPage, CGFloat)] = []
         var positionX = -cursor
-        for page in pages {
-            if positionX + page.width > 0, positionX < viewportWidth {
+        for (index, page) in pages.enumerated() {
+            if (index == 0 || positionX + page.width > 0), positionX < viewportWidth {
                 result.append((page, positionX))
             }
             positionX += page.width + SubtitleFlowMetrics.traverseGap

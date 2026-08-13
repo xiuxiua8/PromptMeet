@@ -20,6 +20,7 @@ final class MeetingStore: ObservableObject {
     let meetingPreferences: MeetingPreferences
     let transcriptOutbox: TranscriptOutboxStoring
     let now: @MainActor () -> Date
+    let subtitleStreamDriver = SubtitleStreamDriver()
     var suggestionDebounceTask: Task<Void, Never>?
     var suggestionGenerationTask: Task<Void, Never>?
     var pendingSuggestionRevision: Int?
@@ -108,6 +109,7 @@ final class MeetingStore: ObservableObject {
 
     func configureUIPreview(_ mode: String) {
         uiPreviewMode = mode
+        subtitleStreamDriver.reset()
         state = Self.previewStates[mode] ?? MeetingState()
         isHovered = mode == "hover"
     }
