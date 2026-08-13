@@ -13,6 +13,7 @@ enum MarkdownBlockKind: Equatable, Sendable {
     case taskList(completed: [Bool])
     case quote
     case code(language: String?)
+    case table(columns: [MarkdownTableColumn])
 }
 
 struct MarkdownBlock: Equatable, Sendable {
@@ -33,6 +34,8 @@ struct MarkdownBlock: Equatable, Sendable {
     }
 }
 
+/// Block-level markdown parser used by the native renderer. Inline content
+/// (emphasis, links, math segments) is delegated to `MarkdownInline`.
 enum MarkdownDocument {
     static func parse(_ markdown: String, mode: MarkdownParseMode) -> [MarkdownBlock] {
         let normalized = markdown
@@ -53,6 +56,24 @@ enum MarkdownDocument {
         return blocks
     }
 
+    static func inline(_ markdown: String) -> AttributedString {
+        MarkdownInline.inline(markdown)
+    }
+
+    static func stableInlineSource(_ source: String) -> String {
+        MarkdownInline.stableInlineSource(source)
+    }
+
+    /// Splits an inline flow into text and math segments. See `MarkdownInline`.
+    static func inlineSegments(_ source: String, mode: MarkdownParseMode) -> [MarkdownInlineSegment] {
+        MarkdownInline.inlineSegments(source, mode: mode)
+    }
+
+    /// Rendering pieces for one inline flow. See `MarkdownInline`.
+    static func inlinePieces(_ source: String, mode: MarkdownParseMode) -> [MarkdownInlinePiece] {
+        MarkdownInline.inlinePieces(source, mode: mode)
+    }
+
     private static func consumeBlock(_ lines: [String], index: inout Int) -> MarkdownBlock {
         let line = lines[index]
         if isFence(line) { return consumeCode(lines, index: &index) }
@@ -71,6 +92,9 @@ enum MarkdownDocument {
         }
         if let quote = quoteLine(line) {
             return consumeQuote(lines, index: &index, first: quote)
+        }
+        if MarkdownTableParser.isTableStart(lines, at: index) {
+            return MarkdownTableParser.consumeTable(lines, index: &index)
         }
         return consumeParagraph(lines, index: &index)
     }
@@ -151,35 +175,15 @@ enum MarkdownDocument {
         index += 1
         while index < lines.count,
               !lines[index].trimmingCharacters(in: .whitespaces).isEmpty,
-              !startsBlock(lines[index]) {
+              !startsBlock(lines[index]),
+              !MarkdownTableParser.isTableStart(lines, at: index) {
             paragraph.append(lines[index])
             index += 1
         }
         return MarkdownBlock(kind: .paragraph, lines: paragraph)
     }
 
-    static func inline(_ markdown: String) -> AttributedString {
-        var attributed = (
-            try? AttributedString(
-                markdown: markdown,
-                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-            )
-        ) ?? AttributedString(markdown)
-        for run in attributed.runs.reversed() {
-            guard let link = run.link else { continue }
-            let scheme = link.scheme?.lowercased()
-            if scheme != "https" && scheme != "http" {
-                attributed[run.range].link = nil
-            }
-        }
-        return attributed
-    }
-
-    static func stableInlineSource(_ source: String) -> String {
-        MarkdownInlineStabilizer.stableSource(source)
-    }
-
-    private static func startsBlock(_ line: String) -> Bool {
+    static func startsBlock(_ line: String) -> Bool {
         isFence(line)
             || heading(line) != nil
             || taskItem(line) != nil
@@ -247,83 +251,5 @@ enum MarkdownDocument {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix(">") else { return nil }
         return String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
-    }
-}
-
-private enum MarkdownInlineStabilizer {
-    static func stableSource(_ source: String) -> String {
-        let codeDelimiters = unescapedRanges(of: "`", in: source)
-        var stable = ""
-        var segmentStart = source.startIndex
-        for (index, delimiter) in codeDelimiters.enumerated() {
-            let segment = String(source[segmentStart..<delimiter.lowerBound])
-            stable.append(index.isMultiple(of: 2) ? stableEmphasisSource(segment) : segment)
-            let isUnmatchedLast = !codeDelimiters.count.isMultiple(of: 2)
-                && index == codeDelimiters.count - 1
-            if !isUnmatchedLast { stable.append("`") }
-            segmentStart = delimiter.upperBound
-        }
-        let trailing = String(source[segmentStart..<source.endIndex])
-        stable.append(
-            codeDelimiters.count.isMultiple(of: 2)
-                ? stableEmphasisSource(trailing)
-                : trailing
-        )
-        return stable
-    }
-
-    private static func stableEmphasisSource(_ source: String) -> String {
-        var stable = source
-        for marker in ["**", "__", "*", "_"] {
-            let ranges = unescapedRanges(of: marker, in: stable)
-            guard !ranges.count.isMultiple(of: 2),
-                  let last = ranges.last,
-                  isLikelyUnpairedDelimiter(marker, range: last, in: stable)
-            else { continue }
-            stable.removeSubrange(last)
-        }
-        return stable
-    }
-
-    private static func unescapedRanges(
-        of marker: String,
-        in source: String
-    ) -> [Range<String.Index>] {
-        var ranges: [Range<String.Index>] = []
-        var start = source.startIndex
-        while start < source.endIndex,
-              let range = source.range(of: marker, range: start..<source.endIndex) {
-            var slashCount = 0
-            var cursor = range.lowerBound
-            while cursor > source.startIndex {
-                let previous = source.index(before: cursor)
-                guard source[previous] == "\\" else { break }
-                slashCount += 1
-                cursor = previous
-            }
-            if slashCount.isMultiple(of: 2) { ranges.append(range) }
-            start = range.upperBound
-        }
-        return ranges
-    }
-
-    private static func isLikelyUnpairedDelimiter(
-        _ marker: String,
-        range: Range<String.Index>,
-        in source: String
-    ) -> Bool {
-        guard range.upperBound < source.endIndex else { return true }
-        let next = source[range.upperBound]
-        guard !next.isWhitespace else { return false }
-        guard marker.contains("_") else {
-            if range.lowerBound > source.startIndex {
-                let previous = source[source.index(before: range.lowerBound)]
-                if previous.isNumber && next.isNumber { return false }
-            }
-            return true
-        }
-        guard range.lowerBound > source.startIndex else { return true }
-        let previous = source[source.index(before: range.lowerBound)]
-        return !previous.isLetter && !previous.isNumber
     }
 }

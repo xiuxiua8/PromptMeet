@@ -4,6 +4,7 @@ struct MarkdownTextView: View {
     let markdown: String
     var mode: MarkdownParseMode = .completed
     var baseFontSize: CGFloat = 12
+    @ObservedObject var formulaStore: FormulaImageStore = .shared
 
     private var blocks: [MarkdownBlock] {
         MarkdownDocument.parse(markdown, mode: mode)
@@ -29,10 +30,14 @@ struct MarkdownTextView: View {
                 .padding(.top, level <= 2 ? 4 : 0)
                 .fixedSize(horizontal: false, vertical: true)
         case .paragraph:
-            inlineText(block.text)
-                .font(.system(size: baseFontSize, weight: .regular, design: .rounded))
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
+            if isDisplayFormulaParagraph(block.text) {
+                displayFormulaBlock(block.text)
+            } else {
+                inlineText(block.text)
+                    .font(.system(size: baseFontSize, weight: .regular, design: .rounded))
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .unorderedList:
             list(block.lines, ordered: false)
         case .orderedList:
@@ -53,6 +58,102 @@ struct MarkdownTextView: View {
             .padding(.vertical, 3)
         case .code(let language):
             codeBlock(block, language: language)
+        case .table(let columns):
+            table(columns)
+        }
+    }
+
+    private func table(_ columns: [MarkdownTableColumn]) -> some View {
+        let rowCount = columns.first?.cells.count ?? 0
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+                    tableCell(column.header, alignment: column.alignment, header: true)
+                }
+            }
+            .background(VisualTokens.sky.opacity(0.10))
+            Rectangle()
+                .fill(VisualTokens.line)
+                .frame(height: 0.5)
+            ForEach(0..<rowCount, id: \.self) { row in
+                if row > 0 {
+                    Rectangle()
+                        .fill(VisualTokens.line.opacity(0.6))
+                        .frame(height: 0.5)
+                }
+                HStack(spacing: 0) {
+                    ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+                        tableCell(
+                            column.cells.indices.contains(row) ? column.cells[row] : "",
+                            alignment: column.alignment,
+                            header: false
+                        )
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(VisualTokens.line, lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("表格，\(columns.count) 列，\(rowCount) 行")
+    }
+
+    private func tableCell(_ content: String, alignment: MarkdownTableAlignment, header: Bool) -> some View {
+        inlineText(content)
+            .font(.system(size: max(10, baseFontSize - 1), weight: header ? .semibold : .regular, design: .rounded))
+            .lineSpacing(3)
+            .frame(maxWidth: .infinity, alignment: tableFrameAlignment(alignment))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .foregroundStyle(header ? VisualTokens.primaryText : VisualTokens.primaryText.opacity(0.88))
+    }
+
+    private func tableFrameAlignment(_ alignment: MarkdownTableAlignment) -> Alignment {
+        switch alignment {
+        case .left: .leading
+        case .center: .center
+        case .right: .trailing
+        }
+    }
+
+    /// True when the paragraph consists only of one or more display formulas.
+    private func isDisplayFormulaParagraph(_ text: String) -> Bool {
+        let pieces = MarkdownDocument.inlinePieces(text, mode: mode)
+        guard !pieces.isEmpty else { return false }
+        for piece in pieces {
+            switch piece {
+            case .text(let attributed):
+                let content = String(attributed.characters)
+                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return false
+                }
+            case .math(_, let display):
+                if !display { return false }
+            }
+        }
+        return true
+    }
+
+    private func displayFormulaBlock(_ text: String) -> some View {
+        VStack(alignment: .center, spacing: 10) {
+            ForEach(Array(displayFormulaContents(text).enumerated()), id: \.offset) { _, content in
+                formulaText(content, display: true)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func displayFormulaContents(_ text: String) -> [String] {
+        MarkdownDocument.inlinePieces(text, mode: mode).compactMap { piece in
+            if case .math(let content, let display) = piece, display { return content }
+            return nil
         }
     }
 
@@ -86,7 +187,31 @@ struct MarkdownTextView: View {
     }
 
     private func inlineText(_ source: String) -> Text {
-        Text(MarkdownDocument.inline(MarkdownDocument.stableInlineSource(source)))
+        MarkdownDocument.inlinePieces(source, mode: mode).reduce(Text(verbatim: "")) { result, piece in
+            switch piece {
+            case .text(let attributed):
+                return result + Text(attributed)
+            case .math(let content, let display):
+                return result + formulaText(content, display: display)
+            }
+        }
+    }
+
+    /// Renders a math span as an inline image via the shared KaTeX store,
+    /// showing the readable formula source while the image renders and as
+    /// the fallback for unsupported or malformed input.
+    private func formulaText(_ content: String, display: Bool) -> Text {
+        if let formula = formulaStore.image(
+            content: content,
+            display: display,
+            baseFontSize: baseFontSize
+        ) {
+            let image = Text(Image(nsImage: formula.image))
+                .baselineOffset(-formula.baselineShift)
+            return image.accessibilityLabel("公式：\(content)")
+        }
+        return Text(verbatim: content)
+            .accessibilityLabel("公式：\(content)")
     }
 
     private func list(_ lines: [String], ordered: Bool) -> some View {

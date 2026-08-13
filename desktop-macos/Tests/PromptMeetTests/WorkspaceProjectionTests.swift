@@ -19,7 +19,8 @@ final class WorkspaceProjectionTests: XCTestCase {
         let store = MeetingStore(
             backend: BackendClientSpy(),
             capture: NativeAudioCaptureSpy(),
-            companion: CompanionLauncherSpy()
+            companion: CompanionLauncherSpy(),
+            transcriptOutbox: TranscriptOutboxSpy()
         )
         store.dispatch(.meetingHistoryLoaded([projectionMeeting(timeline: [suggestions])]))
         store.selectArchivedMeeting("meeting-1")

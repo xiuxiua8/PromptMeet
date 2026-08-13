@@ -33,10 +33,11 @@ cd "$MACOS_ROOT"
 swift build -c release
 
 rm -rf "$APP"
-mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/companion/python" "$CONTENTS/Resources/whisper"
+mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/companion/python" "$CONTENTS/Resources/whisper" "$CONTENTS/Resources/katex"
 cp "$MACOS_ROOT/.build/release/PromptMeet" "$CONTENTS/MacOS/PromptMeet"
 cp "$MACOS_ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 cp -R "$MACOS_ROOT/.local/whisper/." "$CONTENTS/Resources/whisper/"
+cp -R "$MACOS_ROOT/Resources/katex/." "$CONTENTS/Resources/katex/"
 cp "$MACOS_ROOT/THIRD_PARTY_NOTICES.md" "$CONTENTS/Resources/THIRD_PARTY_NOTICES.md"
 
 rsync -a \

@@ -1,5 +1,28 @@
 import Foundation
 
+private let formulaAnswerPreview = """
+## 能量公式
+
+根据相对论，能量公式是 $E = mc^2$，其中 $c$ 是光速。
+
+积分：$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$，极限：$\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1$。
+
+求和公式：
+
+$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
+
+分数相加：$\\frac{a}{b} + \\frac{c}{d} = \\frac{ad+bc}{bd}$，\
+开方：$\\sqrt{x^2 + y^2}$，希腊字母 $\\alpha + \\beta = \\gamma$，无穷 $\\infty$。
+
+**对比表**（粗体与斜体同时验证）：
+
+| 指标 | 公式 | 结果 |
+| :--- | ---: | :---: |
+| 能量 | $E = mc^2$ | **成立** |
+| 积分 | $\\int_0^1 x^2 dx$ | $\\frac{1}{3}$ |
+| 求和 | $\\sum_{i=1}^{n} i$ | $\\frac{n(n+1)}{2}$ |
+"""
+
 extension MeetingState {
     static var previewLive: MeetingState {
         MeetingState(
@@ -62,6 +85,65 @@ extension MeetingState {
         var state = previewAura
         state.isQuickAskPresented = true
         state.quickPromptDraft = "发布前还有哪些风险没有负责人？"
+        return state
+    }
+
+    static var previewFormulaWorkspace: MeetingState {
+        var state = previewWorkspace
+        state.conversationTurns = [
+            ConversationTurn(
+                id: "preview-formula-answer",
+                requestID: "preview-formula-answer",
+                threadID: "main",
+                meetingID: nil,
+                question: "相对论中的能量公式是什么？",
+                answer: formulaAnswerPreview,
+                phase: .completed,
+                errorMessage: nil,
+                sources: [],
+                degradedVision: false,
+                askedAt: Date().addingTimeInterval(-12),
+                answeredAt: Date()
+            )
+        ]
+        state.aiReader = AIReaderState(
+            title: "相对论中的能量公式是什么？",
+            content: formulaAnswerPreview,
+            isVisible: false,
+            isStreaming: false
+        )
+        return state
+    }
+
+    static var previewFormulaWorkspaceStreaming: MeetingState {
+        var state = previewWorkspace
+        state.conversationTurns = [
+            ConversationTurn(
+                id: "preview-formula-streaming",
+                requestID: "preview-formula-streaming",
+                threadID: "main",
+                meetingID: nil,
+                question: "相对论中的能量公式是什么？",
+                answer: "## 能量公式\n\n根据相对论，能量公式是 $E = mc^",
+                phase: .streaming,
+                errorMessage: nil,
+                sources: [],
+                degradedVision: false,
+                askedAt: Date().addingTimeInterval(-12),
+                answeredAt: nil
+            )
+        ]
+        return state
+    }
+
+    static var previewFormulaReader: MeetingState {
+        var state = previewFormulaWorkspace
+        state.aiReader = AIReaderState(
+            title: "相对论中的能量公式是什么？",
+            content: formulaAnswerPreview,
+            isVisible: true,
+            isStreaming: false
+        )
         return state
     }
 
