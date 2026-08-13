@@ -45,6 +45,28 @@ final class SubtitleStreamDriverTests: XCTestCase {
         driver.stop()
     }
 
+    func testSyncPagesKeepsBufferStableAcrossStoreChanges() {
+        let store = makeStore()
+        let first = line("第一段转写")
+        store.dispatch(.transcriptFinal(first))
+        let driver = SubtitleStreamDriver()
+        driver.start(store: store)
+
+        // Each store-flow change re-presents the whole page list; repeated
+        // syncs (translation updates, new finals, view reappears) must never
+        // duplicate buffered pages or lose in-place updates.
+        store.dispatch(.transcriptTranslated(id: first.id, text: "First transcript"))
+        driver.syncPages(store.state.subtitleFlow.pages, sessionID: store.sessionID)
+        store.dispatch(.transcriptFinal(line("第二段转写")))
+        driver.syncPages(store.state.subtitleFlow.pages, sessionID: store.sessionID)
+        driver.syncPages(store.state.subtitleFlow.pages, sessionID: store.sessionID)
+
+        XCTAssertEqual(driver.flow.pages.map(\.text), ["第一段转写", "第二段转写"])
+        XCTAssertEqual(driver.flow.pages.first?.translation, "First transcript")
+        XCTAssertEqual(driver.flow.pendingCharacterCount, 10)
+        driver.stop()
+    }
+
     func testSyncPagesResetsWhenMeetingChanges() {
         let store = makeStore(sessionID: "meeting-1")
         store.dispatch(.transcriptFinal(line("旧会议内容")))

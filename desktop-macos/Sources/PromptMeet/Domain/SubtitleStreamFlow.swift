@@ -87,6 +87,9 @@ struct SubtitleStreamFlow: Equatable, Sendable {
     }
 
     private(set) var pages: [SubtitleStreamPage] = []
+    /// Page ids this flow has ever buffered. A consumed page (fully traversed
+    /// or trimmed) never re-enters the buffer through a later append or merge.
+    private var consumedIDs: Set<UUID> = []
     /// Strip position in points, relative to the head page (0 = head page
     /// left-aligned with the viewport).
     private(set) var cursor: CGFloat = 0
@@ -136,9 +139,11 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         return windowedWidth / CGFloat(SubtitleFlowMetrics.rateWindow)
     }
 
-    /// Buffers a new subtitle page. Never replaces existing content.
+    /// Buffers a new subtitle page. Never replaces existing content, and a
+    /// page that has already flowed through the buffer is never re-appended.
     mutating func append(_ page: SubtitleStreamPage) {
         guard !page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard consumedIDs.insert(page.id).inserted else { return }
         pages.append(page)
         appendWindow.append(AppendEntry(time: modelTime, id: page.id))
         trimToBounds()
@@ -157,13 +162,15 @@ struct SubtitleStreamFlow: Equatable, Sendable {
 
     /// Merges one store-flow page into the buffer: in-place store mutations
     /// (e.g. a late translation) are copied onto the existing page, while new
-    /// pages append. Measured widths are never overwritten by the store copy.
+    /// pages append. A page the buffer has already consumed (traversed and
+    /// popped, or trimmed) is skipped, and measured widths are never
+    /// overwritten by the store copy.
     mutating func merge(_ page: SubtitleStreamPage) {
         if let index = pages.firstIndex(where: { $0.id == page.id }) {
             pages[index].text = page.text
             pages[index].translation = page.translation
             pages[index].timestamp = page.timestamp
-        } else {
+        } else if !consumedIDs.contains(page.id) {
             append(page)
         }
     }
@@ -251,6 +258,7 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         modelTime = 0
         appendWindow = []
         smoothedSpeed = SubtitleFlowMetrics.baseSpeed
+        consumedIDs = []
     }
 
     private mutating func trimToBounds() {

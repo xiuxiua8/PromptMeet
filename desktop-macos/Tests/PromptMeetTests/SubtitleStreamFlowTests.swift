@@ -197,6 +197,47 @@ final class SubtitleStreamFlowTests: XCTestCase {
         XCTAssertEqual(flow.pages.map(\.text), ["第一段", "第二段"])
     }
 
+    func testMergeNeverReinjectsTraversedPage() {
+        var flow = SubtitleStreamFlow()
+        let read = page("已读段落", width: 100)
+        let next = page("后续段落", width: 100)
+        flow.append(read)
+        flow.append(next)
+
+        // The first page fully traverses and pops off the head.
+        var steps = 0
+        while flow.pages.count == 2, steps < 2_000 {
+            flow.tick(deltaTime: 0.01)
+            steps += 1
+        }
+        XCTAssertEqual(flow.pages.map(\.text), ["后续段落"])
+
+        // The next store sync re-presents the full page list, including the
+        // already-traversed page: it must not re-enter the buffer.
+        flow.merge(read)
+        flow.merge(next)
+
+        XCTAssertEqual(flow.pages.count, 1)
+        XCTAssertEqual(flow.pages.map(\.text), ["后续段落"])
+    }
+
+    func testAppendNeverReinjectsTraversedPage() {
+        var flow = SubtitleStreamFlow()
+        let read = page("已读段落", width: 100)
+        flow.append(read)
+        flow.append(page("后续段落", width: 100))
+
+        var steps = 0
+        while flow.pages.count == 2, steps < 2_000 {
+            flow.tick(deltaTime: 0.01)
+            steps += 1
+        }
+        XCTAssertEqual(flow.pages.map(\.text), ["后续段落"])
+
+        flow.append(read)
+        XCTAssertEqual(flow.pages.map(\.text), ["后续段落"])
+    }
+
     func testVisiblePagesCoverTheViewportWindow() {
         var flow = SubtitleStreamFlow()
         flow.append(page("first", width: 200))
