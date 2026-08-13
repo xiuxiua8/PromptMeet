@@ -198,13 +198,11 @@ class DesktopAgentService:
                 replace(configuration.capabilities, supports_vision=False),
             )
             try:
-                answer, web_sources, empty_completion = (
-                    await self._run_meeting_prompt(
-                        configuration,
-                        prompt_request,
-                        emit,
-                        search_enabled=search_enabled,
-                    )
+                answer, web_sources, empty_completion = await self._run_meeting_prompt(
+                    configuration,
+                    prompt_request,
+                    emit,
+                    search_enabled=search_enabled,
                 )
             except (httpx.HTTPError, StreamTerminalError) as fallback_error:
                 raise self._runtime_failure(
