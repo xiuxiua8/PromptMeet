@@ -37,41 +37,266 @@ final class NativeAudioRecoveryTests: XCTestCase {
     XCTAssertEqual(system.startCount, 3)
   }
 
+  // MARK: - Automatic runtime recovery
+
   @MainActor
-  func testRuntimeFailureMarksOnlyFailedSourceAndKeepsOtherSourceActive() async throws {
+  func testRuntimeFailureAutoRecoversSystemSourceAndKeepsMicrophoneActive() async throws {
     let system = NativeAudioSourceCaptureSpy(source: .system)
     let microphone = NativeAudioSourceCaptureSpy(source: .microphone)
     let transcription = LocalTranscriptionServiceSpy()
     let coordinator = NativeAudioCaptureCoordinator(
       sources: [system, microphone],
       uploader: NativeAudioUploaderSpy(),
-      transcription: transcription
+      transcription: transcription,
+      recoveryDelay: { _ in .milliseconds(200) }
     )
     let snapshots = CaptureSnapshotRecorder()
     try await start(coordinator, onStatus: { snapshots.append($0) })
     await transcription.emitSignal(.microphone, .speechDetected)
-    await transcription.emitSignal(.system, .speechDetected)
 
     system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
-    for _ in 0..<20 where snapshots.last?.system == .active {
-      await Task.yield()
-    }
+    await waitUntil { snapshots.last?.system == .failed("系统音频采集失败：stream stopped") }
 
-    XCTAssertEqual(snapshots.last?.system, .failed("系统音频采集失败：stream stopped"))
     XCTAssertEqual(snapshots.last?.microphone, .active)
-    XCTAssertEqual(snapshots.last?.systemSignal, .idle)
+    XCTAssertEqual(microphone.stopCount, 0)
+    XCTAssertEqual(microphone.startCount, 1)
+
+    await waitUntil { snapshots.last?.system == .active }
+
+    XCTAssertEqual(system.startCount, 2)
+    XCTAssertEqual(system.stopCount, 1)
+    XCTAssertEqual(snapshots.last?.microphone, .active)
     XCTAssertEqual(snapshots.last?.microphoneSignal, .speechDetected)
     XCTAssertEqual(microphone.stopCount, 0)
   }
 
   @MainActor
+  func testFailedRuntimeRestartKeepsRetryingUntilStopped() async throws {
+    let system = FailOnRestartCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    try await start(coordinator, onStatus: { snapshots.append($0) })
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await waitUntil { system.startCount >= 3 }
+
+    // Failed attempts surface as failed state between retries and the loop
+    // keeps going instead of leaving the transcript silent forever.
+    XCTAssertTrue(
+      snapshots.all.contains { $0.system == .starting },
+      "expected at least one starting transition during recovery"
+    )
+    await waitUntil { system.startCount >= 4 }
+    await waitUntil { snapshots.last?.system == .failed("系统音频采集失败：restart failed") }
+
+    await coordinator.stop()
+  }
+
+  @MainActor
+  func testUnavailableRuntimeFailureDoesNotAutoRetry() async throws {
+    let system = NativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    try await start(coordinator)
+
+    system.fail(CaptureError.noDisplay)
+    await waitUntil { system.startCount >= 1 }
+    try await Task.sleep(for: .milliseconds(150))
+
+    XCTAssertEqual(system.startCount, 1, "unavailable sources must not auto-retry")
+  }
+
+  @MainActor
+  func testPauseDuringInFlightRestartStillRestoresTheSourceOnResume() async throws {
+    let system = GatedNativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let startTask = Task { try await start(coordinator) }
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await startTask.value
+    await waitUntil { system.startCount == 1 }
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await system.waitUntilBlocked()
+    // The restart attempt is now in flight; pausing in this window must not
+    // lose the source: resume() restores it from the recovery set.
+    await coordinator.pause()
+    system.releaseStart()
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(system.startCount, 2)
+
+    let resumeTask = Task { try await coordinator.resume() }
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await resumeTask.value
+    await waitUntil { system.startCount == 3 }
+  }
+
+  @MainActor
+  func testPauseAndResumeDuringInFlightRestartNeverDoubleStarts() async throws {
+    let system = GatedNativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    let startTask = Task { try await start(coordinator, onStatus: { snapshots.append($0) }) }
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await startTask.value
+    await waitUntil { system.startCount == 1 }
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await system.waitUntilBlocked()
+    // Pause lands while the automatic restart is in flight; the stale start
+    // must not register again once resume restarts the source.
+    await coordinator.pause()
+    let resumeTask = Task { try await coordinator.resume() }
+    try? await Task.sleep(for: .milliseconds(30))
+    system.releaseStart()
+    try? await Task.sleep(for: .milliseconds(30))
+    await system.waitUntilBlocked()
+    system.releaseStart()
+    try await resumeTask.value
+
+    XCTAssertEqual(system.startCount, 3)
+    XCTAssertEqual(system.stopCount, 2)
+    XCTAssertEqual(snapshots.last?.system, .active)
+  }
+
+  @MainActor
+  func testResumeRestartFailureAutoRecoversLikeRuntimeFailure() async throws {
+    let system = FailOnRestartCaptureSpy(
+      source: .system,
+      restartError: CaptureError.systemAudioRuntimeFailure("resume failed"),
+      failingStarts: 1
+    )
+    let microphone = NativeAudioSourceCaptureSpy(source: .microphone)
+    let coordinator = recoveryCoordinator(
+      sources: [system, microphone],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    try await start(coordinator, onStatus: { snapshots.append($0) })
+    await coordinator.pause()
+
+    try await coordinator.resume()
+
+    XCTAssertEqual(system.startCount, 2)
+    XCTAssertEqual(snapshots.last?.system, .failed("系统音频采集失败：resume failed"))
+    XCTAssertEqual(microphone.startCount, 2)
+    await waitUntil { system.startCount == 3 }
+    await waitUntil { snapshots.last?.system == .active }
+  }
+
+  @MainActor
+  func testTerminalFailureOnRestartStopsRetryingAndAllowsManualRetry() async throws {
+    let system = FailOnRestartCaptureSpy(
+      source: .system,
+      restartError: CaptureError.screenRecordingDenied,
+      failingStarts: 1
+    )
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(10) }
+    )
+    let snapshots = CaptureSnapshotRecorder()
+    try await start(coordinator, onStatus: { snapshots.append($0) })
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await waitUntil { system.startCount == 2 }
+
+    // Permission failures are terminal: no further automatic restarts.
+    try await Task.sleep(for: .milliseconds(200))
+    XCTAssertEqual(system.startCount, 2)
+    XCTAssertEqual(snapshots.last?.system, .denied)
+
+    try await coordinator.retry(.system)
+    await waitUntil { system.startCount == 3 }
+    await waitUntil { snapshots.last?.system == .active }
+  }
+
+  @MainActor
+  func testPauseCancelsPendingRecoveryAndResumeRestoresTheSource() async throws {
+    let system = NativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(200) }
+    )
+    try await start(coordinator)
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await waitUntil { system.startCount >= 1 }
+    try await Task.sleep(for: .milliseconds(30))
+    await coordinator.pause()
+
+    // The pending automatic restart must not fire while paused.
+    try await Task.sleep(for: .milliseconds(300))
+    XCTAssertEqual(system.startCount, 1)
+
+    try await coordinator.resume()
+    await waitUntil { system.startCount == 2 }
+  }
+
+  @MainActor
+  func testStopCancelsPendingRecovery() async throws {
+    let system = NativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(50) }
+    )
+    try await start(coordinator)
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await waitUntil { system.startCount >= 1 }
+    try await Task.sleep(for: .milliseconds(10))
+    await coordinator.stop()
+
+    try await Task.sleep(for: .milliseconds(300))
+    XCTAssertEqual(system.startCount, 1, "stop must cancel the pending restart")
+  }
+
+  @MainActor
+  func testManualRetryCancelsPendingRecoveryWithoutDoubleStart() async throws {
+    let system = NativeAudioSourceCaptureSpy(source: .system)
+    let coordinator = recoveryCoordinator(
+      sources: [system],
+      recoveryDelay: { _ in .milliseconds(200) }
+    )
+    try await start(coordinator)
+
+    system.fail(CaptureError.systemAudioRuntimeFailure("stream stopped"))
+    await waitUntil { system.startCount >= 1 }
+    try await Task.sleep(for: .milliseconds(10))
+    try await coordinator.retry(.system)
+
+    await waitUntil { system.startCount == 2 }
+    // The superseded recovery task must not start the source a third time.
+    try await Task.sleep(for: .milliseconds(300))
+    XCTAssertEqual(system.startCount, 2)
+  }
+
+  // MARK: - Helpers
+
+  @MainActor
   private func recoveryCoordinator(
-    sources: [NativeAudioSourceCapture]
+    sources: [NativeAudioSourceCapture],
+    recoveryDelay: @escaping (Int) -> Duration = NativeAudioCaptureCoordinator
+      .defaultRecoveryDelay
   ) -> NativeAudioCaptureCoordinator {
     NativeAudioCaptureCoordinator(
       sources: sources,
       uploader: NativeAudioUploaderSpy(),
-      transcription: LocalTranscriptionServiceSpy()
+      transcription: LocalTranscriptionServiceSpy(),
+      recoveryDelay: recoveryDelay
     )
   }
 
@@ -90,5 +315,15 @@ final class NativeAudioRecoveryTests: XCTestCase {
       onTranscript: { _ in },
       onTranscriptionError: { _ in }
     )
+  }
+
+  @MainActor
+  private func waitUntil(
+    _ predicate: @escaping @Sendable () async -> Bool
+  ) async {
+    for _ in 0..<200 {
+      if await predicate() { return }
+      try? await Task.sleep(for: .milliseconds(5))
+    }
   }
 }

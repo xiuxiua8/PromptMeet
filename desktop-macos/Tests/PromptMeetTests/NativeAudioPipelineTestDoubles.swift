@@ -57,22 +57,110 @@ final class EmittingNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unch
   func stop() async {}
 }
 
-final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
+final class GatedNativeAudioSourceCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
   let source: NativeAudioSource
   private(set) var startCount = 0
+  private(set) var stopCount = 0
+  private var failureHandler: (@Sendable (any Error) -> Void)?
+  private var startGate: CheckedContinuation<Void, Never>?
+  private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+  private var isBlocked = false
+  private let lock = NSLock()
 
   init(source: NativeAudioSource) {
     self.source = source
   }
 
   func start(handler: @escaping @Sendable (CapturedPCM) -> Void) async throws {
-    startCount += 1
-    if startCount > 1 {
-      throw CaptureError.systemAudioRuntimeFailure("restart failed")
+    lock.withLock {
+      isBlocked = true
+      for waiter in blockedWaiters {
+        waiter.resume()
+      }
+      blockedWaiters = []
+    }
+    await withCheckedContinuation { continuation in
+      lock.withLock { startGate = continuation }
+    }
+    lock.withLock {
+      isBlocked = false
+      startCount += 1
     }
   }
 
+  func start(
+    handler: @escaping @Sendable (CapturedPCM) -> Void,
+    onFailure: @escaping @Sendable (any Error) -> Void
+  ) async throws {
+    failureHandler = onFailure
+    try await start(handler: handler)
+  }
+
+  func stop() async {
+    lock.withLock { stopCount += 1 }
+  }
+
+  func fail(_ error: any Error) {
+    failureHandler?(error)
+  }
+
+  func waitUntilBlocked() async {
+    await withCheckedContinuation { continuation in
+      lock.withLock {
+        if isBlocked {
+          continuation.resume()
+          return
+        }
+        blockedWaiters.append(continuation)
+      }
+    }
+  }
+
+  func releaseStart() {
+    lock.withLock {
+      startGate?.resume()
+      startGate = nil
+    }
+  }
+}
+
+final class FailOnRestartCaptureSpy: NativeAudioSourceCapture, @unchecked Sendable {
+  let source: NativeAudioSource
+  let restartError: any Error
+  let failingStarts: Int
+  private(set) var startCount = 0
+  private var failureHandler: (@Sendable (any Error) -> Void)?
+
+  init(
+    source: NativeAudioSource,
+    restartError: any Error = CaptureError.systemAudioRuntimeFailure("restart failed"),
+    failingStarts: Int = .max
+  ) {
+    self.source = source
+    self.restartError = restartError
+    self.failingStarts = failingStarts
+  }
+
+  func start(handler: @escaping @Sendable (CapturedPCM) -> Void) async throws {
+    startCount += 1
+    if startCount > 1, startCount - 1 <= failingStarts {
+      throw restartError
+    }
+  }
+
+  func start(
+    handler: @escaping @Sendable (CapturedPCM) -> Void,
+    onFailure: @escaping @Sendable (any Error) -> Void
+  ) async throws {
+    failureHandler = onFailure
+    try await start(handler: handler)
+  }
+
   func stop() async {}
+
+  func fail(_ error: any Error) {
+    failureHandler?(error)
+  }
 }
 
 struct NativeAudioUploaderSpy: NativeAudioUploading {
@@ -203,6 +291,8 @@ final class CaptureSnapshotRecorder: @unchecked Sendable {
   private var values: [AudioCaptureSnapshot] = []
 
   var last: AudioCaptureSnapshot? { lock.withLock { values.last } }
+
+  var all: [AudioCaptureSnapshot] { lock.withLock { values } }
 
   func append(_ value: AudioCaptureSnapshot) {
     lock.withLock { values.append(value) }
