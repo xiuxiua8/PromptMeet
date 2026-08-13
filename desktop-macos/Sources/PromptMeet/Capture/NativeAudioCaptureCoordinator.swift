@@ -42,7 +42,9 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
   private let recoveryDelay: (Int) -> Duration
 
   static let defaultRecoveryDelay: (Int) -> Duration = { attempt in
-    let rawMilliseconds = 500 * min(1 << attempt, 16)
+    // 0.5s, 1s, 2s, 4s, then capped at 8s; the shift is clamped so attempt
+    // growth can never overflow.
+    let rawMilliseconds = 500 * (1 << min(attempt, 4))
     return .milliseconds(rawMilliseconds)
   }
 
@@ -331,31 +333,45 @@ final class NativeAudioCaptureCoordinator: NativeAudioCaptureCoordinating {
     _ source: NativeAudioSource,
     generation: UInt64
   ) async {
-    recoveryTasks[source] = nil
     guard
       generation == captureGeneration,
       !isPaused,
       activeSources[source] == nil,
       let sourceHandler,
       let capture = sources.first(where: { $0.source == source })
-    else { return }
+    else {
+      recoveryTasks[source] = nil
+      return
+    }
+    // The recoveryTasks entry stays set for the whole attempt so pause() can
+    // fold an in-flight restart into resumableSources; it is cleared on every
+    // completion path below.
     update(source, state: .starting)
     do {
       try await startSource(capture, handler: sourceHandler)
       guard generation == captureGeneration, !isPaused else {
+        recoveryTasks[source] = nil
         await capture.stop()
         return
       }
       activeSources[source] = capture
       recoveryAttempts[source] = 0
+      recoveryTasks[source] = nil
       update(source, state: .active)
     } catch {
+      recoveryTasks[source] = nil
       await capture.stop()
-      update(source, state: Self.state(for: error))
+      let state = Self.state(for: error)
+      update(source, state: state)
       // Keep retrying with backoff while the meeting records; the source was
       // running before, so the interruption is expected to be transient
-      // (e.g. the window picker holding the capture session).
-      scheduleSourceRecovery(source)
+      // (e.g. the window picker holding the capture session). Permission and
+      // availability failures are terminal and stay surfaced for manual retry.
+      if case .failed = state {
+        scheduleSourceRecovery(source)
+      } else {
+        recoveryAttempts[source] = 0
+      }
     }
   }
 
