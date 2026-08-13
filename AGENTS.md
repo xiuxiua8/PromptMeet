@@ -37,7 +37,7 @@ Desktop-mode services (`desktop_agent_service`, `desktop_storage`, `meeting_repo
 | Services | `Services/` | `MeetingStore`, `MeetingAutomationScheduler`, `MeetingPreferences`, `BackendClient`, `CompanionLauncher`, `KeychainStore`, `AIProviderConfiguration` |
 | Views | `Views/` | `WorkspaceView`, `AIReaderView`, `HoverMeetingCardView`, `SettingsView`, `IslandRootView`; rich-text surface: `MarkdownDocument`, `MarkdownInline`, `MarkdownTableParser`, `KaTeXFormulaRenderer`/`FormulaImageStore` |
 | Capture | `Capture/` | ScreenCaptureKit, microphone, system audio, screenshot upload |
-| Transcription | `Transcription/` | `whisper.cpp` CLI and server engines, model repository |
+| Transcription | `Transcription/` | `whisper.cpp` CLI and server engines, model repository, `WhisperLanguageGate`, `WhisperLanguageGatedEngine`, `SimplifiedChineseNormalizer` |
 | Windows | `Windows/` | Island, workspace, settings, reader controllers |
 
 ## Build, test, and validate
@@ -58,6 +58,25 @@ swift build -c release
 ```
 
 `MeetingStore` unit tests must inject the in-memory `TranscriptOutboxSpy` from `Tests/PromptMeetTests/TranscriptOutboxSpy.swift` instead of the default on-disk `TranscriptOutboxStore`: tests that hit the real outbox pollute the shared app-support directory and each other's runs (recovery loops then see leftover pending meetings).
+
+Live engine regression (skipped unless enabled; needs a ggml model and generated
+16 kHz mono WAV fixtures that are never committed):
+
+```bash
+PROMPTMEET_LIVE_WHISPER_TESTS=1 \
+PROMPTMEET_WHISPER_MODEL=/path/to/ggml-*.bin \
+PROMPTMEET_WHISPER_FIXTURES=/dir/with/wavs \
+swift test --filter WhisperLiveEngineRegressionTests
+```
+
+The Simplified Chinese table is generated from OpenCC data:
+
+```bash
+python3 scripts/generate-simplified-chinese-mapping.py \
+  --characters /path/to/TSCharacters.txt \
+  --phrases /path/to/TSPhrases.txt \
+  --output desktop-macos/Sources/PromptMeet/Transcription/SimplifiedChineseMapping.swift
+```
 
 ### macOS app bundle
 
@@ -91,6 +110,9 @@ PROMPTMEET_UI_PREVIEW=workspace swift run PromptMeet
 - Microphone and system audio remain independent source-tagged streams with meeting-relative timing. Permission or runtime failure in one source must not stop or relabel the other.
 - A runtime-stopped capture source (e.g. system audio interrupted when the user opens the window picker to choose a screenshot target) is automatically restarted with capped exponential backoff while the meeting records; pause, stop, and manual retry cancel pending restarts, and one source's recovery never touches the other. Unavailable or permission-denied states do not auto-retry.
 - Local PCM passes through the per-source adaptive gate in `SpeechActivityGate` before Whisper. Auxiliary loopback persistence uses one timeout-bounded worker and coalesces one pending batch per source independently from raw-frame transcription; format changes flush and pause or stop discards incomplete batches. Pause and stop invalidate queued work; macOS Voice Processing applies only to microphone capture and safely falls back when unsupported.
+- Recognized text is gated per utterance to Simplified Chinese or English by `WhisperLanguageGatedEngine`: the output script is validated, Han text is normalized to zh-CN with the embedded OpenCC table, one retry uses a per-utterance hint (whisper's detection, then zh/en probabilities, then the rolling majority of recently accepted finals), and anything still unacceptable is dropped - third-language or random output never surfaces. Explicit third-language preferences (ja/ko in settings) pass through ungated.
+- The island subtitle is a bounded accumulating stream (`SubtitleStreamFlow`): finals append to the buffer and flow at a speed that tracks the measured generation rate (points of content entering per second, including translations), so subtitles scroll past as fast as they are produced and the backlog never grows. The pacing is balanced (雨露均沾): a bounded drain term and a readable cap (110 pts/s) keep a deep backlog phase as readable as the early phase, exponential smoothing ramps bursts gradually, and the smoothed speed decays to the base pace between captions. The stream never restarts, never overwrites the page being read, and fully traversed pages drop off. The hover card renders the same buffered pages with auto-follow.
+- Packaged launches are isolated per instance: `PROMPTMEET_DATA_DIR` (outbox, meetings, logs), `PROMPTMEET_BACKEND_URL`, and `PROMPTMEET_BACKEND_PORT` override the shared application-support directory and loopback 8000. Never launch two packaged instances against the same bundle ID, port, and data dir - the shared transcript-outbox is a single-lane resource (see firstmate rule [key=launch-drain]).
 - Disabling local microphone capture excludes that source before permission or engine startup and affects only future capture.
 - Recording pause keeps the meeting active and its context available. Resume is transactional across the companion and native capture, and stop works while paused.
 - Companion transport or event-decoding loss never changes native capture lifecycle. Active and paused meetings retain stop controls, fail orphaned AI turns terminally, and expose an explicit AI-service reconnect action. Local transcripts enter a durable source-tagged outbox keyed by the canonical meeting UUID before upload and replay chronologically with stable idempotency identities only after same-meeting binding or rehydration. App restart or offline stop transitions the durable active envelope to pending finalization; companion recovery drains the outbox and idempotently stores the same backend meeting without blocking later pending meetings. The marker clears only after the durable record is verified `completed`; `incomplete` records remain recoverable.

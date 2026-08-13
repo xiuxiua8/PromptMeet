@@ -63,6 +63,7 @@ extension MeetingState {
         selectedArchivedMeetingID = nil
         timeline = []
         conversationTurns = []
+        subtitleFlow.reset()
     }
 
     private mutating func reduceTranscript(_ action: MeetingAction) {
@@ -72,11 +73,20 @@ extension MeetingState {
         case .transcriptFinal(let line):
             if !transcript.contains(where: { $0.id == line.id }) {
                 transcript.append(line)
+                subtitleFlow.append(
+                    SubtitleStreamPage(
+                        id: line.id,
+                        text: line.text,
+                        translation: line.translatedText,
+                        timestamp: line.timestamp
+                    )
+                )
             }
             activeTranscript = ""
         case .transcriptTranslated(let id, let text):
             guard let index = transcript.firstIndex(where: { $0.id == id }) else { return }
             transcript[index].translatedText = text
+            subtitleFlow.updateTranslation(id: id, translation: text)
         default:
             break
         }

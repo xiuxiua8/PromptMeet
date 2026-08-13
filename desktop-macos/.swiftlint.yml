@@ -1,0 +1,8 @@
+# Minimal SwiftLint configuration for the PromptMeet macOS app.
+# All rules keep their default behavior except: the generated
+# SimplifiedChineseMapping.swift data table legitimately needs file-level
+# length disables (it is generated data, not hand-written code).
+blanket_disable_command:
+  allowed_rules:
+    - file_length
+    - type_body_length

@@ -201,48 +201,69 @@ final class IslandGeometryTests: XCTestCase {
         XCTAssertEqual(state.activeCaption, "我们先确认今天的讨论目标。")
     }
 
-    func testTickerStaysLeadingWhenContentFits() {
-        XCTAssertEqual(
-            SubtitleTickerMetrics.offset(
-                elapsed: 20,
-                contentWidth: 180,
-                viewportWidth: 220
-            ),
-            0
-        )
-    }
-
-    func testTickerWaitsBeforeMovingOverflowingCaption() {
-        XCTAssertEqual(
-            SubtitleTickerMetrics.offset(
-                elapsed: SubtitleTickerMetrics.leadingPause / 2,
-                contentWidth: 420,
-                viewportWidth: 220
-            ),
-            0
-        )
-    }
-
-    func testTickerLoopsWithinOneTravelDistance() {
-        let offset = SubtitleTickerMetrics.offset(
-            elapsed: 5,
-            contentWidth: 420,
-            viewportWidth: 220
+    func testSubtitleFlowAdvancesAtAdaptiveSpeed() {
+        var flow = SubtitleStreamFlow()
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "字幕内容",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
         )
 
-        XCTAssertLessThan(offset, 0)
-        XCTAssertGreaterThan(offset, -(420 + SubtitleTickerMetrics.loopGap))
+        flow.tick(deltaTime: 1)
+
+        // The first second applies the smoothed speed (ramping from the base
+        // pace toward the target), not the full target immediately.
+        let target = SubtitleFlowMetrics.speed(
+            entryRatePtsPerSecond: flow.entryRatePtsPerSecond,
+            pendingWidth: flow.pendingWidth
+        )
+        let smoothed = SubtitleFlowMetrics.smoothedSpeed(
+            from: SubtitleFlowMetrics.baseSpeed,
+            toward: target,
+            deltaTime: 1
+        )
+        XCTAssertEqual(flow.currentSpeed, smoothed, accuracy: 0.001)
+        XCTAssertEqual(flow.cursor, smoothed, accuracy: 0.001)
+        XCTAssertLessThan(flow.currentSpeed, target)
     }
 
-    func testCaptionChangeRestartsTickerWithoutDiscardingMeasuredWidth() {
-        let start = Date(timeIntervalSince1970: 100)
-        let restart = Date(timeIntervalSince1970: 200)
-        var state = SubtitleTickerState(cycleStartedAt: start)
-        state.updateContentWidth(640)
+    func testSubtitleFlowSpeedStaysWithinReadableBounds() {
+        let quiet = SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 0, pendingWidth: 0)
+        let burst = SubtitleFlowMetrics.speed(entryRatePtsPerSecond: 5_000, pendingWidth: 10_000)
 
-        state.restartCycle(at: restart)
+        XCTAssertEqual(quiet, SubtitleFlowMetrics.baseSpeed, accuracy: 0.001)
+        XCTAssertEqual(burst, SubtitleFlowMetrics.maximumSpeed, accuracy: 0.001)
+        XCTAssertLessThan(SubtitleFlowMetrics.baseSpeed, SubtitleFlowMetrics.maximumSpeed)
+    }
 
-        XCTAssertEqual(state.contentWidth, 640)
-        XCTAssertEqual(state.cycleStartedAt, restart)
+    func testSubtitleFlowVisibleWindowShowsOnlyPagesUnderViewport() {
+        var flow = SubtitleStreamFlow()
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "first",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
+        )
+        flow.append(
+            SubtitleStreamPage(
+                id: UUID(),
+                text: "second",
+                translation: nil,
+                timestamp: nil,
+                width: 420
+            )
+        )
+
+        let visible = flow.visiblePages(viewportWidth: 220)
+
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertEqual(visible.first?.page.text, "first")
     }
 }

@@ -78,16 +78,30 @@ struct IslandRootView: View {
                 .frame(height: 1)
                 .padding(.horizontal, 22)
 
-                SubtitleTickerView(
-                    originalText: compactCaption.original,
-                    translatedText: compactCaption.translation,
-                    font: .system(size: 12, weight: .medium),
-                    viewportHeight: 21
-                )
-                .padding(.horizontal, 18)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                if store.state.recordingActivity == .paused {
+                    compactCaptionText("录音已暂停，会议内容和问答仍保留")
+                } else if store.state.subtitleFlow.isEmpty, store.state.activeTranscript.isEmpty {
+                    compactCaptionText("正在等待第一段转写")
+                } else {
+                    SubtitleStreamView(
+                        store: store,
+                        font: .system(size: 12, weight: .medium),
+                        viewportHeight: 21
+                    )
+                    .padding(.horizontal, 18)
+                }
             }
         }
+    }
+
+    private func compactCaptionText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .foregroundStyle(VisualTokens.primaryText)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 21, alignment: .leading)
+            .padding(.horizontal, 18)
+            .accessibilityLabel(text)
     }
 
     private var permanentControlRail: some View {
@@ -214,16 +228,6 @@ struct IslandRootView: View {
             .fill(color)
             .frame(width: 7, height: 7)
             .shadow(color: color.opacity(0.45), radius: 6)
-    }
-
-    private var compactCaption: IslandCaption {
-        if store.state.recordingActivity == .paused {
-            return IslandCaption(original: "录音已暂停，会议内容和问答仍保留", translation: nil)
-        }
-        let caption = store.state.islandCaption
-        return caption.original.isEmpty
-            ? IslandCaption(original: "正在等待第一段转写", translation: nil)
-            : caption
     }
 
     private var waveform: some View {

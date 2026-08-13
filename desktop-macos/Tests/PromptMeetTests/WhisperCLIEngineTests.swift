@@ -19,11 +19,12 @@ final class WhisperCLIEngineTests: XCTestCase {
             runner: runner
         )
 
-        let text = try await engine.transcribe(
-            PCMTranscriptionSegment(source: .microphone, sampleRate: 16_000, samples: [1, 2, 3])
+        let transcription = try await engine.transcribe(
+            PCMTranscriptionSegment(source: .microphone, sampleRate: 16_000, samples: [1, 2, 3]),
+            language: "zh"
         )
 
-        XCTAssertEqual(text, "你好，世界。")
+        XCTAssertEqual(transcription.text, "你好，世界。")
         let invocation = await runner.invocation
         XCTAssertEqual(invocation?.executable, executable)
         XCTAssertTrue(invocation?.arguments.contains(model.path) == true)

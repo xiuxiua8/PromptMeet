@@ -2005,16 +2005,19 @@ process_manager.on_image_result_received = on_image_result_received
 
 
 def server_options() -> dict:
+    # PROMPTMEET_BACKEND_PORT lets packaged instances run an isolated
+    # companion instead of colliding with another instance on port 8000.
+    port = int(os.getenv("PROMPTMEET_BACKEND_PORT", "8000"))
     if DESKTOP_MODE:
         return {
             "host": "127.0.0.1",
-            "port": 8000,
+            "port": port,
             "reload": False,
             "log_level": "info",
         }
     return {
         "host": "0.0.0.0",
-        "port": 8000,
+        "port": port,
         "reload": True,
         "log_level": "info",
     }

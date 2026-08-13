@@ -289,3 +289,48 @@ private final class BackendClientURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 }
+
+final class BackendEnvironmentIsolationTests: XCTestCase {
+    func testDefaultBackendURLIsLoopback8000() {
+        let previous = ProcessInfo.processInfo.environment["PROMPTMEET_BACKEND_URL"]
+        defer { restoreEnv("PROMPTMEET_BACKEND_URL", previous) }
+        unsetenv("PROMPTMEET_BACKEND_URL")
+
+        XCTAssertEqual(
+            BackendEnvironment.local.baseURL.absoluteString,
+            "http://127.0.0.1:8000"
+        )
+    }
+
+    func testBackendURLOverrideIsolation() {
+        let previous = ProcessInfo.processInfo.environment["PROMPTMEET_BACKEND_URL"]
+        defer { restoreEnv("PROMPTMEET_BACKEND_URL", previous) }
+        setenv("PROMPTMEET_BACKEND_URL", "http://127.0.0.1:8765", 1)
+
+        XCTAssertEqual(
+            BackendEnvironment.local.baseURL.absoluteString,
+            "http://127.0.0.1:8765"
+        )
+    }
+
+    func testOutboxRespectsIsolatedDataDirectory() {
+        let previous = ProcessInfo.processInfo.environment["PROMPTMEET_DATA_DIR"]
+        defer { restoreEnv("PROMPTMEET_DATA_DIR", previous) }
+        setenv("PROMPTMEET_DATA_DIR", "/tmp/promptmeet-isolated", 1)
+
+        // The default outbox URL must resolve inside the isolated data dir.
+        let fileURL = TranscriptOutboxStore.defaultFileURL()
+        XCTAssertEqual(
+            fileURL.path,
+            "/tmp/promptmeet-isolated/transcript-outbox.json"
+        )
+    }
+
+    private func restoreEnv(_ key: String, _ value: String?) {
+        if let value {
+            setenv(key, value, 1)
+        } else {
+            unsetenv(key)
+        }
+    }
+}
