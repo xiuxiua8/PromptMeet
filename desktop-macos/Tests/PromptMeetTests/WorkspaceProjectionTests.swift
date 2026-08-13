@@ -20,7 +20,7 @@ final class WorkspaceProjectionTests: XCTestCase {
             backend: BackendClientSpy(),
             capture: NativeAudioCaptureSpy(),
             companion: CompanionLauncherSpy(),
-        transcriptOutbox: isolatedTranscriptOutbox()
+            transcriptOutbox: TranscriptOutboxSpy()
         )
         store.dispatch(.meetingHistoryLoaded([projectionMeeting(timeline: [suggestions])]))
         store.selectArchivedMeeting("meeting-1")

@@ -108,42 +108,24 @@ final class MeetingStore: ObservableObject {
 
     func configureUIPreview(_ mode: String) {
         uiPreviewMode = mode
-        switch mode {
-        case "live":
-            state = .previewAura
-            isHovered = false
-        case "paused":
-            state = .previewPaused
-            isHovered = false
-        case "hover":
-            state = .previewAura
-            isHovered = true
-        case "quick-ask":
-            state = .previewQuickAsk
-            isHovered = false
-        case "workspace", "workspace-compact", "workspace-large":
-            state = .previewWorkspace
-            isHovered = false
-        case "workspace-formula":
-            state = .previewFormulaWorkspace
-            isHovered = false
-        case "workspace-formula-streaming":
-            state = .previewFormulaWorkspaceStreaming
-            isHovered = false
-        case "reader-short":
-            state = .previewReader
-            isHovered = false
-        case "reader-long":
-            state = .previewLongReader
-            isHovered = false
-        case "reader-formula":
-            state = .previewFormulaReader
-            isHovered = false
-        default:
-            state = MeetingState()
-            isHovered = false
-        }
+        state = Self.previewStates[mode] ?? MeetingState()
+        isHovered = mode == "hover"
     }
+
+    private static let previewStates: [String: MeetingState] = [
+        "live": .previewAura,
+        "paused": .previewPaused,
+        "hover": .previewAura,
+        "quick-ask": .previewQuickAsk,
+        "workspace": .previewWorkspace,
+        "workspace-compact": .previewWorkspace,
+        "workspace-large": .previewWorkspace,
+        "workspace-formula": .previewFormulaWorkspace,
+        "workspace-formula-streaming": .previewFormulaWorkspaceStreaming,
+        "reader-short": .previewReader,
+        "reader-long": .previewLongReader,
+        "reader-formula": .previewFormulaReader
+    ]
 
     func dispatch(_ action: MeetingAction) {
         state.reduce(action)

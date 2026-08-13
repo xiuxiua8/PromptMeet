@@ -11,7 +11,8 @@ private let formulaAnswerPreview = """
 
 $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 
-分数相加：$\\frac{a}{b} + \\frac{c}{d} = \\frac{ad+bc}{bd}$，开方：$\\sqrt{x^2 + y^2}$，希腊字母 $\\alpha + \\beta = \\gamma$，无穷 $\\infty$。
+分数相加：$\\frac{a}{b} + \\frac{c}{d} = \\frac{ad+bc}{bd}$，\
+开方：$\\sqrt{x^2 + y^2}$，希腊字母 $\\alpha + \\beta = \\gamma$，无穷 $\\infty$。
 
 **对比表**（粗体与斜体同时验证）：
 
