@@ -235,7 +235,7 @@ struct SubtitleStreamFlow: Equatable, Sendable {
         var result: [(SubtitleStreamPage, CGFloat)] = []
         var positionX = -cursor
         for (index, page) in pages.enumerated() {
-            if (index == 0 || positionX + page.width > 0), positionX < viewportWidth {
+            if index == 0 || positionX + page.width > 0, positionX < viewportWidth {
                 result.append((page, positionX))
             }
             positionX += page.width + SubtitleFlowMetrics.traverseGap
