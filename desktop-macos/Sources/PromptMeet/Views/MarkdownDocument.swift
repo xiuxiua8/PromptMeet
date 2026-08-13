@@ -183,7 +183,7 @@ enum MarkdownDocument {
         return MarkdownBlock(kind: .paragraph, lines: paragraph)
     }
 
-    private static func startsBlock(_ line: String) -> Bool {
+    static func startsBlock(_ line: String) -> Bool {
         isFence(line)
             || heading(line) != nil
             || taskItem(line) != nil

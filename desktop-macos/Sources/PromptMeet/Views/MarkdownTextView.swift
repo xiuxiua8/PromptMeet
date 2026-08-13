@@ -141,7 +141,7 @@ struct MarkdownTextView: View {
 
     private func displayFormulaBlock(_ text: String) -> some View {
         VStack(alignment: .center, spacing: 10) {
-            ForEach(displayFormulaContents(text), id: \.self) { content in
+            ForEach(Array(displayFormulaContents(text).enumerated()), id: \.offset) { _, content in
                 formulaText(content, display: true)
                     .frame(maxWidth: .infinity, alignment: .center)
             }

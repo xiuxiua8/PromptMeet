@@ -46,7 +46,7 @@ final class FormulaRenderingSurfaceTests: XCTestCase {
     }
 
     func testRendererReturnsNilForMalformedInput() async throws {
-        let malformed = try await FormulaImageStore.shared.render(
+        let malformed = await FormulaImageStore.shared.render(
             content: "\\frac{1}{3",
             display: false,
             baseFontSize: 14
@@ -189,6 +189,69 @@ final class FormulaRenderingSurfaceTests: XCTestCase {
         let blocks = MarkdownDocument.parse(markdown, mode: .streaming)
 
         XCTAssertEqual(blocks.map(\.kind), [.paragraph])
+    }
+
+    func testTableStopsAtFollowingHeadingWithoutBlankLine() {
+        let markdown = """
+        | 项目 | 数量 |
+        | --- | --- |
+        | 发布 | 12 |
+        ## 总结
+        """
+
+        let blocks = MarkdownDocument.parse(markdown, mode: .completed)
+
+        XCTAssertEqual(blocks.count, 2)
+        guard case .table(let columns) = blocks[0].kind else {
+            return XCTFail("expected a table block, got \(String(describing: blocks[0].kind))")
+        }
+        XCTAssertEqual(columns[1].cells, ["12"])
+        XCTAssertEqual(blocks[1].kind, .heading(level: 2))
+        XCTAssertEqual(blocks[1].text, "总结")
+    }
+
+    func testTableStopsAtFollowingFenceAndListWithoutBlankLine() {
+        let markdown = """
+        | a | b |
+        | - | - |
+        | 1 | 2 |
+        ```swift
+        let x = 1
+        ```
+        - 要点
+        """
+
+        let blocks = MarkdownDocument.parse(markdown, mode: .completed)
+
+        XCTAssertEqual(blocks.count, 3)
+        guard case .table(let columns) = blocks[0].kind else {
+            return XCTFail("expected a table block, got \(String(describing: blocks[0].kind))")
+        }
+        XCTAssertEqual(columns[1].cells, ["2"])
+        XCTAssertEqual(blocks[1].kind, .code(language: "swift"))
+        XCTAssertEqual(blocks[2].kind, .unorderedList)
+        XCTAssertEqual(blocks[2].lines, ["要点"])
+    }
+
+    func testBackToBackTablesWithoutBlankLineStaySeparate() {
+        let markdown = """
+        | a |
+        | - |
+        | 1 |
+        | b |
+        | - |
+        | 2 |
+        """
+
+        let blocks = MarkdownDocument.parse(markdown, mode: .completed)
+
+        XCTAssertEqual(blocks.count, 2)
+        guard case .table(let first) = blocks[0].kind,
+            case .table(let second) = blocks[1].kind else {
+            return XCTFail("expected two table blocks, got \(blocks.map(\.kind))")
+        }
+        XCTAssertEqual(first[0].cells, ["1"])
+        XCTAssertEqual(second[0].cells, ["2"])
     }
 
     // MARK: - Surface wiring

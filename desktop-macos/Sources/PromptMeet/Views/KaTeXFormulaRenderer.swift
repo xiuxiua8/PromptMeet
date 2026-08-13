@@ -34,9 +34,10 @@ enum KaTeXAssets {
 }
 
 /// Renders LaTeX formula source to transparent images with the bundled
-/// KaTeX distribution through one hidden WKWebView. Rendering is offline
-/// (assets ship in the app bundle), asynchronous, and cached by content so
-/// streaming answers only pay the render cost once per unique formula.
+/// KaTeX distribution through a pool of hidden WKWebViews. Rendering is
+/// offline (assets ship in the app bundle), asynchronous, and cached by
+/// content so streaming answers only pay the render cost once per unique
+/// formula.
 @MainActor
 final class FormulaImageStore: ObservableObject {
     static let shared = FormulaImageStore()
@@ -82,7 +83,7 @@ final class FormulaImageStore: ObservableObject {
         while workers.isEmpty {
             workers.append(makeWorker())
         }
-        let rendered = await renderNow(key: key, worker: workers[0])
+        let rendered = await renderNow(key: key, workerIndex: 0)
         cache[key] = rendered
         revision += 1
         return rendered
@@ -101,7 +102,7 @@ final class FormulaImageStore: ObservableObject {
         workers[workerIndex].chain = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            let rendered = await self.renderNow(key: key, worker: self.workers[workerIndex])
+            let rendered = await self.renderNow(key: key, workerIndex: workerIndex)
             self.cache[key] = rendered
             self.revision += 1
         }
@@ -109,7 +110,7 @@ final class FormulaImageStore: ObservableObject {
 
     /// The JS that renders one formula into a fixed-origin wrapper and
     /// reports its geometry and baseline depth.
-    private func renderScript(source: String, display: Bool) -> String {
+    private func renderScript(source: String, display: Bool, fontSize: CGFloat) -> String {
         let escaped = source
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
@@ -117,6 +118,7 @@ final class FormulaImageStore: ObservableObject {
         return """
         (function() {
           var out = document.getElementById('out');
+          out.style.fontSize = '\(fontSize)pt';
           out.innerHTML = '';
           var wrap = document.createElement('div');
           // Fixed origin so both inline and display formulas crop identically.
@@ -138,14 +140,14 @@ final class FormulaImageStore: ObservableObject {
     }
 
     /// The offline KaTeX page: inlined CSS and JS so no file access is needed.
-    private func rendererHTML(css: String, katexJS: String, fontSize: CGFloat) -> String {
+    private func rendererHTML(css: String, katexJS: String) -> String {
         """
         <!DOCTYPE html>
         <html><head>
         <style>\(css)</style>
         <script>\(katexJS.replacingOccurrences(of: "</script", with: "<\\/script"))</script>
         </head><body style="margin:0;padding:0;background:transparent;color:#f5f5f5;">
-        <div id="out" style="font-size:\(fontSize)pt;line-height:1.2;padding:\(renderPadding)px;"></div>
+        <div id="out" style="line-height:1.2;padding:\(renderPadding)px;"></div>
         </body></html>
         """
     }
@@ -190,9 +192,9 @@ final class FormulaImageStore: ObservableObject {
         return css
     }
 
-    private func renderNow(key: Key, worker: Worker) async -> FormulaImage? {
+    private func renderNow(key: Key, workerIndex: Int) async -> FormulaImage? {
         guard let assets = KaTeXAssets.directory() else { return nil }
-        let webView = worker.webView
+        let webView = workers[workerIndex].webView
 
         let css: String
         let katexJS: String
@@ -202,18 +204,17 @@ final class FormulaImageStore: ObservableObject {
         } catch {
             return nil
         }
-        let html = rendererHTML(css: css, katexJS: katexJS, fontSize: key.fontSize)
-        if !worker.loaded {
+        let html = rendererHTML(css: css, katexJS: katexJS)
+        if !workers[workerIndex].loaded {
             let waiter = WebViewLoadWaiter(webView: webView)
             await waiter.load(html: html)
             // The heavy inlined KaTeX page needs a settle pass before the
             // compositor can snapshot it; this runs once per web view.
             try? await Task.sleep(for: .milliseconds(250))
+            workers[workerIndex].loaded = true
         }
-        var currentWorker = worker
-        currentWorker.loaded = true
 
-        let script = renderScript(source: key.content, display: key.display)
+        let script = renderScript(source: key.content, display: key.display, fontSize: key.fontSize)
         guard let json = try? await webView.evaluateJavaScript(script) as? String,
             let data = json.data(using: .utf8),
             let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -25,7 +25,9 @@ enum MarkdownTableParser {
 
         var rows: [[String]] = []
         while index < lines.count,
-            !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+            !lines[index].trimmingCharacters(in: .whitespaces).isEmpty,
+            !MarkdownDocument.startsBlock(lines[index]),
+            !MarkdownTableParser.isTableStart(lines, at: index) {
             rows.append(splitRow(lines[index]))
             rawLines.append(lines[index])
             index += 1
